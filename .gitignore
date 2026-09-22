@@ -1,0 +1,9 @@
+/.cache
+/bin
+/assets
+*.spv
+# /external
+*.slang-module
+imgui.ini
+# tasks.json
+# debug.json

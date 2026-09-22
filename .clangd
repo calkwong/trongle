@@ -1,0 +1,7 @@
+CompileFlags:
+  CompilationDatabase: bin/
+Diagnostics:
+  MissingIncludes: Strict
+  UnusedIncludes: Strict
+Completion:
+  HeaderInsertion: Never
