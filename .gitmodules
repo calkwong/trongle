@@ -1,9 +1,6 @@
 [submodule "external/fmt"]
 	path = external/fmt
 	url = https://github.com/fmtlib/fmt/
-[submodule "external/VulkanMemoryAllocator"]
-	path = external/VulkanMemoryAllocator
-	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/
 [submodule "external/vk-bootstrap"]
 	path = external/vk-bootstrap
 	url = https://github.com/charles-lunarg/vk-bootstrap/
@@ -16,3 +13,6 @@
 [submodule "external/fastgltf"]
 	path = external/fastgltf
 	url = https://github.com/spnda/fastgltf
+[submodule "external/VulkanMemoryAllocator"]
+	path = external/VulkanMemoryAllocator
+	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/

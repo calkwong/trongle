@@ -3,6 +3,7 @@
 #include "swapchain.h"
 
 #include <volk.h>
+#include <vk_mem_alloc.h>
 
 #include <cstdint>
 #include <array>
@@ -25,6 +26,7 @@ public:
     VkInstance instance;
     VkPhysicalDevice physical_device;
     VkDevice device;
+    VmaAllocator allocator;
     VkQueue graphics_queue;
     uint32_t graphics_queue_family;
     VkSurfaceKHR surface;

@@ -5,6 +5,7 @@
 #include "resources.h"
 
 #include <volk.h>
+#include <vk_mem_alloc.h>
 #include <fmt/core.h>
 #include <VkBootstrap.h>
 #include <SDL3/SDL.h>
@@ -78,6 +79,7 @@ void Engine::init_vulkan()
     // features13.maintenance4 = true;
 
     VkPhysicalDeviceVulkan12Features features_12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
+    features_12.bufferDeviceAddress = true;
 
     VkPhysicalDeviceVulkan11Features features_11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
 
@@ -123,6 +125,18 @@ void Engine::init_vulkan()
     auto window_height = 720u;
     swapchain = create_swapchain(physical_device, device, surface, window_width, window_height);
 
+    VmaAllocatorCreateInfo allocator_info{};
+    allocator_info.physicalDevice = physical_device;
+    allocator_info.device = device;
+    allocator_info.instance = instance;
+    allocator_info.vulkanApiVersion = VK_API_VERSION_1_4;
+    allocator_info.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+
+    VmaVulkanFunctions vulkan_functions{};
+    VK_CHECK(vmaImportVulkanFunctionsFromVolk(&allocator_info, &vulkan_functions));
+    allocator_info.pVulkanFunctions = &vulkan_functions;
+    VK_CHECK(vmaCreateAllocator(&allocator_info, &allocator));
+
     fmt::println("Initialized Vulkan");
 }
 
@@ -140,6 +154,8 @@ void Engine::cleanup()
     vkDestroyDebugUtilsMessengerEXT(instance, debug_messenger, nullptr);
 
     destroy_swapchain(device, swapchain);
+
+    vmaDestroyAllocator(allocator);
 
     vkDestroyDevice(device, nullptr);
     vkDestroySurfaceKHR(instance, surface, nullptr);
@@ -180,6 +196,12 @@ void Engine::init_sync()
 
 void Engine::run()
 {
+    // TODO: move this elsewhere
+    Buffer test_buffer = create_buffer(device, allocator, 1000, 0, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    destroy_buffer(allocator, test_buffer);
+    Image test_image = create_image(device, allocator, VkExtent3D{ 64, 64, 1 }, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR, VK_IMAGE_ASPECT_COLOR_BIT);
+    destroy_image(device, allocator, test_image);
+
     bool quit{ false };
     while (!quit)
     {
