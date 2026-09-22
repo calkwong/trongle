@@ -9,11 +9,7 @@
 #include <vector>
 #include <string>
 #include <memory>
-
-struct MeshData
-{
-    MeshLod mesh_lods;
-};
+#include <cstdint>
 
 struct MeshAsset
 {
@@ -31,14 +27,15 @@ struct Node
     void refresh_transform(const glm::mat4& parent_matrix);
 };
 
-struct SceneManager
+struct AssetLoader
 {
     VkDevice device;
     VmaAllocator allocator;
 
     std::vector<Image> images;
     std::vector<MeshData> meshes;
-    std::vector<Vertex> vertices;
+    std::vector<Vertex> m_vertices;
+    std::vector<uint32_t> m_indices;
 
     std::vector<std::shared_ptr<Node>> top_nodes;
 

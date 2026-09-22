@@ -53,6 +53,15 @@ Buffer create_buffer(
     VkDeviceSize alignment = 0
 );
 
+Buffer create_staging_buffer(
+    VkDevice device,
+    VmaAllocator allocator,
+    size_t alloc_size,
+    VmaAllocationCreateFlags allocation_flags,
+    VkBufferUsageFlags usage_flags,
+    VkDeviceSize alignment = 0
+);
+
 Buffer create_buffer_with_data(
     VkDevice device,
     VkQueue queue,

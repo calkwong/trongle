@@ -73,7 +73,7 @@ bool read_raw_image_data_from_file(const char* filename, std::vector<uint8_t>& k
 // TODO: load_images
 } // namespace
 
-bool SceneManager::load_gltf(
+bool AssetLoader::load_gltf(
     VkQueue queue,
     VkFence fence,
     VkCommandPool command_pool,
@@ -81,7 +81,7 @@ bool SceneManager::load_gltf(
     const std::string& file_path
 )
 {
-    auto asset_path = "assets/" + file_path;
+    auto asset_path = "../assets/" + file_path;
     fmt::println("loading glTF: {}", asset_path);
 
     // TODO: implement enums to select at runtime
@@ -104,6 +104,7 @@ bool SceneManager::load_gltf(
 
     if (gltf_file.error() != fastgltf::Error::None)
     {
+        fmt::println("Error: {}", fastgltf::getErrorName(gltf_file.error()));
         return false;
     }
 
@@ -388,7 +389,8 @@ bool SceneManager::load_gltf(
             }
             else
             {
-                assert(1 && "IMPLEMENT TANGENTS");
+                // assert(0 && "IMPLEMENT TANGENTS");
+                tangents.resize(positions.size());
                 // generate_mikkt_tangents = true;
                 // tangents.resize(positions.size());
             }
@@ -447,7 +449,10 @@ bool SceneManager::load_gltf(
             // optimize_mesh(vertices, indices, meshlet_indices, meshlets, mesh_data, scene->vertices, scene->indices);
 
             // TODO: don't use this
-            this->vertices.insert(this->vertices.end(), vertices.begin(), vertices.end());
+            m_vertices.insert(m_vertices.end(), vertices.begin(), vertices.end());
+            m_indices.insert(m_indices.end(), indices.begin(), indices.end());
+            mesh_data.mesh_lods.first_index = static_cast<uint32_t>(m_vertices.size());
+            mesh_data.mesh_lods.count = static_cast<uint32_t>(vertices.size());
 
             new_mesh->mesh.push_back(mesh_data);
         }
@@ -527,7 +532,7 @@ bool SceneManager::load_gltf(
     return true;
 }
 
-void SceneManager::cleanup()
+void AssetLoader::cleanup()
 {
     for (auto& img : images)
     {

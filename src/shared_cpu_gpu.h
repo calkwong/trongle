@@ -1,5 +1,6 @@
 #pragma once
 
+#include <glm/ext/matrix_float4x4.hpp>
 #include <glm/ext/vector_float3.hpp>
 
 #include <cstdint>
@@ -10,6 +11,11 @@ struct MeshLod
 {
     uint32_t first_index;
     uint32_t count;
+};
+
+struct MeshData
+{
+    MeshLod mesh_lods;
 };
 
 struct Vertex
@@ -24,7 +30,7 @@ struct Vertex
     uint32_t _padding;
 };
 
-struct MaterialData
-
+struct ObjectData
 {
+    glm::mat4 transform;
 };

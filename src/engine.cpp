@@ -4,6 +4,8 @@
 #include "swapchain.h"
 #include "resources.h"
 #include "asset_loader.h"
+#include "pipelines.h"
+#include "shared_cpu_gpu.h"
 
 #include <volk.h>
 #include <vk_mem_alloc.h>
@@ -11,6 +13,7 @@
 #include <VkBootstrap.h>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
+#include <glm/ext/matrix_float4x4.hpp>
 
 #include <cstdlib>
 #include <cstdint>
@@ -70,14 +73,14 @@ void Engine::init_vulkan()
         std::abort();
     }
 
-    // TODO: actually check for support
+    // TODO: actually check for extension support
 
     VkPhysicalDeviceVulkan14Features features_14{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES };
 
     VkPhysicalDeviceVulkan13Features features_13{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
-    // features13.dynamicRendering = true;
+    features_13.dynamicRendering = true;
     features_13.synchronization2 = true;
-    // features13.maintenance4 = true;
+    // features_13.maintenance4 = true;
 
     VkPhysicalDeviceVulkan12Features features_12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
     features_12.bufferDeviceAddress = true;
@@ -144,6 +147,9 @@ void Engine::init_vulkan()
 void Engine::cleanup()
 {
     vkDeviceWaitIdle(device);
+
+    vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
+    vkDestroyPipeline(device, mesh_pass->pipeline, nullptr);
 
     for (auto& frame : frames)
     {
@@ -219,12 +225,42 @@ void Engine::run()
     Image test_image = create_image(device, allocator, VkExtent3D{ 64, 64, 1 }, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR, VK_IMAGE_ASPECT_COLOR_BIT);
     destroy_image(device, allocator, test_image);
 
-    SceneManager scene{ .device = device, .allocator = allocator };
-    bool loaded = scene.load_gltf(graphics_queue, imm_fence, imm_pool, imm_buf, "DamagedHelmet.gltf");
+    // Init scene
+    AssetLoader asset_loader{ .device = device, .allocator = allocator };
+    bool loaded = asset_loader.load_gltf(graphics_queue, imm_fence, imm_pool, imm_buf, "DamagedHelmet/DamagedHelmet.gltf");
     if (!loaded)
     {
-        assert(1 && "load_gltf failed");
+        assert(0 && "load_gltf failed");
     }
+    for (const auto& node : asset_loader.top_nodes)
+    {
+        register_object(node.get(), glm::mat4(1.0));
+    }
+
+    // Load GPU data
+    Buffer vertex_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.m_vertices.data(), asset_loader.m_vertices.size() * sizeof(Vertex));
+    Buffer index_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.m_indices.data(), asset_loader.m_indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    Buffer object_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, renderables.data(), renderables.size() * sizeof(ObjectData));
+
+    fmt::println("# of renderables: {}", renderables.size());
+
+    // Init PSO
+    auto swapchain_format = VK_FORMAT_B8G8R8A8_UNORM;
+    auto program = load_shader_program("mesh.slang", device);
+
+    VkPhysicalDeviceProperties2 properties2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+    vkGetPhysicalDeviceProperties2(physical_device, &properties2);
+    auto max_push_constant_size = properties2.properties.limits.maxPushConstantsSize;
+    fmt::println("Max push constant size: {}", max_push_constant_size);
+    VkPushConstantRange pc_range{ .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, .offset = 0, .size = max_push_constant_size };
+
+    VkPipelineLayoutCreateInfo pipeline_layout_info{ .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+    pipeline_layout_info.pPushConstantRanges = &pc_range;
+    pipeline_layout_info.pushConstantRangeCount = 1;
+    VK_CHECK(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &pipeline_layout));
+
+    mesh_pass = create_graphics_pipeline(device, &program, { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT }, nullptr, &pipeline_layout, { swapchain_format });
+    vkDestroyShaderModule(device, program.module, nullptr);
 
     bool quit{ false };
     while (!quit)
@@ -286,10 +322,76 @@ void Engine::run()
             cmd,
             swapchain.images[swapchain_image_idx],
             VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_GENERAL,
+            0,
+            0,
+            0,
+            0
+        );
+
+        VkClearColorValue clear_color_value = { 0.f, 0.f, 0.f, 1.f };
+        VkClearValue clear_value{ .color = clear_color_value };
+
+        VkRenderingAttachmentInfo rendering_attachment_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+        rendering_attachment_info.imageView = swapchain.image_views[swapchain_image_idx];
+        rendering_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        rendering_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        rendering_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+        VkRenderingInfo rendering_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_INFO };
+        rendering_info.renderArea = VkRect2D{ VkOffset2D{ 0, 0 }, swapchain.extent };
+        rendering_info.layerCount = 1;
+        rendering_info.colorAttachmentCount = 1;
+        rendering_info.pColorAttachments = &rendering_attachment_info;
+        rendering_info.pDepthAttachment = nullptr;
+
+        vkCmdBeginRendering(cmd, &rendering_info);
+
+        VkViewport viewport{};
+        viewport.x = 0;
+        viewport.y = static_cast<float>(swapchain.extent.height);
+        viewport.width = static_cast<float>(swapchain.extent.width);
+        viewport.height = -static_cast<float>(swapchain.extent.height);
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+        VkRect2D scissor{};
+        scissor.offset.x = 0;
+        scissor.offset.y = 0;
+        scissor.extent.width = swapchain.extent.width;
+        scissor.extent.height = swapchain.extent.height;
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_pass->pipeline);
+
+        struct PushData
+        {
+            glm::mat4 view_proj;
+            VkDeviceAddress vb;
+            VkDeviceAddress ob;
+        };
+
+        PushData data{ glm::mat4(1.0f), vertex_buffer.address, object_buffer.address };
+        VkPushConstantsInfo pc{ .sType = VK_STRUCTURE_TYPE_PUSH_CONSTANTS_INFO };
+        pc.layout = pipeline_layout;
+        pc.size = sizeof(PushData);
+        pc.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        pc.pValues = &data;
+        vkCmdPushConstants2(cmd, &pc);
+        vkCmdBindIndexBuffer2(cmd, index_buffer.buffer, 0, index_buffer.size, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd, asset_loader.m_indices.size(), 1, 0, 0, 0);
+
+        vkCmdEndRendering(cmd);
+
+        stage_barrier(
+            cmd,
+            swapchain.images[swapchain_image_idx],
+            VK_IMAGE_LAYOUT_GENERAL,
             VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
             0,
-            0,
-            0,
+            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
             0
         );
 
@@ -330,6 +432,34 @@ void Engine::run()
         VK_CHECK_SWAPCHAIN(present_result);
 
         frame_number++;
+    }
+
+    vkDeviceWaitIdle(device);
+    destroy_buffer(allocator, vertex_buffer);
+    destroy_buffer(allocator, index_buffer);
+    destroy_buffer(allocator, object_buffer);
+}
+
+// TODO: do we need to cache to deduplicate?
+void Engine::register_object(const Node* node, const glm::mat4& top_matrix)
+{
+    auto world_matrix = top_matrix * node->world_transform;
+
+    if (node->mesh_asset != nullptr)
+    {
+        for (const auto& mesh : node->mesh_asset->mesh)
+        {
+            ObjectData obj{};
+            obj.transform = world_matrix;
+
+            meshes.push_back(mesh);
+            renderables.push_back(obj);
+        }
+    }
+
+    for (const auto& child : node->children)
+    {
+        register_object(child.get(), top_matrix);
     }
 }
 

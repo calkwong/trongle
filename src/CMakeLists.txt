@@ -5,6 +5,7 @@ target_sources(engine PRIVATE
   descriptors.cpp
   asset_loader.cpp
   extern.cpp
+  pipelines.cpp
 )
 
 set_target_properties(engine PROPERTIES CXX_STANDARD 20)
