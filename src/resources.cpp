@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cassert>
+#include <functional>
 
 void stage_barrier(
     VkCommandBuffer cmd,
@@ -150,4 +151,30 @@ VkDeviceAddress get_buffer_address(VkDevice device, VkBuffer buffer)
     VkBufferDeviceAddressInfo info{ .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
     info.buffer = buffer;
     return vkGetBufferDeviceAddress(device, &info);
+}
+
+void immediate_submit(VkDevice device, VkQueue queue, VkFence fence, VkCommandPool command_pool, VkCommandBuffer cmd, std::function<void(VkCommandBuffer cmd)>&& func)
+{
+    VK_CHECK(vkResetFences(device, 1, &fence));
+    VK_CHECK(vkResetCommandPool(device, command_pool, 0));
+
+    VkCommandBufferBeginInfo cmd_begin_info{ .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    cmd_begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+    VK_CHECK(vkBeginCommandBuffer(cmd, &cmd_begin_info));
+
+    func(cmd);
+
+    VK_CHECK(vkEndCommandBuffer(cmd));
+
+    VkCommandBufferSubmitInfo cmd_submit_info{ .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO };
+    cmd_submit_info.commandBuffer = cmd;
+
+    VkSubmitInfo2 submit{ .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
+    submit.pCommandBufferInfos = &cmd_submit_info;
+    submit.commandBufferInfoCount = 1;
+
+    VK_CHECK(vkQueueSubmit2(queue, 1, &submit, fence));
+
+    VK_CHECK(vkWaitForFences(device, 1, &fence, true, WAIT_TIME));
 }

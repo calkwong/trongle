@@ -151,6 +151,9 @@ void Engine::cleanup()
         vkDestroySemaphore(device, frame.image_acquired_semaphore, nullptr);
     }
 
+    vkDestroyCommandPool(device, imm_pool, nullptr);
+    vkDestroyFence(device, imm_fence, nullptr);
+
     vkDestroyDebugUtilsMessengerEXT(instance, debug_messenger, nullptr);
 
     destroy_swapchain(device, swapchain);
@@ -178,6 +181,16 @@ void Engine::init_commands()
 
         VK_CHECK(vkAllocateCommandBuffers(device, &allocate_info, &frame.command_buffer));
     }
+
+    // Create immediate command pool & buffer
+    VK_CHECK(vkCreateCommandPool(device, &pool_info, nullptr, &imm_pool));
+
+    VkCommandBufferAllocateInfo allocate_info{ .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    allocate_info.commandPool = imm_pool;
+    allocate_info.commandBufferCount = 1;
+    allocate_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+
+    VK_CHECK(vkAllocateCommandBuffers(device, &allocate_info, &imm_buf));
 }
 
 void Engine::init_sync()
@@ -192,6 +205,9 @@ void Engine::init_sync()
         VK_CHECK(vkCreateFence(device, &fence_info, nullptr, &frame.fence));
         VK_CHECK(vkCreateSemaphore(device, &semaphore_info, nullptr, &frame.image_acquired_semaphore));
     }
+
+    // Create immediate fence
+    VK_CHECK(vkCreateFence(device, &fence_info, nullptr, &imm_fence));
 }
 
 void Engine::run()
@@ -233,13 +249,13 @@ void Engine::run()
 
         // Wait on fence
         auto frame = get_current_frame();
-        VK_CHECK(vkWaitForFences(device, 1, &frame.fence, true, 1000000000));
+        VK_CHECK(vkWaitForFences(device, 1, &frame.fence, true, WAIT_TIME));
 
         // TODO: flush frame deletion queue
 
         // Acquire next image
         uint32_t swapchain_image_idx{};
-        VkResult acquire_result = vkAcquireNextImageKHR(device, swapchain.swapchain, 1000000000, frame.image_acquired_semaphore, nullptr, &swapchain_image_idx);
+        VkResult acquire_result = vkAcquireNextImageKHR(device, swapchain.swapchain, WAIT_TIME, frame.image_acquired_semaphore, nullptr, &swapchain_image_idx);
         if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR)
         {
             fmt::println("Acquire out of date / suboptimal");

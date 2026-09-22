@@ -4,6 +4,8 @@
 #include <vulkan/vk_enum_string_helper.h>
 #include <fmt/core.h>
 
+#define WAIT_TIME 1000000000
+
 #define VK_CHECK(x) \
     do \
     { \

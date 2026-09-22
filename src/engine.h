@@ -32,6 +32,10 @@ public:
     VkSurfaceKHR surface;
     VkDebugUtilsMessengerEXT debug_messenger;
 
+    VkFence imm_fence;
+    VkCommandPool imm_pool;
+    VkCommandBuffer imm_buf;
+
     SDL_Window* window;
     bool swapchain_dirty;
     Swapchain swapchain;
