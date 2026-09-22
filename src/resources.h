@@ -53,6 +53,18 @@ Buffer create_buffer(
     VkDeviceSize alignment = 0
 );
 
+Buffer create_buffer_with_data(
+    VkDevice device,
+    VkQueue queue,
+    VkFence fence,
+    VkCommandPool command_pool,
+    VkCommandBuffer cmd,
+    VmaAllocator allocator,
+    const void* data,
+    size_t data_size,
+    VkBufferUsageFlags = 0
+);
+
 Image create_image(
     VkDevice device,
     VmaAllocator allocator,

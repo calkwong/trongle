@@ -3,6 +3,7 @@
 #include "common.h"
 #include "swapchain.h"
 #include "resources.h"
+#include "asset_loader.h"
 
 #include <volk.h>
 #include <vk_mem_alloc.h>
@@ -217,6 +218,13 @@ void Engine::run()
     destroy_buffer(allocator, test_buffer);
     Image test_image = create_image(device, allocator, VkExtent3D{ 64, 64, 1 }, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR, VK_IMAGE_ASPECT_COLOR_BIT);
     destroy_image(device, allocator, test_image);
+
+    SceneManager scene{ .device = device, .allocator = allocator };
+    bool loaded = scene.load_gltf(graphics_queue, imm_fence, imm_pool, imm_buf, "DamagedHelmet.gltf");
+    if (!loaded)
+    {
+        assert(1 && "load_gltf failed");
+    }
 
     bool quit{ false };
     while (!quit)

@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cassert>
 #include <functional>
+#include <cstring>
 
 void stage_barrier(
     VkCommandBuffer cmd,
@@ -177,4 +178,57 @@ void immediate_submit(VkDevice device, VkQueue queue, VkFence fence, VkCommandPo
     VK_CHECK(vkQueueSubmit2(queue, 1, &submit, fence));
 
     VK_CHECK(vkWaitForFences(device, 1, &fence, true, WAIT_TIME));
+}
+
+Buffer create_buffer_with_data(
+    VkDevice device,
+    VkQueue queue,
+    VkFence fence,
+    VkCommandPool command_pool,
+    VkCommandBuffer cmd,
+    VmaAllocator allocator,
+    const void* data,
+    size_t data_size,
+    VkBufferUsageFlags flags /*= 0*/
+)
+{
+    Buffer buffer = create_buffer(
+        device,
+        allocator,
+        data_size,
+        0,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | flags
+    );
+
+    Buffer staging = create_buffer(
+        device,
+        allocator,
+        data_size,
+        VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+    );
+
+    void* staging_data = staging.info.pMappedData;
+    memcpy(staging_data, data, data_size);
+
+    immediate_submit(
+        device,
+        queue,
+        fence,
+        command_pool,
+        cmd,
+        [&](VkCommandBuffer cmd)
+        {
+            VkBufferCopy copy{};
+            copy.dstOffset = 0;
+            copy.srcOffset = 0;
+            copy.size = data_size;
+
+            vkCmdCopyBuffer(cmd, staging.buffer, buffer.buffer, 1, &copy);
+        }
+    );
+
+    destroy_buffer(allocator, staging);
+
+    return buffer;
 }
