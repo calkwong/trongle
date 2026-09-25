@@ -129,8 +129,6 @@ void Engine::init_vulkan()
     }
     SDL_SetWindowRelativeMouseMode(window, true);
 
-    // TODO: actually check for extension support
-
     VkPhysicalDeviceVulkan14Features features_14{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES };
 
     VkPhysicalDeviceVulkan13Features features_13{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
@@ -162,6 +160,18 @@ void Engine::init_vulkan()
         std::abort();
     }
     physical_device = phys_ret->physical_device;
+
+    // VkBootstrap specific - checking for extension support, this may be incorrect.
+    // Without bootstrap, the right way to do this is query extension name -> query feature -> set feature -> device creation using extensions & features set
+    bool desc_heap_supported = phys_ret->enable_extension_if_present(VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME);
+    bool unified_layouts_supported = phys_ret->enable_extension_if_present(VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME);
+    if (unified_layouts_supported)
+    {
+        VkPhysicalDeviceUnifiedImageLayoutsFeaturesKHR unified_layouts_features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_UNIFIED_IMAGE_LAYOUTS_FEATURES_KHR };
+        unified_layouts_features.unifiedImageLayouts = true;
+        unified_layouts_supported = phys_ret->enable_extension_features_if_present(unified_layouts_features);
+    }
+    assert(desc_heap_supported && unified_layouts_supported);
 
     vkb::DeviceBuilder device_builder{ phys_ret.value() };
     auto dev_ret = device_builder.build();
