@@ -277,12 +277,6 @@ void Engine::init_sync()
 
 void Engine::run()
 {
-    // TODO: move this elsewhere
-    Buffer test_buffer = create_buffer(device, allocator, 1000, 0, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-    destroy_buffer(allocator, test_buffer);
-    Image test_image = create_image(device, allocator, VkExtent3D{ 64, 64, 1 }, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR, VK_IMAGE_ASPECT_COLOR_BIT);
-    destroy_image(device, allocator, test_image);
-
     Camera camera{};
     camera.position = glm::vec3(0, 0, 5);
     camera.fov = 70.0f;
@@ -307,6 +301,8 @@ void Engine::run()
     Buffer vertex_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.m_vertices.data(), asset_loader.m_vertices.size() * sizeof(Vertex));
     Buffer index_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.m_indices.data(), asset_loader.m_indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
     Buffer object_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, renderables.data(), renderables.size() * sizeof(ObjectData));
+
+    Image depth_image = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
 
     fmt::println("# of renderables: {}", renderables.size());
 
@@ -412,6 +408,18 @@ void Engine::run()
             0
         );
 
+        stage_barrier(
+            cmd,
+            depth_image.image,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_GENERAL,
+            VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+            VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
+            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
+            VK_IMAGE_ASPECT_DEPTH_BIT
+        );
+
         VkClearColorValue clear_color_value = { 0.f, 0.f, 0.f, 1.f };
         VkClearValue clear_value{ .color = clear_color_value };
 
@@ -421,12 +429,18 @@ void Engine::run()
         rendering_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         rendering_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 
+        VkRenderingAttachmentInfo depth_attachment_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+        depth_attachment_info.imageView = depth_image.view;
+        depth_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        depth_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
         VkRenderingInfo rendering_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_INFO };
         rendering_info.renderArea = VkRect2D{ VkOffset2D{ 0, 0 }, swapchain.extent };
         rendering_info.layerCount = 1;
         rendering_info.colorAttachmentCount = 1;
         rendering_info.pColorAttachments = &rendering_attachment_info;
-        rendering_info.pDepthAttachment = nullptr;
+        rendering_info.pDepthAttachment = &depth_attachment_info;
 
         vkCmdBeginRendering(cmd, &rendering_info);
 
@@ -527,6 +541,7 @@ void Engine::run()
     destroy_buffer(allocator, vertex_buffer);
     destroy_buffer(allocator, index_buffer);
     destroy_buffer(allocator, object_buffer);
+    destroy_image(device, allocator, depth_image);
 }
 
 // TODO: do we need to cache to deduplicate?
