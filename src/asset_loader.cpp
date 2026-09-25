@@ -29,7 +29,6 @@
 #include <filesystem>
 #include <fstream>
 #include <ios>
-#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -261,12 +260,9 @@ bool AssetLoader::load_gltf(
     }
     */
 
-    std::vector<std::shared_ptr<MeshAsset>> mesh_assets{};
-
     for (fastgltf::Mesh& mesh : asset.meshes)
     {
-        std::shared_ptr<MeshAsset> new_mesh{ std::make_shared<MeshAsset>() };
-        mesh_assets.push_back(new_mesh);
+        MeshAsset new_mesh{};
 
         for (int i = 0; i < mesh.primitives.size(); ++i)
         {
@@ -440,31 +436,32 @@ bool AssetLoader::load_gltf(
 
             // optimize_mesh(vertices, indices, meshlet_indices, meshlets, mesh_data, scene->vertices, scene->indices);
 
-            // TODO: don't use this
-
             mesh_data.first_index = static_cast<uint32_t>(m_indices.size());
             mesh_data.index_count = static_cast<uint32_t>(indices.size());
             mesh_data.vertex_offset = static_cast<uint32_t>(m_vertices.size());
 
-            new_mesh->mesh.push_back(mesh_data);
+            new_mesh.mesh.push_back(mesh_data);
 
             m_vertices.insert(m_vertices.end(), vertices.begin(), vertices.end());
             m_indices.insert(m_indices.end(), indices.begin(), indices.end());
         }
+
+        meshes.push_back(new_mesh);
     }
 
     struct NodeWork
     {
-        std::shared_ptr<Node> node{};
-        size_t index{};
+        Node* node;
+        size_t index;
     };
 
     std::vector<NodeWork> work{};
 
-    for (auto node_index : asset.scenes[0].nodeIndices) // we handle 1 scene only
+    parent_nodes.reserve(asset.scenes[0].nodeIndices.size());
+    for (auto node_index : asset.scenes[0].nodeIndices) // We handle 1 scene per gltf for simplicity
     {
-        auto p = top_nodes.emplace_back(std::make_shared<Node>());
-        work.emplace_back(NodeWork{ p, node_index });
+        auto& nd = parent_nodes.emplace_back(Node{});
+        work.emplace_back(NodeWork{ &nd, node_index });
     }
 
     while (work.size() > 0)
@@ -505,25 +502,29 @@ bool AssetLoader::load_gltf(
 
         if (gltf_node.meshIndex.has_value())
         {
-            node->mesh_asset = mesh_assets[*(gltf_node.meshIndex)];
+            node->mesh_index = gltf_node.meshIndex.value();
         }
 
+        node->child_count = static_cast<uint32_t>(gltf_node.children.size());
+        node->first_child = static_cast<uint32_t>(children_nodes.size());
+
+        children_nodes.reserve(children_nodes.size() + node->child_count);
         for (auto child_index : gltf_node.children)
         {
-            auto p = node->children.emplace_back(std::make_shared<Node>());
-            work.emplace_back(NodeWork{ p, child_index });
+            auto& nd = children_nodes.emplace_back(Node{});
+            work.emplace_back(NodeWork{ &nd, child_index });
         }
     }
 
-    for (auto& node : top_nodes)
+    fmt::println("parent_nodes: {}", parent_nodes.size());
+    fmt::println("children_nodes: {}", children_nodes.size());
+
+    for (auto& node : parent_nodes)
     {
-        node->refresh_transform(glm::mat4(1.0f));
+        node.refresh_transform(glm::mat4(1.0f), children_nodes);
     }
 
-    // fmt::println("size of topnodes: {}", scene->top_nodes.size());
-    // fmt::println("size of nodes: {}", scene->nodes.size());
-    // fmt::println("size of gltf nodes: {}", asset.nodes.size());
-
+    fmt::println("Gltf successfully loaded...");
     return true;
 }
 
@@ -535,9 +536,13 @@ void AssetLoader::cleanup()
     }
 }
 
-void Node::refresh_transform(const glm::mat4& parent_matrix)
+void Node::refresh_transform(const glm::mat4& parent_matrix, std::vector<Node>& children)
 {
     world_transform = parent_matrix * local_transform;
-    for (auto& c : children)
-        c->refresh_transform(world_transform);
+
+    for (auto i = 0; i < child_count; i++)
+    {
+        auto& child = children[first_child];
+        child.refresh_transform(world_transform, children);
+    }
 }

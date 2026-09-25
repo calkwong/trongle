@@ -1,6 +1,5 @@
 #include "engine.h"
 #include "common.h"
-#include "glm/trigonometric.hpp"
 #include "swapchain.h"
 #include "resources.h"
 #include "asset_loader.h"
@@ -23,7 +22,9 @@
 #include <glm/ext/vector_float3.hpp>
 #include <glm/ext/vector_float4.hpp>
 #include <glm/matrix.hpp>
+#include <glm/trigonometric.hpp>
 
+#include <vector>
 #include <cstdlib>
 #include <cstdint>
 #include <cassert>
@@ -292,9 +293,13 @@ void Engine::run()
     {
         assert(0 && "load_gltf failed");
     }
-    for (const auto& node : asset_loader.top_nodes)
+
+    // Sanity
+    fmt::println("meshes: {}", asset_loader.meshes.size());
+
+    for (const auto& node : asset_loader.parent_nodes)
     {
-        register_object(node.get(), glm::mat4(1.0));
+        register_object(node, glm::mat4(1.0), asset_loader.children_nodes, asset_loader.meshes);
     }
 
     // Load GPU data
@@ -545,13 +550,13 @@ void Engine::run()
 }
 
 // TODO: do we need to cache to deduplicate?
-void Engine::register_object(const Node* node, const glm::mat4& top_matrix)
+void Engine::register_object(const Node& node, const glm::mat4& top_matrix, const std::vector<Node>& children, const std::vector<MeshAsset>& mesh_assets)
 {
-    auto world_matrix = top_matrix * node->world_transform;
+    auto world_matrix = top_matrix * node.world_transform;
 
-    if (node->mesh_asset != nullptr)
+    if (node.mesh_index != -1)
     {
-        for (const auto& mesh : node->mesh_asset->mesh)
+        for (const auto& mesh : mesh_assets[node.mesh_index].mesh)
         {
             ObjectData obj{};
 
@@ -571,9 +576,10 @@ void Engine::register_object(const Node* node, const glm::mat4& top_matrix)
         }
     }
 
-    for (const auto& child : node->children)
+    for (auto i = 0; i < node.child_count; i++)
     {
-        register_object(child.get(), top_matrix);
+        const auto& child = children[node.first_child];
+        register_object(child, top_matrix, children, mesh_assets);
     }
 }
 

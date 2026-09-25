@@ -27,6 +27,7 @@ struct ShaderPass;
 struct ObjectData;
 struct Node;
 struct MeshData;
+struct MeshAsset;
 
 class Engine
 {
@@ -68,5 +69,5 @@ public:
     void init_commands();
     void init_sync();
     void run();
-    void register_object(const Node* node, const glm::mat4& top_matrix);
+    void register_object(const Node& node, const glm::mat4& top_matrix, const std::vector<Node>& children, const std::vector<MeshAsset>& meshes);
 };
