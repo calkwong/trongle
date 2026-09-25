@@ -5,6 +5,7 @@ add_subdirectory(SDL EXCLUDE_FROM_ALL)
 add_subdirectory(VulkanMemoryAllocator)
 add_subdirectory(fastgltf)
 add_subdirectory(glm)
+add_subdirectory(meshoptimizer)
 
 target_link_libraries(engine PRIVATE
   fmt::fmt
@@ -14,4 +15,5 @@ target_link_libraries(engine PRIVATE
   GPUOpen::VulkanMemoryAllocator
   fastgltf::fastgltf
   glm::glm
+  meshoptimizer
 )

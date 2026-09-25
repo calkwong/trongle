@@ -154,6 +154,21 @@ Image create_image(
 
     VK_CHECK(vmaCreateImage(allocator, &img_info, &alloc_info, &image.image, &image.allocation, nullptr));
 
+    VkImageViewCreateInfo img_view_info{};
+    img_view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    img_view_info.image = image.image;
+    img_view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    img_view_info.format = format;
+    VkImageSubresourceRange subresource_range{};
+    subresource_range.aspectMask = aspect;
+    subresource_range.baseMipLevel = 0;
+    subresource_range.levelCount = VK_REMAINING_MIP_LEVELS;
+    subresource_range.baseArrayLayer = 0;
+    subresource_range.layerCount = VK_REMAINING_ARRAY_LAYERS;
+    img_view_info.subresourceRange = subresource_range;
+
+    VK_CHECK(vkCreateImageView(device, &img_view_info, nullptr, &image.view));
+
     return image;
 }
 

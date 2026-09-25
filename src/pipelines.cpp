@@ -14,6 +14,7 @@
 #include <array>
 #include <string>
 
+// REVIEW
 bool load_shader_module(const char* path, VkDevice device, VkShaderModule* out_shader_module)
 {
     // cursor at the end

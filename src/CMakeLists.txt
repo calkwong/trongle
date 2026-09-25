@@ -6,6 +6,7 @@ target_sources(engine PRIVATE
   asset_loader.cpp
   extern.cpp
   pipelines.cpp
+  camera.cpp
 )
 
 set_target_properties(engine PROPERTIES CXX_STANDARD 20)

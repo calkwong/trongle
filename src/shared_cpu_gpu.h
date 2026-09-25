@@ -1,5 +1,6 @@
 #pragma once
 
+#include <glm/ext/quaternion_float.hpp>
 #include <glm/ext/matrix_float4x4.hpp>
 #include <glm/ext/vector_float3.hpp>
 
@@ -7,30 +8,29 @@
 
 using vec3 = glm::vec3;
 
-struct MeshLod
-{
-    uint32_t first_index;
-    uint32_t count;
-};
-
 struct MeshData
 {
-    MeshLod mesh_lods;
+    uint32_t first_index;
+    uint32_t index_count;
+    uint32_t vertex_offset;
 };
 
 struct Vertex
 {
-    vec3 pos;
-    float uv_x;
+    uint16_t px;
+    uint16_t py;
+    uint16_t pz;
+    uint16_t tangent;
 
-    vec3 normal;
-    float uv_y;
+    uint32_t normal;
 
-    vec3 tangent;
-    uint32_t _padding;
+    uint16_t uv_x;
+    uint16_t uv_y;
 };
 
 struct ObjectData
 {
-    glm::mat4 transform;
+    vec3 translation;
+    float scale;
+    glm::quat orientation;
 };

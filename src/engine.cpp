@@ -1,11 +1,12 @@
 #include "engine.h"
-#include "SDL3/SDL_events.h"
 #include "common.h"
+#include "glm/trigonometric.hpp"
 #include "swapchain.h"
 #include "resources.h"
 #include "asset_loader.h"
 #include "pipelines.h"
 #include "shared_cpu_gpu.h"
+#include "camera.h"
 
 #include <volk.h>
 #include <vk_mem_alloc.h>
@@ -13,11 +14,63 @@
 #include <VkBootstrap.h>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
+#include <SDL3/SDL_events.h>
 #include <glm/ext/matrix_float4x4.hpp>
+#include <glm/common.hpp>
+#include <glm/exponential.hpp>
+#include <glm/ext/matrix_float3x3.hpp>
+#include <glm/ext/quaternion_float.hpp>
+#include <glm/ext/vector_float3.hpp>
+#include <glm/ext/vector_float4.hpp>
+#include <glm/matrix.hpp>
 
 #include <cstdlib>
 #include <cstdint>
 #include <cassert>
+
+// const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
+
+const char* ASSET_NAME = "ABeautifulGame/ABeautifulGame.gltf";
+
+namespace
+{
+// tTken directly from https://github.com/zeux/niagara/blob/master/src/scene.cpp
+void decompose_transform(const glm::mat4& m, glm::vec3& t, glm::vec3& s, glm::vec4& rotation)
+{
+    t.x = m[3][0];
+    t.y = m[3][1];
+    t.z = m[3][2];
+
+    float det = glm::determinant(glm::mat3(m));
+    float sign = (det < 0.0f) ? -1.0f : 1.0f;
+
+    s.x = glm::sqrt(m[0][0] * m[0][0] + m[0][1] * m[0][1] + m[0][2] * m[0][2]) * sign;
+    s.y = glm::sqrt(m[1][0] * m[1][0] + m[1][1] * m[1][1] + m[1][2] * m[1][2]) * sign;
+    s.z = glm::sqrt(m[2][0] * m[2][0] + m[2][1] * m[2][1] + m[2][2] * m[2][2]) * sign;
+
+    float rsx = (s[0] == 0.f) ? 0.f : 1.f / s[0];
+    float rsy = (s[1] == 0.f) ? 0.f : 1.f / s[1];
+    float rsz = (s[2] == 0.f) ? 0.f : 1.f / s[2];
+
+    // mat = rotation * scale, we want a pure rotation matrix hence normalize axes
+    float r00 = m[0][0] * rsx, r10 = m[1][0] * rsy, r20 = m[2][0] * rsz;
+    float r01 = m[0][1] * rsx, r11 = m[1][1] * rsy, r21 = m[2][1] * rsz;
+    float r02 = m[0][2] * rsx, r12 = m[1][2] * rsy, r22 = m[2][2] * rsz;
+
+    // "branchless" version of Mike Day's matrix to quaternion conversion, no attempt was made to understand quats :)
+    int qc = r22 < 0 ? (r00 > r11 ? 0 : 1) : (r00 < -r11 ? 2 : 3);
+    float qs1 = qc & 2 ? -1.f : 1.f;
+    float qs2 = qc & 1 ? -1.f : 1.f;
+    float qs3 = (qc - 1) & 2 ? -1.f : 1.f;
+
+    float qt = 1.f - qs3 * r00 - qs2 * r11 - qs1 * r22;
+    float qs = 0.5f / glm::sqrt(qt);
+
+    rotation[qc ^ 0] = qs * qt;
+    rotation[qc ^ 1] = qs * (r01 + qs1 * r10);
+    rotation[qc ^ 2] = qs * (r20 + qs2 * r02);
+    rotation[qc ^ 3] = qs * (r12 + qs3 * r21);
+}
 
 VkBool32 custom_debug_callback(
     VkDebugUtilsMessageSeverityFlagBitsEXT message_severity,
@@ -39,6 +92,7 @@ VkBool32 custom_debug_callback(
 
     return VK_FALSE;
 }
+} // namespace
 
 void Engine::init_vulkan()
 {
@@ -61,8 +115,8 @@ void Engine::init_vulkan()
 
     volkLoadInstance(instance);
 
-    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland");
-    // SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
+    // SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland");
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
     SDL_Init(SDL_INIT_VIDEO);
     auto window_flags = static_cast<SDL_WindowFlags>(SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
     window = SDL_CreateWindow("Untitled vulkan renderer", 1280u, 720u, window_flags);
@@ -72,6 +126,7 @@ void Engine::init_vulkan()
         fmt::println("Failed to create window surface.");
         std::abort();
     }
+    SDL_SetWindowRelativeMouseMode(window, true);
 
     // TODO: actually check for extension support
 
@@ -84,10 +139,12 @@ void Engine::init_vulkan()
 
     VkPhysicalDeviceVulkan12Features features_12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
     features_12.bufferDeviceAddress = true;
+    features_12.shaderFloat16 = true;
 
     VkPhysicalDeviceVulkan11Features features_11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
 
-    VkPhysicalDeviceFeatures features10{};
+    VkPhysicalDeviceFeatures features_10{};
+    features_10.shaderInt16 = true;
 
     vkb::PhysicalDeviceSelector selector{ vkb_inst };
     auto phys_ret = selector.set_surface(surface)
@@ -96,6 +153,7 @@ void Engine::init_vulkan()
                         .set_required_features_13(features_13)
                         .set_required_features_12(features_12)
                         .set_required_features_11(features_11)
+                        .set_required_features(features_10)
                         .select();
     if (!phys_ret)
     {
@@ -225,9 +283,17 @@ void Engine::run()
     Image test_image = create_image(device, allocator, VkExtent3D{ 64, 64, 1 }, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR, VK_IMAGE_ASPECT_COLOR_BIT);
     destroy_image(device, allocator, test_image);
 
+    Camera camera{};
+    camera.position = glm::vec3(0, 0, 5);
+    camera.fov = 70.0f;
+    camera.far = 100.0f;
+    camera.near = 0.01f;
+
+    auto proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
+
     // Init scene
     AssetLoader asset_loader{ .device = device, .allocator = allocator };
-    bool loaded = asset_loader.load_gltf(graphics_queue, imm_fence, imm_pool, imm_buf, "DamagedHelmet/DamagedHelmet.gltf");
+    bool loaded = asset_loader.load_gltf(graphics_queue, imm_fence, imm_pool, imm_buf, ASSET_NAME);
     if (!loaded)
     {
         assert(0 && "load_gltf failed");
@@ -262,27 +328,39 @@ void Engine::run()
     mesh_pass = create_graphics_pipeline(device, &program, { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT }, nullptr, &pipeline_layout, { swapchain_format });
     vkDestroyShaderModule(device, program.module, nullptr);
 
+    auto last_frame = SDL_GetTicks();
     bool quit{ false };
+
     while (!quit)
     {
+        auto start = SDL_GetTicks();
+        auto delta_time = (start - last_frame) / 1000.0f;
+        last_frame = start;
+
         // Poll events
-        SDL_Event event;
+        SDL_Event event{};
         while (SDL_PollEvent(&event))
         {
             switch (event.type)
             {
             case SDL_EVENT_QUIT:
+            {
                 quit = true;
                 break;
+            }
             case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+            {
                 if (event.window.data1 > 0 && event.window.data2 > 0)
                 {
                     update_swapchain(swapchain, window, physical_device, device, surface);
                 }
                 break;
+            }
             default:
                 break;
             }
+
+            camera.process_sdl_event(event, SDL_GetWindowRelativeMouseMode(window));
         }
 
         if (swapchain_dirty)
@@ -290,6 +368,11 @@ void Engine::run()
             update_swapchain(swapchain, window, physical_device, device, surface);
             swapchain_dirty = false;
         }
+
+        // Update camera
+        camera.update(delta_time);
+        auto view = camera.get_view_matrix();
+        auto view_proj = proj * view;
 
         // Wait on fence
         auto frame = get_current_frame();
@@ -372,7 +455,7 @@ void Engine::run()
             VkDeviceAddress ob;
         };
 
-        PushData data{ glm::mat4(1.0f), vertex_buffer.address, object_buffer.address };
+        PushData data{ view_proj, vertex_buffer.address, object_buffer.address };
         VkPushConstantsInfo pc{ .sType = VK_STRUCTURE_TYPE_PUSH_CONSTANTS_INFO };
         pc.layout = pipeline_layout;
         pc.size = sizeof(PushData);
@@ -380,7 +463,13 @@ void Engine::run()
         pc.pValues = &data;
         vkCmdPushConstants2(cmd, &pc);
         vkCmdBindIndexBuffer2(cmd, index_buffer.buffer, 0, index_buffer.size, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd, asset_loader.m_indices.size(), 1, 0, 0, 0);
+
+        uint32_t i = 0;
+        for (auto i = 0; i < meshes.size(); i++)
+        {
+            auto& mesh = meshes[i];
+            vkCmdDrawIndexed(cmd, mesh.index_count, 1, mesh.first_index, mesh.vertex_offset, i);
+        }
 
         vkCmdEndRendering(cmd);
 
@@ -450,10 +539,20 @@ void Engine::register_object(const Node* node, const glm::mat4& top_matrix)
         for (const auto& mesh : node->mesh_asset->mesh)
         {
             ObjectData obj{};
-            obj.transform = world_matrix;
 
-            meshes.push_back(mesh);
+            glm::vec3 translation{};
+            glm::vec3 scale{};
+            glm::vec4 rotation{};
+
+            decompose_transform(world_matrix, translation, scale, rotation);
+
+            // TODO: handle non uniform scaling
+            obj.translation = translation;
+            obj.scale = glm::max(glm::max(scale.x, scale.y), scale.z);
+            obj.orientation = glm::quat(rotation.w, rotation.x, rotation.y, rotation.z);
+
             renderables.push_back(obj);
+            meshes.push_back(mesh);
         }
     }
 

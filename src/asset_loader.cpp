@@ -17,6 +17,7 @@
 #include <vk_mem_alloc.h>
 // #include <basisu_transcoder.h>
 #include <fmt/core.h>
+#include <meshoptimizer.h>
 
 #include <array>
 #include <cassert>
@@ -267,7 +268,6 @@ bool AssetLoader::load_gltf(
         std::shared_ptr<MeshAsset> new_mesh{ std::make_shared<MeshAsset>() };
         mesh_assets.push_back(new_mesh);
 
-        // rewrite vertex/indices loading
         for (int i = 0; i < mesh.primitives.size(); ++i)
         {
             const auto& p = mesh.primitives[i];
@@ -286,9 +286,9 @@ bool AssetLoader::load_gltf(
                 );
             }
 
-            // using Position = std::array<uint16_t, 3>;
+            using Position = std::array<uint16_t, 3>;
+            std::vector<Position> positions{};
 
-            std::vector<glm::vec3> positions{};
             if (auto it = p.findAttribute("POSITION"); it != p.attributes.end())
             {
                 auto& position_accessor = asset.accessors[it->accessorIndex];
@@ -298,18 +298,16 @@ bool AssetLoader::load_gltf(
                     position_accessor,
                     [&](glm::vec3 pos, size_t index)
                     {
-                        // uint16_t px = meshopt_quantizeHalf(pos.x);
-                        // uint16_t py = meshopt_quantizeHalf(pos.y);
-                        // uint16_t pz = meshopt_quantizeHalf(pos.z);
+                        uint16_t px = meshopt_quantizeHalf(pos.x);
+                        uint16_t py = meshopt_quantizeHalf(pos.y);
+                        uint16_t pz = meshopt_quantizeHalf(pos.z);
 
-                        // positions[index] = Position{ px, py, pz };
-                        positions[index] = pos;
+                        positions[index] = Position{ px, py, pz };
                     }
                 );
             }
 
-            // std::vector<uint32_t> normals{};
-            std::vector<glm::vec3> normals{};
+            std::vector<uint32_t> normals{};
             if (auto it = p.findAttribute("NORMAL"); it != p.attributes.end())
             {
                 auto& normals_accessor = asset.accessors[it->accessorIndex];
@@ -319,19 +317,17 @@ bool AssetLoader::load_gltf(
                     normals_accessor,
                     [&](glm::vec3 n, size_t index)
                     {
-                        // uint32_t normal =
-                        //     (meshopt_quantizeSnorm(n.x, 10) + 511) << 20
-                        //     | (meshopt_quantizeSnorm(n.y, 10) + 511) << 10
-                        //     | (meshopt_quantizeSnorm(n.z, 10) + 511);
+                        uint32_t normal =
+                            (meshopt_quantizeSnorm(n.x, 10) + 511) << 20
+                            | (meshopt_quantizeSnorm(n.y, 10) + 511) << 10
+                            | (meshopt_quantizeSnorm(n.z, 10) + 511);
 
-                        // normals[index] = normal;
-                        normals[index] = n;
+                        normals[index] = normal;
                     }
                 );
             }
 
-            // using UV = std::array<uint16_t, 2>;
-            using UV = std::array<float, 2>;
+            using UV = std::array<uint16_t, 2>;
             std::vector<UV> uvs{};
             if (auto it = p.findAttribute("TEXCOORD_0"); it != p.attributes.end())
             {
@@ -342,11 +338,10 @@ bool AssetLoader::load_gltf(
                     uv_accessor,
                     [&](glm::vec2 uv, size_t index)
                     {
-                        // uint16_t uv_x = meshopt_quantizeHalf(uv.x);
-                        // uint16_t uv_y = meshopt_quantizeHalf(uv.y);
+                        uint16_t uv_x = meshopt_quantizeHalf(uv.x);
+                        uint16_t uv_y = meshopt_quantizeHalf(uv.y);
 
-                        // uvs[index] = UV{ uv_x, uv_y };
-                        uvs[index] = UV{ uv.x, uv.y };
+                        uvs[index] = UV{ uv_x, uv_y };
                     }
                 );
             }
@@ -366,8 +361,7 @@ bool AssetLoader::load_gltf(
             };
 
             // bool generate_mikkt_tangents = false;
-            // std::vector<uint16_t> tangents{};
-            std::vector<glm::vec3> tangents{};
+            std::vector<uint16_t> tangents{};
             if (auto it = p.findAttribute("TANGENT"); it != p.attributes.end())
             {
                 auto& tangent_accessor = asset.accessors[it->accessorIndex];
@@ -377,13 +371,12 @@ bool AssetLoader::load_gltf(
                     tangent_accessor,
                     [&](glm::vec4 tangent, size_t index)
                     {
-                        // glm::vec2 t_encoded = encode_oct(glm::vec3(tangent));
+                        glm::vec2 t_encoded = encode_oct(glm::vec3(tangent));
 
-                        // uint16_t t = (meshopt_quantizeSnorm(t_encoded.x, 8) + 127) << 8 | (meshopt_quantizeSnorm(t_encoded.y, 8) + 127);
+                        uint16_t t = (meshopt_quantizeSnorm(t_encoded.x, 8) + 127) << 8 | (meshopt_quantizeSnorm(t_encoded.y, 8) + 127);
 
-                        // tangents[index] = t;
-                        // normals[index] |= (tangent.w >= 0 ? 1 : 0) << 30;
-                        tangents[index] = tangent;
+                        tangents[index] = t;
+                        normals[index] |= (tangent.w >= 0 ? 1 : 0) << 30;
                     }
                 );
             }
@@ -400,8 +393,7 @@ bool AssetLoader::load_gltf(
             std::vector<Vertex> vertices{};
             for (size_t idx = 0; idx < positions.size(); ++idx)
             {
-                // vertices.emplace_back(Vertex{ positions[idx][0], positions[idx][1], positions[idx][2], tangents[idx], normals[idx], uvs[idx][0], uvs[idx][1] });
-                vertices.emplace_back(positions[idx], uvs[idx][0], normals[idx], uvs[idx][1], tangents[idx]);
+                vertices.emplace_back(Vertex{ positions[idx][0], positions[idx][1], positions[idx][2], tangents[idx], normals[idx], uvs[idx][0], uvs[idx][1] });
             }
 
             // if (generate_mikkt_tangents)
@@ -449,12 +441,15 @@ bool AssetLoader::load_gltf(
             // optimize_mesh(vertices, indices, meshlet_indices, meshlets, mesh_data, scene->vertices, scene->indices);
 
             // TODO: don't use this
-            m_vertices.insert(m_vertices.end(), vertices.begin(), vertices.end());
-            m_indices.insert(m_indices.end(), indices.begin(), indices.end());
-            mesh_data.mesh_lods.first_index = static_cast<uint32_t>(m_vertices.size());
-            mesh_data.mesh_lods.count = static_cast<uint32_t>(vertices.size());
+
+            mesh_data.first_index = static_cast<uint32_t>(m_indices.size());
+            mesh_data.index_count = static_cast<uint32_t>(indices.size());
+            mesh_data.vertex_offset = static_cast<uint32_t>(m_vertices.size());
 
             new_mesh->mesh.push_back(mesh_data);
+
+            m_vertices.insert(m_vertices.end(), vertices.begin(), vertices.end());
+            m_indices.insert(m_indices.end(), indices.begin(), indices.end());
         }
     }
 
