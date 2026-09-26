@@ -9,16 +9,18 @@ union SDL_Event;
 class Camera
 {
 public:
-    glm::vec3 position{};
-    glm::vec3 velocity{};
-    float speed{ 7.f };
-    float sensitivity{ 0.005f };
-    float pitch{ 0.0f };
-    float yaw{ 0.0f };
-    float near{ 50.0f };
-    float far{ 0.01f };
-    float fov{ 70.0f };
-    glm::mat4 perspective{};
+    glm::vec3 position;
+    float pitch;
+    glm::vec3 velocity;
+    float yaw;
+
+    glm::mat4 perspective;
+
+    float near = 0.01f;
+    float far = 100.0f;
+    float fov = 70.0f;
+    float speed = 7.0f;
+    float sensitivity = 0.005f;
 
     glm::mat4 get_view_matrix() const;
     glm::quat get_rotation_matrix() const;

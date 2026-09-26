@@ -29,9 +29,7 @@
 #include <cstdint>
 #include <cassert>
 
-// const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
-
-const char* ASSET_NAME = "ABeautifulGame/ABeautifulGame.gltf";
+const char* ASSET_NAME = "Sponza/Sponza.gltf";
 
 namespace
 {
@@ -290,7 +288,6 @@ void Engine::run()
 {
     Camera camera{};
     camera.position = glm::vec3(0, 0, 5);
-    camera.fov = 70.0f;
     camera.far = 100.0f;
     camera.near = 0.01f;
 
@@ -316,6 +313,7 @@ void Engine::run()
 
     Image depth_image = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
 
+    // TODO: single pipeline barrier for all images instead of individual calls
     // UNDEFINED -> GENERAL once, then keep in GENERAL in render loop
     immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
                      {

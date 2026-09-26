@@ -37,6 +37,7 @@
 
 namespace
 {
+// REVIEW
 bool read_raw_image_data_from_file(const char* filename, std::vector<uint8_t>& ktx_data)
 {
     // cursor at the end
