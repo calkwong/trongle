@@ -304,9 +304,6 @@ void Engine::run()
         assert(0 && "load_gltf failed");
     }
 
-    // Sanity
-    fmt::println("meshes: {}", asset_loader.meshes.size());
-
     for (const auto& node : asset_loader.parent_nodes)
     {
         register_object(node, glm::mat4(1.0), asset_loader.children_nodes, asset_loader.meshes);
@@ -319,7 +316,21 @@ void Engine::run()
 
     Image depth_image = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
 
-    fmt::println("# of renderables: {}", renderables.size());
+    // UNDEFINED -> GENERAL once, then keep in GENERAL in render loop
+    immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
+                     {
+                         stage_barrier(
+                             cmd,
+                             depth_image.image,
+                             VK_IMAGE_LAYOUT_UNDEFINED,
+                             VK_IMAGE_LAYOUT_GENERAL,
+                             0,
+                             0,
+                             0,
+                             0,
+                             VK_IMAGE_ASPECT_DEPTH_BIT
+                         );
+                     });
 
     // Init PSO
     auto swapchain_format = VK_FORMAT_B8G8R8A8_UNORM;
@@ -328,7 +339,6 @@ void Engine::run()
     VkPhysicalDeviceProperties2 properties2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
     vkGetPhysicalDeviceProperties2(physical_device, &properties2);
     auto max_push_constant_size = properties2.properties.limits.maxPushConstantsSize;
-    fmt::println("Max push constant size: {}", max_push_constant_size);
     VkPushConstantRange pc_range{ .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, .offset = 0, .size = max_push_constant_size };
 
     VkPipelineLayoutCreateInfo pipeline_layout_info{ .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
@@ -421,18 +431,6 @@ void Engine::run()
             0,
             0,
             0
-        );
-
-        stage_barrier(
-            cmd,
-            depth_image.image,
-            VK_IMAGE_LAYOUT_UNDEFINED,
-            VK_IMAGE_LAYOUT_GENERAL,
-            VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-            VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
-            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
-            VK_IMAGE_ASPECT_DEPTH_BIT
         );
 
         VkClearColorValue clear_color_value = { 0.f, 0.f, 0.f, 1.f };

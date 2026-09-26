@@ -516,15 +516,11 @@ bool AssetLoader::load_gltf(
         }
     }
 
-    fmt::println("parent_nodes: {}", parent_nodes.size());
-    fmt::println("children_nodes: {}", children_nodes.size());
-
     for (auto& node : parent_nodes)
     {
         node.refresh_transform(glm::mat4(1.0f), children_nodes);
     }
 
-    fmt::println("Gltf successfully loaded...");
     return true;
 }
 
