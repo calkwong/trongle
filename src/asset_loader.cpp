@@ -73,6 +73,7 @@ bool read_raw_image_data_from_file(const char* filename, std::vector<uint8_t>& k
 }
 
 // TODO: handle descriptor ids
+// TODO: clean up paths
 std::vector<Image> load_images(
     const fastgltf::Asset& asset,
     VkDevice device,

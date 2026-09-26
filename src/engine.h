@@ -55,6 +55,17 @@ public:
     uint32_t frame_number;
     std::array<FrameData, FRAMES_IN_FLIGHT> frames;
 
+    // Descriptors
+    VkDescriptorPool desc_pool;
+    VkDescriptorSetLayout buffer_layout;
+    VkDescriptorSetLayout storage_image_layout;
+    VkDescriptorSetLayout sampled_image_layout;
+    VkDescriptorSetLayout sampler_layout;
+    VkDescriptorSet buffer_desc_set;
+    VkDescriptorSet storage_image_desc_set;
+    VkDescriptorSet sampled_image_desc_set;
+    VkDescriptorSet sampler_desc_set;
+
     // Scene data
     std::vector<ObjectData> renderables;
     std::vector<MeshData> meshes;
@@ -68,6 +79,7 @@ public:
     void cleanup();
     void init_commands();
     void init_sync();
+    void init_descriptors();
     void run();
     void register_object(const Node& node, const glm::mat4& top_matrix, const std::vector<Node>& children, const std::vector<MeshAsset>& meshes);
 };

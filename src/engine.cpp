@@ -6,6 +6,7 @@
 #include "pipelines.h"
 #include "shared_cpu_gpu.h"
 #include "camera.h"
+#include "descriptors.h"
 
 #include <volk.h>
 #include <vk_mem_alloc.h>
@@ -28,6 +29,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cassert>
+#include <array>
 
 const char* ASSET_NAME = "Sponza/Sponza.gltf";
 
@@ -137,6 +139,8 @@ void Engine::init_vulkan()
     VkPhysicalDeviceVulkan12Features features_12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
     features_12.bufferDeviceAddress = true;
     features_12.shaderFloat16 = true;
+    features_12.descriptorBindingPartiallyBound = true;
+    features_12.descriptorBindingVariableDescriptorCount = true;
 
     VkPhysicalDeviceVulkan11Features features_11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
 
@@ -216,6 +220,12 @@ void Engine::cleanup()
 
     vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
     vkDestroyPipeline(device, mesh_pass->pipeline, nullptr);
+
+    vkDestroyDescriptorPool(device, desc_pool, nullptr);
+    vkDestroyDescriptorSetLayout(device, buffer_layout, nullptr);
+    vkDestroyDescriptorSetLayout(device, storage_image_layout, nullptr);
+    vkDestroyDescriptorSetLayout(device, sampled_image_layout, nullptr);
+    vkDestroyDescriptorSetLayout(device, sampler_layout, nullptr);
 
     for (auto& frame : frames)
     {
@@ -587,6 +597,44 @@ void Engine::register_object(const Node& node, const glm::mat4& top_matrix, cons
     }
 }
 
+void Engine::init_descriptors()
+{
+    uint32_t buffer_count = 10;
+    uint32_t storage_image_count = 300;
+    uint32_t sampled_image_count = 300;
+    uint32_t sampler_count = 5;
+
+    std::array<VkDescriptorPoolSize, 4> pool_sizes{
+        VkDescriptorPoolSize{ .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = buffer_count },
+        VkDescriptorPoolSize{ .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = storage_image_count },
+        VkDescriptorPoolSize{ .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .descriptorCount = sampled_image_count },
+        VkDescriptorPoolSize{ .type = VK_DESCRIPTOR_TYPE_SAMPLER, .descriptorCount = sampler_count },
+    };
+
+    desc_pool = create_descriptor_pool(device, pool_sizes.data(), pool_sizes.size());
+
+    // Set up bindless
+    VkDescriptorBindingFlags binding_flags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
+    VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_info{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
+    binding_flags_info.pBindingFlags = &binding_flags;
+    binding_flags_info.bindingCount = 1;
+
+    VkDescriptorSetLayoutBinding buffer_binding{ .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = buffer_count, .stageFlags = VK_SHADER_STAGE_ALL };
+    VkDescriptorSetLayoutBinding storage_image_binding{ .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = storage_image_count, .stageFlags = VK_SHADER_STAGE_ALL };
+    VkDescriptorSetLayoutBinding sampled_image_binding{ .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .descriptorCount = sampled_image_count, .stageFlags = VK_SHADER_STAGE_ALL };
+    VkDescriptorSetLayoutBinding sampler_binding{ .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER, .descriptorCount = sampler_count, .stageFlags = VK_SHADER_STAGE_ALL };
+
+    buffer_layout = create_descriptor_set_layout(device, &buffer_binding, 1, &binding_flags_info, 0);
+    storage_image_layout = create_descriptor_set_layout(device, &storage_image_binding, 1, &binding_flags_info, 0);
+    sampled_image_layout = create_descriptor_set_layout(device, &sampled_image_binding, 1, &binding_flags_info, 0);
+    sampler_layout = create_descriptor_set_layout(device, &sampler_binding, 1, &binding_flags_info, 0);
+
+    buffer_desc_set = create_descriptor_set(device, desc_pool, &buffer_layout, &buffer_count);
+    storage_image_desc_set = create_descriptor_set(device, desc_pool, &storage_image_layout, &storage_image_count);
+    sampled_image_desc_set = create_descriptor_set(device, desc_pool, &sampled_image_layout, &sampled_image_count);
+    sampler_desc_set = create_descriptor_set(device, desc_pool, &sampler_layout, &sampler_count);
+}
+
 int main()
 {
     Engine engine{};
@@ -594,6 +642,7 @@ int main()
     engine.init_vulkan();
     engine.init_commands();
     engine.init_sync();
+    engine.init_descriptors();
 
     engine.run();
 
