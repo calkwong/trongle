@@ -1,6 +1,7 @@
 #include "resources.h"
 #include "common.h"
 
+#include <cstdint>
 #include <volk.h>
 #include <vk_mem_alloc.h>
 
@@ -8,6 +9,7 @@
 #include <cassert>
 #include <functional>
 #include <cstring>
+#include <cmath>
 
 void stage_barrier(
     VkCommandBuffer cmd,
@@ -142,9 +144,9 @@ Image create_image(
 
     if (mipmapped)
     {
-        assert(0 && "IMPLEMENT!");
-        // img_info.mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(extent.width, extent.height)))) + 1;
-        // img_info.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        auto larger_extent = extent.width >= extent.height ? extent.width : extent.height;
+        img_info.mipLevels = static_cast<uint32_t>(std::floor(std::log2(larger_extent))) + 1;
+        img_info.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     }
 
     VmaAllocationCreateInfo alloc_info{};
@@ -268,4 +270,31 @@ Buffer create_buffer_with_data(
     destroy_buffer(allocator, staging);
 
     return buffer;
+}
+
+VkImageMemoryBarrier2 image_barrier(
+    VkImage image,
+    VkImageLayout old_layout,
+    VkImageLayout new_layout,
+    VkPipelineStageFlags2 src_stage_mask,
+    VkPipelineStageFlags2 dst_stage_mask,
+    VkImageAspectFlags aspect /*= VK_IMAGE_ASPECT_COLOR_BIT*/
+)
+{
+    VkImageMemoryBarrier2 barrier{ .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
+    barrier.srcStageMask = src_stage_mask;
+    barrier.dstStageMask = dst_stage_mask;
+    barrier.oldLayout = old_layout;
+    barrier.newLayout = new_layout;
+    barrier.image = image;
+
+    VkImageSubresourceRange subresource_range{};
+    subresource_range.aspectMask = aspect;
+    subresource_range.baseMipLevel = 0;
+    subresource_range.levelCount = VK_REMAINING_MIP_LEVELS;
+    subresource_range.baseArrayLayer = 0;
+    subresource_range.layerCount = VK_REMAINING_ARRAY_LAYERS;
+    barrier.subresourceRange = subresource_range;
+
+    return barrier;
 }

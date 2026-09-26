@@ -66,8 +66,6 @@ ShaderProgram load_shader_program(const char* path, VkDevice device)
     shader_path += path;
     shader_path += ".spv";
 
-    fmt::println("Shader path: {}", shader_path);
-
     if (!load_shader_module(shader_path.c_str(), device, &module))
     {
         assert(0 && "Load shader failed");

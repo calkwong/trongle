@@ -44,6 +44,15 @@ void stage_barrier(
     VkAccessFlags2 dst_access_mask
 );
 
+VkImageMemoryBarrier2 image_barrier(
+    VkImage image,
+    VkImageLayout old_layout,
+    VkImageLayout new_layout,
+    VkPipelineStageFlags2 src_stage_mask,
+    VkPipelineStageFlags2 dst_stage_mask,
+    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT
+);
+
 Buffer create_buffer(
     VkDevice device,
     VmaAllocator allocator,

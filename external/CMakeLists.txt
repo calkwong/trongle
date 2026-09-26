@@ -28,3 +28,8 @@ target_link_libraries(engine PRIVATE
   meshoptimizer
   basis_universal
 )
+
+find_package(TBB)
+if (TBB_FOUND)
+  target_link_libraries(engine PRIVATE TBB::tbb)
+endif()

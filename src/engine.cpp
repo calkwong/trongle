@@ -169,7 +169,6 @@ void Engine::init_vulkan()
         unified_layouts_features.unifiedImageLayouts = true;
         unified_layouts_supported = phys_ret->enable_extension_features_if_present(unified_layouts_features);
     }
-    assert(desc_heap_supported && unified_layouts_supported);
 
     vkb::DeviceBuilder device_builder{ phys_ret.value() };
     auto dev_ret = device_builder.build();
@@ -363,18 +362,14 @@ void Engine::run()
             switch (event.type)
             {
             case SDL_EVENT_QUIT:
-            {
                 quit = true;
                 break;
-            }
             case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
-            {
                 if (event.window.data1 > 0 && event.window.data2 > 0)
                 {
                     update_swapchain(swapchain, window, physical_device, device, surface);
                 }
                 break;
-            }
             default:
                 break;
             }
@@ -549,10 +544,13 @@ void Engine::run()
     }
 
     vkDeviceWaitIdle(device);
+
     destroy_buffer(allocator, vertex_buffer);
     destroy_buffer(allocator, index_buffer);
     destroy_buffer(allocator, object_buffer);
     destroy_image(device, allocator, depth_image);
+
+    asset_loader.cleanup();
 }
 
 // TODO: do we need to cache to deduplicate?
