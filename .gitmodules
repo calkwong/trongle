@@ -22,3 +22,6 @@
 [submodule "external/meshoptimizer"]
 	path = external/meshoptimizer
 	url = https://github.com/zeux/meshoptimizer
+[submodule "external/basis_universal"]
+	path = external/basis_universal
+	url = https://github.com/BinomialLLC/basis_universal

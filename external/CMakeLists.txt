@@ -7,6 +7,16 @@ add_subdirectory(fastgltf)
 add_subdirectory(glm)
 add_subdirectory(meshoptimizer)
 
+add_library(basis_universal)
+
+target_sources(basis_universal PRIVATE
+  basis_universal/transcoder/basisu_transcoder.cpp
+  basis_universal/zstd/zstd.c
+)
+
+target_include_directories(engine PRIVATE basis_universal/transcoder)
+target_include_directories(engine PRIVATE basis_universal/zstd)
+
 target_link_libraries(engine PRIVATE
   fmt::fmt
   volk
@@ -16,4 +26,5 @@ target_link_libraries(engine PRIVATE
   fastgltf::fastgltf
   glm::glm
   meshoptimizer
+  basis_universal
 )
