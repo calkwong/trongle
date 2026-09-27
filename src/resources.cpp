@@ -298,3 +298,21 @@ VkImageMemoryBarrier2 image_barrier(
 
     return barrier;
 }
+
+VkSampler create_sampler(VkDevice device, VkFilter filter, VkSamplerMipmapMode mipmap, VkSamplerAddressMode address)
+{
+    VkSamplerCreateInfo info{ .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+    info.magFilter = filter;
+    info.minFilter = filter;
+    info.mipmapMode = mipmap;
+    info.addressModeU = address;
+    info.addressModeV = address;
+    info.addressModeW = address;
+    info.maxLod = VK_LOD_CLAMP_NONE;
+
+    VkSampler sampler{};
+
+    VK_CHECK(vkCreateSampler(device, &info, nullptr, &sampler));
+
+    return sampler;
+}

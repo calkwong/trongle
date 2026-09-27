@@ -99,3 +99,5 @@ void destroy_image(VkDevice device, VmaAllocator allocator, const Image& image);
 VkDeviceAddress get_buffer_address(VkDevice device, VkBuffer buffer);
 
 void immediate_submit(VkDevice device, VkQueue queue, VkFence fence, VkCommandPool command_pool, VkCommandBuffer cmd, std::function<void(VkCommandBuffer cmd)>&& func);
+
+VkSampler create_sampler(VkDevice device, VkFilter filter, VkSamplerMipmapMode mipmap, VkSamplerAddressMode address);

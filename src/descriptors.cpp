@@ -52,3 +52,42 @@ VkDescriptorSet create_descriptor_set(VkDevice device, VkDescriptorPool pool, co
 
     return set;
 }
+
+VkWriteDescriptorSet write_image_descriptor(VkDescriptorSet set, VkDescriptorType type, uint32_t handle, const VkDescriptorImageInfo* info)
+{
+    VkWriteDescriptorSet write{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+    write.dstSet = set;
+    write.dstBinding = 0;
+    write.dstArrayElement = handle;
+    write.descriptorCount = 1;
+    write.descriptorType = type;
+    write.pImageInfo = info;
+
+    return write;
+}
+
+VkWriteDescriptorSet write_buffer_descriptor(VkDescriptorSet set, VkDescriptorType type, uint32_t handle, const VkDescriptorBufferInfo* info)
+{
+    VkWriteDescriptorSet write{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+    write.dstSet = set;
+    write.dstBinding = 0;
+    write.dstArrayElement = handle;
+    write.descriptorCount = 1;
+    write.descriptorType = type;
+    write.pBufferInfo = info;
+
+    return write;
+}
+
+VkWriteDescriptorSet write_sampler_descriptor(VkDescriptorSet set, VkDescriptorType type, uint32_t handle, const VkDescriptorImageInfo* info)
+{
+    VkWriteDescriptorSet write{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+    write.dstSet = set;
+    write.dstBinding = 0;
+    write.dstArrayElement = handle;
+    write.descriptorCount = 1;
+    write.descriptorType = type;
+    write.pImageInfo = info;
+
+    return write;
+}

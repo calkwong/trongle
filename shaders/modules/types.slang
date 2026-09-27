@@ -25,8 +25,24 @@ public struct ObjectData
     public float3 translation;
     public float scale;
     public float4 orientation;
-    // public uint mesh_id;
-    // public uint material_id;
-    // uint padding[2];
+
+    public uint mesh_id;
+    public uint material_id;
+}
+
+public struct MaterialData
+{
+    public float4 base_color_factor;
+
+    public float metallic_factor;
+    public float roughness_factor;
+    public uint32_t diffuse_id;
+    public uint32_t metal_roughness_id;
+
+    public uint32_t normal_id;
+    public float3 emissive_factor;
+
+    public uint32_t emissive_id;
+    public uint32_t occlusion_id;
 }
 

@@ -478,10 +478,7 @@ bool AssetLoader::load_gltf(
         images = load_images(asset, device, queue, fence, command_pool, cmd, allocator, path.parent_path().string());
     }
 
-    /*
-    // note: handle another way
     assert(!asset.materials.empty() && "No materials found");
-    auto& materials_data = scene->materials;
 
     for (fastgltf::Material& mat : asset.materials)
     {
@@ -493,7 +490,7 @@ bool AssetLoader::load_gltf(
         mat_data.metallic_factor = mat.pbrData.metallicFactor;
         mat_data.roughness_factor = mat.pbrData.roughnessFactor;
 
-        // note: emissive strength currently unaccounted for
+        // TODO: handle emissiveStrength
         mat_data.emissive_factor.x = mat.emissiveFactor[0];
         mat_data.emissive_factor.y = mat.emissiveFactor[1];
         mat_data.emissive_factor.z = mat.emissiveFactor[2];
@@ -505,7 +502,7 @@ bool AssetLoader::load_gltf(
                 ? asset.textures[mat.pbrData.baseColorTexture.value().textureIndex].imageIndex.value()
                 : asset.textures[mat.pbrData.baseColorTexture.value().textureIndex].basisuImageIndex.value();
 
-            mat_data.diffuse_id = static_cast<uint32_t>(texture_offset + image_index);
+            mat_data.diffuse_id = static_cast<uint32_t>(image_index);
         }
 
         if (mat.pbrData.metallicRoughnessTexture.has_value())
@@ -515,7 +512,7 @@ bool AssetLoader::load_gltf(
                 ? asset.textures[mat.pbrData.metallicRoughnessTexture.value().textureIndex].imageIndex.value()
                 : asset.textures[mat.pbrData.metallicRoughnessTexture.value().textureIndex].basisuImageIndex.value();
 
-            mat_data.metal_roughness_id = static_cast<uint32_t>(texture_offset + image_index);
+            mat_data.metal_roughness_id = static_cast<uint32_t>(image_index);
         }
 
         if (mat.normalTexture.has_value())
@@ -525,7 +522,7 @@ bool AssetLoader::load_gltf(
                 ? asset.textures[mat.normalTexture.value().textureIndex].imageIndex.value()
                 : asset.textures[mat.normalTexture.value().textureIndex].basisuImageIndex.value();
 
-            mat_data.normal_id = static_cast<uint32_t>(texture_offset + image_index);
+            mat_data.normal_id = static_cast<uint32_t>(image_index);
         }
 
         if (mat.occlusionTexture.has_value())
@@ -535,7 +532,7 @@ bool AssetLoader::load_gltf(
                 ? asset.textures[mat.occlusionTexture.value().textureIndex].imageIndex.value()
                 : asset.textures[mat.occlusionTexture.value().textureIndex].basisuImageIndex.value();
 
-            mat_data.occlusion_id = static_cast<uint32_t>(texture_offset + image_index);
+            mat_data.occlusion_id = static_cast<uint32_t>(image_index);
         }
 
         if (mat.emissiveTexture.has_value())
@@ -545,47 +542,11 @@ bool AssetLoader::load_gltf(
                 ? asset.textures[mat.emissiveTexture.value().textureIndex].imageIndex.value()
                 : asset.textures[mat.emissiveTexture.value().textureIndex].basisuImageIndex.value();
 
-            mat_data.emissive_id = static_cast<uint32_t>(texture_offset + image_index);
+            mat_data.emissive_id = static_cast<uint32_t>(image_index);
         }
 
-        if (mat.transmission.get())
-        {
-            auto* transmission_material = mat.transmission.get();
-            mat_data.transmission_factor = transmission_material->transmissionFactor;
-            if (transmission_material->transmissionTexture.has_value())
-            {
-                size_t image_index =
-                    asset.textures[transmission_material->transmissionTexture.value().textureIndex].imageIndex
-                    ? asset.textures[transmission_material->transmissionTexture.value().textureIndex].imageIndex.value()
-                    : asset.textures[transmission_material->transmissionTexture.value().textureIndex].basisuImageIndex.value();
-                mat_data.transmission_id = static_cast<uint32_t>(texture_offset + image_index);
-            }
-        }
-
-        if (mat.volume.get())
-        {
-            auto* volume_material = mat.volume.get();
-            mat_data.thickness_factor = volume_material->thicknessFactor;
-            mat_data.attenuation_color.x = volume_material->attenuationColor[0];
-            mat_data.attenuation_color.y = volume_material->attenuationColor[1];
-            mat_data.attenuation_color.z = volume_material->attenuationColor[2];
-            mat_data.attenuation_distance =
-                volume_material->attenuationDistance == std::numeric_limits<float>::infinity()
-                ? 0.0
-                : volume_material->attenuationDistance;
-            if (volume_material->thicknessTexture.has_value())
-            {
-                size_t image_index =
-                    asset.textures[volume_material->thicknessTexture.value().textureIndex].imageIndex
-                    ? asset.textures[volume_material->thicknessTexture.value().textureIndex].imageIndex.value()
-                    : asset.textures[volume_material->thicknessTexture.value().textureIndex].basisuImageIndex.value();
-                mat_data.thickness_id = static_cast<uint32_t>(texture_offset + image_index);
-            }
-        }
-
-        materials_data.push_back(mat_data);
+        materials.push_back(mat_data);
     }
-    */
 
     for (fastgltf::Mesh& mesh : asset.meshes)
     {
@@ -727,41 +688,14 @@ bool AssetLoader::load_gltf(
             // }
 
             MeshData mesh_data{};
-            // // note: if we implement multithreading, this likely needs to be computed post meshoptimizing
-            // mesh_data.vertex_offset = static_cast<uint32_t>(scene->vertices.size());
-            // // for multiple gltf compatibility
-            // auto material_offset = materials_data.size() - asset.materials.size();
-            // if (p.materialIndex.has_value())
-            // {
-            //     size_t idx = p.materialIndex.value();
-            //     mesh_data.material_id = static_cast<uint32_t>(idx + material_offset);
-            //     auto alpha_mode = asset.materials[idx].alphaMode;
-            //     // if (asset.materials[idx].doubleSided)
-            //     //     fmt::println("{}", asset.materials[idx].name);
-            //     switch (alpha_mode)
-            //     {
-            //     case fastgltf::AlphaMode::Mask:
-            //         mesh_data.pass = MaterialPass::Mask;
-            //         break;
-            //     case fastgltf::AlphaMode::Blend:
-            //         mesh_data.pass = MaterialPass::Blend;
-            //         break;
-            //     default:
-            //         break;
-            //     }
-
-            //     if (asset.materials[idx].transmission.get())
-            //         mesh_data.pass = MaterialPass::Transmission;
-            // }
-            // else
-            // {
-            //     assert(0);
-            // }
-
-            // auto& meshlet_indices = scene->meshlet_indices;
-            // auto& meshlets = scene->meshlets;
-
-            // optimize_mesh(vertices, indices, meshlet_indices, meshlets, mesh_data, scene->vertices, scene->indices);
+            if (p.materialIndex.has_value())
+            {
+                mesh_data.material_id = static_cast<uint32_t>(p.materialIndex.value());
+            }
+            else
+            {
+                assert(0);
+            }
 
             mesh_data.first_index = static_cast<uint32_t>(m_indices.size());
             mesh_data.index_count = static_cast<uint32_t>(indices.size());

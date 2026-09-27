@@ -141,6 +141,7 @@ void Engine::init_vulkan()
     features_12.shaderFloat16 = true;
     features_12.descriptorBindingPartiallyBound = true;
     features_12.descriptorBindingVariableDescriptorCount = true;
+    features_12.runtimeDescriptorArray = true;
 
     VkPhysicalDeviceVulkan11Features features_11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
 
@@ -315,10 +316,30 @@ void Engine::run()
         register_object(node, glm::mat4(1.0), asset_loader.children_nodes, asset_loader.meshes);
     }
 
+    // Update descriptors
+    std::vector<VkWriteDescriptorSet> writes{};
+    std::vector<VkDescriptorImageInfo> image_infos(asset_loader.images.size());
+    for (uint32_t handle = 0; handle < asset_loader.images.size(); handle++)
+    {
+        image_infos[handle] = VkDescriptorImageInfo{ .imageView = asset_loader.images[handle].view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
+        writes.emplace_back(write_image_descriptor(sampled_image_desc_set, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, handle, &image_infos[handle]));
+    }
+    vkUpdateDescriptorSets(device, writes.size(), writes.data(), 0, nullptr);
+
+    writes.clear();
+    image_infos.clear();
+
+    // Create sampler
+    VkSampler linear_samp = create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT);
+    image_infos.emplace_back(VkDescriptorImageInfo{ .sampler = linear_samp });
+    writes.emplace_back(write_sampler_descriptor(sampler_desc_set, VK_DESCRIPTOR_TYPE_SAMPLER, 0, &image_infos[0]));
+    vkUpdateDescriptorSets(device, writes.size(), writes.data(), 0, nullptr);
+
     // Load GPU data
     Buffer vertex_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.m_vertices.data(), asset_loader.m_vertices.size() * sizeof(Vertex));
     Buffer index_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.m_indices.data(), asset_loader.m_indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
     Buffer object_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, renderables.data(), renderables.size() * sizeof(ObjectData));
+    Buffer material_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.materials.data(), asset_loader.materials.size() * sizeof(MaterialData));
 
     Image depth_image = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
 
@@ -348,9 +369,12 @@ void Engine::run()
     auto max_push_constant_size = properties2.properties.limits.maxPushConstantsSize;
     VkPushConstantRange pc_range{ .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, .offset = 0, .size = max_push_constant_size };
 
+    std::array<VkDescriptorSetLayout, 4> desc_set_layouts{ buffer_layout, storage_image_layout, sampled_image_layout, sampler_layout };
     VkPipelineLayoutCreateInfo pipeline_layout_info{ .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
     pipeline_layout_info.pPushConstantRanges = &pc_range;
     pipeline_layout_info.pushConstantRangeCount = 1;
+    pipeline_layout_info.pSetLayouts = desc_set_layouts.data();
+    pipeline_layout_info.setLayoutCount = desc_set_layouts.size();
     VK_CHECK(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &pipeline_layout));
 
     mesh_pass = create_graphics_pipeline(device, &program, { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT }, nullptr, &pipeline_layout, { swapchain_format });
@@ -425,6 +449,15 @@ void Engine::run()
 
         VK_CHECK(vkBeginCommandBuffer(cmd, &cmd_begin_info));
 
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &buffer_desc_set, 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, 1, &storage_image_desc_set, 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, 1, &sampled_image_desc_set, 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 3, 1, &sampler_desc_set, 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 1, &buffer_desc_set, 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 1, 1, &storage_image_desc_set, 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 2, 1, &sampled_image_desc_set, 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 3, 1, &sampler_desc_set, 0, nullptr);
+
         stage_barrier(
             cmd,
             swapchain.images[swapchain_image_idx],
@@ -483,9 +516,10 @@ void Engine::run()
             glm::mat4 view_proj;
             VkDeviceAddress vb;
             VkDeviceAddress ob;
+            VkDeviceAddress mb;
         };
 
-        PushData data{ view_proj, vertex_buffer.address, object_buffer.address };
+        PushData data{ view_proj, vertex_buffer.address, object_buffer.address, material_buffer.address };
         VkPushConstantsInfo pc{ .sType = VK_STRUCTURE_TYPE_PUSH_CONSTANTS_INFO };
         pc.layout = pipeline_layout;
         pc.size = sizeof(PushData);
@@ -558,7 +592,9 @@ void Engine::run()
     destroy_buffer(allocator, vertex_buffer);
     destroy_buffer(allocator, index_buffer);
     destroy_buffer(allocator, object_buffer);
+    destroy_buffer(allocator, material_buffer);
     destroy_image(device, allocator, depth_image);
+    vkDestroySampler(device, linear_samp, nullptr);
 
     asset_loader.cleanup();
 }
@@ -584,6 +620,8 @@ void Engine::register_object(const Node& node, const glm::mat4& top_matrix, cons
             obj.translation = translation;
             obj.scale = glm::max(glm::max(scale.x, scale.y), scale.z);
             obj.orientation = glm::quat(rotation.w, rotation.x, rotation.y, rotation.z);
+            obj.material_id = mesh.material_id;
+            // obj.mesh_id = -1;
 
             renderables.push_back(obj);
             meshes.push_back(mesh);

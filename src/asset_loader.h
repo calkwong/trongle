@@ -10,6 +10,14 @@
 #include <string>
 #include <cstdint>
 
+struct MeshData
+{
+    uint32_t first_index;
+    uint32_t index_count;
+    uint32_t vertex_offset;
+    uint32_t material_id;
+};
+
 struct MeshAsset
 {
     std::vector<MeshData> mesh;
@@ -36,6 +44,7 @@ struct AssetLoader
     std::vector<MeshAsset> meshes;
     std::vector<Vertex> m_vertices;
     std::vector<uint32_t> m_indices;
+    std::vector<MaterialData> materials;
 
     std::vector<Node> parent_nodes;
     std::vector<Node> children_nodes;
