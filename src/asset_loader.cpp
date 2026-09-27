@@ -74,7 +74,6 @@ bool read_raw_image_data_from_file(const char* filename, std::vector<uint8_t>& k
 }
 
 // TODO: handle descriptor ids
-// TODO: clean up paths
 std::vector<Image> load_images(
     const fastgltf::Asset& asset,
     VkDevice device,
@@ -409,11 +408,11 @@ bool AssetLoader::load_gltf(
     VkFence fence,
     VkCommandPool command_pool,
     VkCommandBuffer cmd,
-    const std::string& file_path
+    const std::string& gltf_file
 )
 {
-    auto asset_path = "../assets/" + file_path;
-    fmt::println("loading glTF: {}", asset_path);
+    std::filesystem::path asset_path = "../assets/" + gltf_file;
+    fmt::println("loading glTF: {}", asset_path.string());
 
     // TODO: implement enums to select at runtime
     constexpr auto supported_extensions =
@@ -423,28 +422,25 @@ bool AssetLoader::load_gltf(
 
     fastgltf::Parser parser(supported_extensions);
 
-    // TODO: look up options
     constexpr auto gltf_options{
-        fastgltf::Options::DontRequireValidAssetMember |
-        // fastgltf::Options::LoadGLBBuffers | // now default behaviour
-        fastgltf::Options::AllowDouble | fastgltf::Options::LoadExternalBuffers
+        fastgltf::Options::DontRequireValidAssetMember | fastgltf::Options::AllowDouble | fastgltf::Options::LoadExternalBuffers
     };
 
-    std::filesystem::path path = asset_path;
-    auto gltf_file = fastgltf::GltfDataBuffer::FromPath(path);
+    auto gltf_data_buffer = fastgltf::GltfDataBuffer::FromPath(asset_path);
 
-    if (gltf_file.error() != fastgltf::Error::None)
+    if (gltf_data_buffer.error() != fastgltf::Error::None)
     {
-        fmt::println("Error: {}", fastgltf::getErrorName(gltf_file.error()));
+        fmt::println("Error: {}", fastgltf::getErrorName(gltf_data_buffer.error()));
         return false;
     }
 
     fastgltf::Asset asset{};
 
-    auto type = fastgltf::determineGltfFileType(gltf_file.get());
+    auto gltf_path = asset_path.parent_path();
+    auto type = fastgltf::determineGltfFileType(gltf_data_buffer.get());
     if (type == fastgltf::GltfType::glTF)
     {
-        auto load = parser.loadGltf(gltf_file.get(), path.parent_path(), gltf_options);
+        auto load = parser.loadGltf(gltf_data_buffer.get(), gltf_path, gltf_options);
         if (load)
         {
             asset = std::move(load.get());
@@ -457,7 +453,7 @@ bool AssetLoader::load_gltf(
     }
     else if (type == fastgltf::GltfType::GLB)
     {
-        auto load{ parser.loadGltfBinary(gltf_file.get(), path.parent_path(), gltf_options) };
+        auto load{ parser.loadGltfBinary(gltf_data_buffer.get(), gltf_path, gltf_options) };
         if (load)
         {
             asset = std::move(load.get());
@@ -476,7 +472,7 @@ bool AssetLoader::load_gltf(
 
     if (!asset.images.empty())
     {
-        images = load_images(asset, device, queue, fence, command_pool, cmd, allocator, path.parent_path().string());
+        images = load_images(asset, device, queue, fence, command_pool, cmd, allocator, gltf_path.string());
     }
 
     assert(!asset.materials.empty() && "No materials found");

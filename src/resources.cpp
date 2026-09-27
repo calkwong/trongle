@@ -10,6 +10,8 @@
 #include <functional>
 #include <cstring>
 #include <cmath>
+#include <vector>
+#include <initializer_list>
 
 void stage_barrier(
     VkCommandBuffer cmd,
@@ -315,4 +317,51 @@ VkSampler create_sampler(VkDevice device, VkFilter filter, VkSamplerMipmapMode m
     VK_CHECK(vkCreateSampler(device, &info, nullptr, &sampler));
 
     return sampler;
+}
+
+void transition_images(
+    VkCommandBuffer cmd,
+    std::initializer_list<VkImage> images,
+    std::initializer_list<VkImage> depth_images
+)
+{
+    std::vector<VkImageMemoryBarrier2> barriers(images.size());
+
+    VkImageSubresourceRange subresource_range{};
+    subresource_range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    subresource_range.baseMipLevel = 0;
+    subresource_range.levelCount = VK_REMAINING_MIP_LEVELS;
+    subresource_range.baseArrayLayer = 0;
+    subresource_range.layerCount = VK_REMAINING_ARRAY_LAYERS;
+
+    for (auto image : images)
+    {
+        barriers.emplace_back(VkImageMemoryBarrier2{
+
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .image = image,
+            .subresourceRange = subresource_range,
+        });
+    }
+
+    subresource_range.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    for (auto image : depth_images)
+    {
+        barriers.emplace_back(VkImageMemoryBarrier2{
+
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .image = image,
+            .subresourceRange = subresource_range,
+        });
+    }
+
+    VkDependencyInfo info{ .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+    info.imageMemoryBarrierCount = barriers.size();
+    info.pImageMemoryBarriers = barriers.data();
+
+    vkCmdPipelineBarrier2(cmd, &info);
 }

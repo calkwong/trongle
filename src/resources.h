@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <initializer_list>
 
 struct Image
 {
@@ -101,3 +102,9 @@ VkDeviceAddress get_buffer_address(VkDevice device, VkBuffer buffer);
 void immediate_submit(VkDevice device, VkQueue queue, VkFence fence, VkCommandPool command_pool, VkCommandBuffer cmd, std::function<void(VkCommandBuffer cmd)>&& func);
 
 VkSampler create_sampler(VkDevice device, VkFilter filter, VkSamplerMipmapMode mipmap, VkSamplerAddressMode address);
+
+void transition_images(
+    VkCommandBuffer cmd,
+    std::initializer_list<VkImage> images,
+    std::initializer_list<VkImage> depth_images
+);

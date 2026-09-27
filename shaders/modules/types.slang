@@ -13,13 +13,6 @@ public struct Vertex
     public float16_t uv_y;
 };
 
-// TODO: fix
-public struct MeshLod
-{
-    public uint first_index;
-    public uint count;
-}
-
 public struct ObjectData
 {
     public float3 translation;
