@@ -57,7 +57,7 @@ void ps_main(Interp in, out float4 out_color: SV_Target0)
     float4 albedo = m.base_color_factor;
     if (m.diffuse_id != INVALID_ID)
     {
-        Texture2D tex = get_sampled_image<Texture2D>(m.diffuse_id);
+        Texture2D tex = get_nonuniform_sampled_image<Texture2D>(m.diffuse_id);
         albedo.xyz *= tex.Sample(samp, in.uv).xyz;
     }
 
@@ -66,7 +66,7 @@ void ps_main(Interp in, out float4 out_color: SV_Target0)
     //     float perceptual_roughness = m.roughness_factor;
     //     if (m.metal_roughness_id != INVALID_ID)
     //     {
-    //         perceptual_roughness *= get_sampled_image<Texture2D>(m.metal_roughness_id).Sample(samp, in.uv).g;
+    //         perceptual_roughness *= get_nonuniform_sampled_image<Texture2D>(m.metal_roughness_id).Sample(samp, in.uv).g;
     //     }
     //
     //     out_color = float4(float3(perceptual_roughness), 1.0);
