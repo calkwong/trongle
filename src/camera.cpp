@@ -1,11 +1,12 @@
 
 #include "camera.h"
 
-#include <cmath>
+#include <glm/common.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/ext/vector_float3.hpp>
 #include <glm/ext/matrix_float4x4.hpp>
 #include <glm/ext/vector_float4.hpp>
+#include <glm/trigonometric.hpp>
 #include <glm/ext/quaternion_common.hpp>
 #include <glm/ext/quaternion_float.hpp>
 #include <glm/ext/quaternion_trigonometric.hpp>
@@ -21,6 +22,9 @@
 
 namespace
 {
+constexpr auto MIN_PITCH = glm::radians(-89.0f);
+constexpr auto MAX_PITCH = glm::radians(89.0f);
+
 glm::vec3 rotate_quat(glm::vec3 v, glm::quat quat)
 {
     glm::vec3 q = glm::vec3(quat.x, quat.y, quat.z);
@@ -61,9 +65,9 @@ void Camera::process_sdl_event(const SDL_Event& e, bool relative_mouse_mode)
 
     if (e.type == SDL_EVENT_MOUSE_MOTION)
     {
-        // TODO: limit vertical camera rotation
         yaw += static_cast<float>(e.motion.xrel) * sensitivity;
         pitch -= static_cast<float>(e.motion.yrel) * sensitivity;
+        pitch = glm::clamp(pitch, MIN_PITCH, MAX_PITCH);
     }
 }
 
@@ -75,7 +79,7 @@ void Camera::update(float deltatime)
 
 glm::mat4 Camera::set_perspective_matrix(float fovy, float aspect, float znear)
 {
-    const float f = 1.0f / std::tan(fovy / 2.0f);
+    const float f = 1.0f / glm::tan(fovy / 2.0f);
 
     // clang-format off
 	perspective = glm::mat4(
