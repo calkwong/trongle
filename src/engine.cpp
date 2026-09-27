@@ -142,6 +142,7 @@ void Engine::init_vulkan()
     features_12.descriptorBindingPartiallyBound = true;
     features_12.descriptorBindingVariableDescriptorCount = true;
     features_12.runtimeDescriptorArray = true;
+    features_12.scalarBlockLayout = true;
 
     VkPhysicalDeviceVulkan11Features features_11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
 
