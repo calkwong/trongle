@@ -48,3 +48,29 @@ struct MaterialData
     uint32_t emissive_id = -1;
     uint32_t occlusion_id = -1;
 };
+
+struct MeshData
+{
+    uint32_t vertex_offset;
+    uint32_t first_index;
+    uint32_t index_count;
+    float radius;
+
+    glm::vec3 center;
+};
+
+struct DrawIndirect
+{
+    uint32_t index_count;
+    uint32_t instance_count;
+    uint32_t first_index;
+    int vertex_offset;
+    uint32_t first_instance;
+};
+
+struct Dispatch
+{
+    uint32_t x;
+    uint32_t y;
+    uint32_t z;
+};

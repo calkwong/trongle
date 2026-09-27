@@ -46,3 +46,29 @@ public struct MaterialData
     public uint32_t occlusion_id;
 }
 
+public struct MeshData
+{
+    public uint32_t vertex_offset;
+    public uint32_t first_index;
+    public uint32_t index_count;
+    public float radius;
+
+    public float3 center;
+}
+
+public struct DrawIndirect
+{
+    public uint index_count;
+    public uint instance_count;
+    public uint first_index;
+    public int vertex_offset;
+    public uint first_instance;
+}
+
+public struct Dispatch
+{
+    public uint x;
+    public uint y;
+    public uint z;
+}
+

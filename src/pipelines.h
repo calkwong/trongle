@@ -27,11 +27,19 @@ using ColorAttachmentFormats = std::initializer_list<VkFormat>;
 
 std::unique_ptr<ShaderPass> create_graphics_pipeline(
     VkDevice device,
-    ShaderProgram* program,
+    const ShaderProgram* program,
     ShaderStages stages,
-    VkShaderDescriptorSetAndBindingMappingInfoEXT* p_desc_set_and_binding_mapping_info,
-    VkPipelineLayout* pipeline_layout,
+    const VkShaderDescriptorSetAndBindingMappingInfoEXT* p_desc_set_and_binding_mapping_info,
+    const VkPipelineLayout* pipeline_layout,
     ColorAttachmentFormats color_attachment_formats,
     VkCullModeFlags cull_mode = VK_CULL_MODE_BACK_BIT,
+    SpecConstants spec_constants = {}
+);
+
+std::unique_ptr<ShaderPass> create_compute_pipeline(
+    VkDevice device,
+    const ShaderProgram* program,
+    const VkShaderDescriptorSetAndBindingMappingInfoEXT* p_desc_set_and_binding_mapping_info,
+    const VkPipelineLayout* pipeline_layout,
     SpecConstants spec_constants = {}
 );

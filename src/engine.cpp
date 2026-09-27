@@ -21,6 +21,7 @@
 #include <glm/ext/matrix_float3x3.hpp>
 #include <glm/ext/quaternion_float.hpp>
 #include <glm/ext/vector_float3.hpp>
+#include <glm/geometric.hpp>
 #include <glm/ext/vector_float4.hpp>
 #include <glm/matrix.hpp>
 #include <glm/trigonometric.hpp>
@@ -71,6 +72,11 @@ void decompose_transform(const glm::mat4& m, glm::vec3& t, glm::vec3& s, glm::ve
     rotation[qc ^ 1] = qs * (r01 + qs1 * r10);
     rotation[qc ^ 2] = qs * (r20 + qs2 * r02);
     rotation[qc ^ 3] = qs * (r12 + qs3 * r21);
+}
+
+uint32_t get_group_count(uint32_t size, uint32_t threads)
+{
+    return (size + threads + 1) / threads;
 }
 
 VkBool32 custom_debug_callback(
@@ -145,6 +151,7 @@ void Engine::init_vulkan()
     features_12.scalarBlockLayout = true;
     features_12.shaderSampledImageArrayNonUniformIndexing = true;
     features_12.shaderStorageImageArrayNonUniformIndexing = true;
+    features_12.drawIndirectCount = true;
 
     VkPhysicalDeviceVulkan11Features features_11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
 
@@ -224,6 +231,7 @@ void Engine::cleanup()
 
     vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
     vkDestroyPipeline(device, mesh_pass->pipeline, nullptr);
+    vkDestroyPipeline(device, cull_pass->pipeline, nullptr);
 
     vkDestroyDescriptorPool(device, desc_pool, nullptr);
     vkDestroyDescriptorSetLayout(device, buffer_layout, nullptr);
@@ -340,9 +348,12 @@ void Engine::run()
 
     // Load GPU data
     Buffer vertex_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.m_vertices.data(), asset_loader.m_vertices.size() * sizeof(Vertex));
-    Buffer index_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.m_indices.data(), asset_loader.m_indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    Buffer index_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.m_indices.data(), asset_loader.m_indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT);
     Buffer object_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, renderables.data(), renderables.size() * sizeof(ObjectData));
     Buffer material_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.materials.data(), asset_loader.materials.size() * sizeof(MaterialData));
+    Buffer mesh_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, meshes.data(), meshes.size() * sizeof(MeshData));
+    Buffer draw_indirect_buffer = create_buffer(device, allocator, renderables.size() * sizeof(VkDrawIndexedIndirectCommand), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT);
+    Buffer dispatch_buffer = create_buffer(device, allocator, sizeof(Dispatch), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT);
 
     Image depth_image = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
 
@@ -364,13 +375,10 @@ void Engine::run()
                      });
 
     // Init PSO
-    auto swapchain_format = VK_FORMAT_B8G8R8A8_UNORM;
-    auto program = load_shader_program("mesh.slang", device);
-
     VkPhysicalDeviceProperties2 properties2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
     vkGetPhysicalDeviceProperties2(physical_device, &properties2);
     auto max_push_constant_size = properties2.properties.limits.maxPushConstantsSize;
-    VkPushConstantRange pc_range{ .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, .offset = 0, .size = max_push_constant_size };
+    VkPushConstantRange pc_range{ .stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = max_push_constant_size };
 
     std::array<VkDescriptorSetLayout, 4> desc_set_layouts{ buffer_layout, storage_image_layout, sampled_image_layout, sampler_layout };
     VkPipelineLayoutCreateInfo pipeline_layout_info{ .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
@@ -380,8 +388,14 @@ void Engine::run()
     pipeline_layout_info.setLayoutCount = desc_set_layouts.size();
     VK_CHECK(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &pipeline_layout));
 
-    mesh_pass = create_graphics_pipeline(device, &program, { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT }, nullptr, &pipeline_layout, { swapchain_format });
-    vkDestroyShaderModule(device, program.module, nullptr);
+    auto swapchain_format = VK_FORMAT_B8G8R8A8_UNORM;
+    auto mesh_program = load_shader_program("mesh.slang", device);
+    auto cull_program = load_shader_program("culling.slang", device);
+
+    mesh_pass = create_graphics_pipeline(device, &mesh_program, { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT }, nullptr, &pipeline_layout, { swapchain_format });
+    cull_pass = create_compute_pipeline(device, &cull_program, nullptr, &pipeline_layout);
+    vkDestroyShaderModule(device, mesh_program.module, nullptr);
+    vkDestroyShaderModule(device, cull_program.module, nullptr);
 
     auto last_frame = SDL_GetTicks();
     bool quit{ false };
@@ -472,6 +486,59 @@ void Engine::run()
             0
         );
 
+        vkCmdFillBuffer(cmd, dispatch_buffer.buffer, 0, dispatch_buffer.size, 0);
+
+        stage_barrier(cmd, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_pass->pipeline);
+
+        struct ComputePushData
+        {
+            glm::mat4 view;
+            VkDeviceAddress mesh_buffer;
+            VkDeviceAddress object_buffer;
+            VkDeviceAddress draw_indirect_buffer;
+            VkDeviceAddress dispatch_buffer;
+            glm::vec4 planes;
+            float p00;
+            float p11;
+            float near;
+            float far;
+            uint32_t count;
+        };
+
+        auto proj_t = glm::transpose(proj);
+        auto m0 = proj_t[0];
+        auto m1 = proj_t[1];
+        auto m3 = proj_t[3];
+        auto left_plane = glm::normalize(glm::vec3(m3 + m0));
+        auto bottom_plane = glm::normalize(glm::vec3(m3 + m1));
+
+        ComputePushData push{};
+        push.view = view;
+        push.mesh_buffer = mesh_buffer.address;
+        push.object_buffer = object_buffer.address;
+        push.draw_indirect_buffer = draw_indirect_buffer.address;
+        push.dispatch_buffer = dispatch_buffer.address;
+        push.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
+        push.p00 = proj[0][0];
+        push.p11 = proj[1][1];
+        push.near = camera.near;
+        push.far = camera.far;
+        push.count = renderables.size();
+
+        vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushData), &push);
+        vkCmdDispatch(cmd, get_group_count(renderables.size(), 256), 1, 1);
+
+        stage_barrier(
+            cmd,
+            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
+            VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+            VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+        );
+
+        // TODO: create a render func
         VkClearColorValue clear_color_value = { 0.f, 0.f, 0.f, 1.f };
         VkClearValue clear_value{ .color = clear_color_value };
 
@@ -523,20 +590,10 @@ void Engine::run()
         };
 
         PushData data{ view_proj, vertex_buffer.address, object_buffer.address, material_buffer.address };
-        VkPushConstantsInfo pc{ .sType = VK_STRUCTURE_TYPE_PUSH_CONSTANTS_INFO };
-        pc.layout = pipeline_layout;
-        pc.size = sizeof(PushData);
-        pc.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        pc.pValues = &data;
-        vkCmdPushConstants2(cmd, &pc);
+        vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
         vkCmdBindIndexBuffer2(cmd, index_buffer.buffer, 0, index_buffer.size, VK_INDEX_TYPE_UINT32);
-
-        uint32_t i = 0;
-        for (auto i = 0; i < meshes.size(); i++)
-        {
-            auto& mesh = meshes[i];
-            vkCmdDrawIndexed(cmd, mesh.index_count, 1, mesh.first_index, mesh.vertex_offset, i);
-        }
+        // We don't use queried max draw indirect count as validation layer wants buffer size to be able to store maxDrawCount, which is a waste of memory
+        vkCmdDrawIndexedIndirectCount(cmd, draw_indirect_buffer.buffer, 0, dispatch_buffer.buffer, 0, renderables.size(), sizeof(VkDrawIndexedIndirectCommand));
 
         vkCmdEndRendering(cmd);
 
@@ -596,14 +653,16 @@ void Engine::run()
     destroy_buffer(allocator, index_buffer);
     destroy_buffer(allocator, object_buffer);
     destroy_buffer(allocator, material_buffer);
+    destroy_buffer(allocator, mesh_buffer);
+    destroy_buffer(allocator, draw_indirect_buffer);
+    destroy_buffer(allocator, dispatch_buffer);
     destroy_image(device, allocator, depth_image);
     vkDestroySampler(device, linear_samp, nullptr);
 
     asset_loader.cleanup();
 }
 
-// TODO: do we need to cache to deduplicate?
-void Engine::register_object(const Node& node, const glm::mat4& top_matrix, const std::vector<Node>& children, const std::vector<MeshAsset>& mesh_assets)
+void Engine::register_object(const Node& node, const glm::mat4& top_matrix, const std::vector<Node>& children, const std::vector<GltfMesh>& mesh_assets)
 {
     auto world_matrix = top_matrix * node.world_transform;
 
@@ -624,10 +683,19 @@ void Engine::register_object(const Node& node, const glm::mat4& top_matrix, cons
             obj.scale = glm::max(glm::max(scale.x, scale.y), scale.z);
             obj.orientation = glm::quat(rotation.w, rotation.x, rotation.y, rotation.z);
             obj.material_id = mesh.material_id;
-            // obj.mesh_id = -1;
+
+            // TODO: test req - do we need a mesh cache?
+            obj.mesh_id = static_cast<uint32_t>(meshes.size());
 
             renderables.push_back(obj);
-            meshes.push_back(mesh);
+            meshes.push_back(
+                MeshData{
+                    .vertex_offset = mesh.vertex_offset,
+                    .first_index = mesh.first_index,
+                    .index_count = mesh.index_count,
+                    .radius = mesh.radius,
+                    .center = mesh.center }
+            );
         }
     }
 

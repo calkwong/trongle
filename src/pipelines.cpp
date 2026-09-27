@@ -78,10 +78,10 @@ ShaderProgram load_shader_program(const char* path, VkDevice device)
 // TODO: implement proper error check for invalid pipeline_layout + p_desc_set_and_binding_mapping_info combination
 std::unique_ptr<ShaderPass> create_graphics_pipeline(
     VkDevice device,
-    ShaderProgram* program,
+    const ShaderProgram* program,
     ShaderStages stages,
-    VkShaderDescriptorSetAndBindingMappingInfoEXT* p_desc_set_and_binding_mapping_info,
-    VkPipelineLayout* pipeline_layout,
+    const VkShaderDescriptorSetAndBindingMappingInfoEXT* p_desc_set_and_binding_mapping_info,
+    const VkPipelineLayout* pipeline_layout,
     ColorAttachmentFormats color_attachment_formats,
     VkCullModeFlags cull_mode /*= VK_CULL_MODE_BACK_BIT*/,
     SpecConstants spec_constants /*= {}*/
@@ -114,6 +114,7 @@ std::unique_ptr<ShaderPass> create_graphics_pipeline(
     std::vector<VkSpecializationMapEntry> spec_map_entries{};
     VkSpecializationInfo specialization_info{};
 
+    // REVIEW
     auto specialization_count = spec_constants.size();
     if (specialization_count > 0)
     {
@@ -233,6 +234,63 @@ std::unique_ptr<ShaderPass> create_graphics_pipeline(
     info.layout = pipeline_layout != nullptr ? *pipeline_layout : nullptr;
 
     VK_CHECK(vkCreateGraphicsPipelines(device, 0, 1, &info, nullptr, &pipeline));
+
+    result->pipeline = pipeline;
+
+    return result;
+}
+
+// TODO: implement proper error check for invalid pipeline_layout + p_desc_set_and_binding_mapping_info combination
+std::unique_ptr<ShaderPass> create_compute_pipeline(
+    VkDevice device,
+    const ShaderProgram* program,
+    const VkShaderDescriptorSetAndBindingMappingInfoEXT* p_desc_set_and_binding_mapping_info,
+    const VkPipelineLayout* pipeline_layout,
+    SpecConstants spec_constants /*= {}*/
+)
+{
+    std::unique_ptr<ShaderPass> result = std::make_unique<ShaderPass>();
+    VkPipeline pipeline{};
+
+    std::vector<VkSpecializationMapEntry> spec_map_entries{};
+    VkSpecializationInfo specialization_info{};
+
+    // REVIEW
+    auto specialization_count = spec_constants.size();
+    if (specialization_count != 0)
+    {
+        for (uint32_t i = 0; i < specialization_count; i++)
+        {
+            VkSpecializationMapEntry entry{};
+            entry.constantID = i;
+            entry.offset = i * sizeof(uint32_t);
+            entry.size = sizeof(uint32_t);
+            spec_map_entries.push_back(entry);
+        }
+
+        specialization_info.mapEntryCount = static_cast<uint32_t>(spec_map_entries.size());
+        specialization_info.pMapEntries = spec_map_entries.data();
+        specialization_info.dataSize = spec_map_entries.size() * sizeof(uint32_t);
+        specialization_info.pData = data(spec_constants);
+    }
+
+    VkPipelineShaderStageCreateInfo shader_stage_create_info{ .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+    shader_stage_create_info.pNext = p_desc_set_and_binding_mapping_info;
+    shader_stage_create_info.flags = 0;
+    shader_stage_create_info.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    shader_stage_create_info.module = program->module;
+    shader_stage_create_info.pName = "main";
+    shader_stage_create_info.pSpecializationInfo = &specialization_info;
+
+    VkPipelineCreateFlags2CreateInfo create_flags_2_create_info{ .sType = VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO };
+    create_flags_2_create_info.flags = VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT;
+
+    VkComputePipelineCreateInfo info{ .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
+    info.pNext = p_desc_set_and_binding_mapping_info == nullptr ? nullptr : &create_flags_2_create_info;
+    info.stage = shader_stage_create_info;
+    info.layout = pipeline_layout != nullptr ? *pipeline_layout : nullptr;
+
+    VK_CHECK(vkCreateComputePipelines(device, 0, 1, &info, nullptr, &pipeline));
 
     result->pipeline = pipeline;
 

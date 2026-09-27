@@ -13,6 +13,7 @@
 #include <glm/geometric.hpp>
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <glm/common.hpp>
 #include <vk_mem_alloc.h>
 #include <basisu_transcoder.h>
 #include <fmt/core.h>
@@ -550,7 +551,7 @@ bool AssetLoader::load_gltf(
 
     for (fastgltf::Mesh& mesh : asset.meshes)
     {
-        MeshAsset new_mesh{};
+        GltfMesh new_mesh{};
 
         for (int i = 0; i < mesh.primitives.size(); ++i)
         {
@@ -573,6 +574,8 @@ bool AssetLoader::load_gltf(
             using Position = std::array<uint16_t, 3>;
             std::vector<Position> positions{};
 
+            glm::vec3 center{}; // TODO: MOVE to meshOpt
+
             if (auto it = p.findAttribute("POSITION"); it != p.attributes.end())
             {
                 auto& position_accessor = asset.accessors[it->accessorIndex];
@@ -582,6 +585,7 @@ bool AssetLoader::load_gltf(
                     position_accessor,
                     [&](glm::vec3 pos, size_t index)
                     {
+                        center += pos; // TODO: MOVE to meshOpt
                         uint16_t px = meshopt_quantizeHalf(pos.x);
                         uint16_t py = meshopt_quantizeHalf(pos.y);
                         uint16_t pz = meshopt_quantizeHalf(pos.z);
@@ -589,6 +593,20 @@ bool AssetLoader::load_gltf(
                         positions[index] = Position{ px, py, pz };
                     }
                 );
+            }
+
+            // TODO: MOVE to meshOpt
+            center /= positions.size();
+            float radius{};
+            for (auto i = 0; i < positions.size(); i++)
+            {
+                float px = meshopt_dequantizeHalf(positions[i][0]);
+                float py = meshopt_dequantizeHalf(positions[i][1]);
+                float pz = meshopt_dequantizeHalf(positions[i][2]);
+
+                auto pos = glm::vec3(px, py, pz);
+
+                radius = glm::max(radius, glm::distance(center, pos));
             }
 
             std::vector<uint32_t> normals{};
@@ -687,7 +705,7 @@ bool AssetLoader::load_gltf(
             //     mikk_calculate_tangents(mikk_mesh);
             // }
 
-            MeshData mesh_data{};
+            GltfPrimitive mesh_data{};
             if (p.materialIndex.has_value())
             {
                 mesh_data.material_id = static_cast<uint32_t>(p.materialIndex.value());
@@ -700,6 +718,10 @@ bool AssetLoader::load_gltf(
             mesh_data.first_index = static_cast<uint32_t>(m_indices.size());
             mesh_data.index_count = static_cast<uint32_t>(indices.size());
             mesh_data.vertex_offset = static_cast<uint32_t>(m_vertices.size());
+
+            // TODO: MOVE to meshOpt
+            mesh_data.radius = radius;
+            mesh_data.center = center;
 
             new_mesh.mesh.push_back(mesh_data);
 

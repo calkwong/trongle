@@ -3,6 +3,7 @@
 #include "resources.h"
 #include "shared_cpu_gpu.h"
 
+#include <glm/ext/vector_float3.hpp>
 #include <glm/ext/matrix_float4x4.hpp>
 #include <volk.h>
 
@@ -10,17 +11,20 @@
 #include <string>
 #include <cstdint>
 
-struct MeshData
+struct GltfPrimitive
 {
+    uint32_t vertex_offset;
     uint32_t first_index;
     uint32_t index_count;
-    uint32_t vertex_offset;
+    float radius;
+
+    glm::vec3 center;
     uint32_t material_id;
 };
 
-struct MeshAsset
+struct GltfMesh
 {
-    std::vector<MeshData> mesh;
+    std::vector<GltfPrimitive> mesh;
 };
 
 struct Node
@@ -41,7 +45,7 @@ struct AssetLoader
     VmaAllocator allocator;
 
     std::vector<Image> images;
-    std::vector<MeshAsset> meshes;
+    std::vector<GltfMesh> meshes;
     std::vector<Vertex> m_vertices;
     std::vector<uint32_t> m_indices;
     std::vector<MaterialData> materials;

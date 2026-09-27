@@ -27,7 +27,7 @@ struct ShaderPass;
 struct ObjectData;
 struct Node;
 struct MeshData;
-struct MeshAsset;
+struct GltfMesh;
 
 class Engine
 {
@@ -43,6 +43,7 @@ public:
 
     VkPipelineLayout pipeline_layout;
     std::unique_ptr<ShaderPass> mesh_pass;
+    std::unique_ptr<ShaderPass> cull_pass;
 
     VkFence imm_fence;
     VkCommandPool imm_pool;
@@ -81,5 +82,5 @@ public:
     void init_sync();
     void init_descriptors();
     void run();
-    void register_object(const Node& node, const glm::mat4& top_matrix, const std::vector<Node>& children, const std::vector<MeshAsset>& meshes);
+    void register_object(const Node& node, const glm::mat4& top_matrix, const std::vector<Node>& children, const std::vector<GltfMesh>& meshes);
 };
