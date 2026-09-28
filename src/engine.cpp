@@ -35,7 +35,7 @@
 #include <cassert>
 #include <array>
 
-#define MAX_TIMESTAMP_QUERIES 30
+#define MAX_TIMESTAMP_QUERIES 2
 
 const char* ASSET_NAME = "Sponza/Sponza.gltf";
 
@@ -228,7 +228,11 @@ void Engine::init_vulkan()
     allocator_info.pVulkanFunctions = &vulkan_functions;
     VK_CHECK(vmaCreateAllocator(&allocator_info, &allocator));
 
-    fmt::println("Initialized Vulkan");
+#ifdef NDEBUG
+    fmt::println("Initialized Vulkan - Release mode");
+#else
+    fmt::println("Initialized Vulkan - Debug mode");
+#endif
 }
 
 void Engine::cleanup()
@@ -409,6 +413,8 @@ void Engine::run()
     vkDestroyShaderModule(device, mesh_program.module, nullptr);
     vkDestroyShaderModule(device, cull_program.module, nullptr);
 
+    std::array<uint64_t, MAX_TIMESTAMP_QUERIES> query_results{};
+
     auto last_frame = SDL_GetTicks();
     bool quit{ false };
 
@@ -431,6 +437,13 @@ void Engine::run()
                 if (event.window.data1 > 0 && event.window.data2 > 0)
                 {
                     update_swapchain(swapchain, window, physical_device, device, surface);
+
+                    destroy_image(device, allocator, depth_image);
+                    depth_image = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+                    immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
+                                     {
+                                         transition_images(cmd, {}, { depth_image.image });
+                                     });
                 }
                 break;
             default:
@@ -445,6 +458,13 @@ void Engine::run()
         {
             update_swapchain(swapchain, window, physical_device, device, surface);
             swapchain_dirty = false;
+
+            destroy_image(device, allocator, depth_image);
+            depth_image = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+            immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
+                             {
+                                 transition_images(cmd, {}, { depth_image.image });
+                             });
         }
 
         ImGui_ImplVulkan_NewFrame();
@@ -475,7 +495,6 @@ void Engine::run()
         VK_CHECK(vkResetFences(device, 1, &frame.fence));
 
         // Get query pool results
-        std::array<uint64_t, MAX_TIMESTAMP_QUERIES> query_results{};
         auto query_results_size = query_results.size();
 
         vkGetQueryPoolResults(
@@ -484,7 +503,7 @@ void Engine::run()
             0,
             query_results_size,
             query_results_size * sizeof(uint64_t),
-            &query_results,
+            query_results.data(),
             sizeof(uint64_t),
             VK_QUERY_RESULT_64_BIT
         );
@@ -494,7 +513,7 @@ void Engine::run()
         vkResetQueryPool(device, frame.query_pool, 0, MAX_TIMESTAMP_QUERIES);
 
         ImGui::Begin("Stats");
-        ImGui::Text("Total render time:    %.3f ms", stats.gpu_time);
+        ImGui::Text("GPU time:    %.3f ms", stats.gpu_time);
         ImGui::End();
         ImGui::Render();
 
