@@ -36,12 +36,13 @@
 #include <array>
 
 #define MAX_TIMESTAMP_QUERIES 2
+#define MAX_PIPELINE_QUERIES 1
 
 const char* ASSET_NAME = "Sponza/Sponza.gltf";
 
 namespace
 {
-// tTken directly from https://github.com/zeux/niagara/blob/master/src/scene.cpp
+// Taken directly from https://github.com/zeux/niagara/blob/master/src/scene.cpp
 void decompose_transform(const glm::mat4& m, glm::vec3& t, glm::vec3& s, glm::vec4& rotation)
 {
     t.x = m[3][0];
@@ -138,7 +139,7 @@ void Engine::init_vulkan()
         fmt::println("Failed to create window surface.");
         std::abort();
     }
-    SDL_SetWindowRelativeMouseMode(window, true);
+    SDL_SetWindowRelativeMouseMode(window, relative_mouse_mode);
 
     VkPhysicalDeviceVulkan14Features features_14{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES };
 
@@ -163,6 +164,7 @@ void Engine::init_vulkan()
 
     VkPhysicalDeviceFeatures features_10{};
     features_10.shaderInt16 = true;
+    features_10.pipelineStatisticsQuery = true;
 
     vkb::PhysicalDeviceSelector selector{ vkb_inst };
     auto phys_ret = selector.set_surface(surface)
@@ -256,7 +258,7 @@ void Engine::cleanup()
         vkDestroyCommandPool(device, frame.command_pool, nullptr);
         vkDestroyFence(device, frame.fence, nullptr);
         vkDestroySemaphore(device, frame.image_acquired_semaphore, nullptr);
-        vkDestroyQueryPool(device, frame.query_pool, nullptr);
+        vkDestroyQueryPool(device, frame.query_pool_timestamp, nullptr);
     }
 
     vkDestroyCommandPool(device, imm_pool, nullptr);
@@ -321,13 +323,20 @@ void Engine::init_sync()
 void Engine::init_query_pool()
 {
     VkQueryPoolCreateInfo query_pool_info{ .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
-    query_pool_info.queryType = VK_QUERY_TYPE_TIMESTAMP;
-    query_pool_info.queryCount = MAX_TIMESTAMP_QUERIES;
 
     for (auto& frame : frames)
     {
-        VK_CHECK(vkCreateQueryPool(device, &query_pool_info, nullptr, &frame.query_pool));
-        vkResetQueryPool(device, frame.query_pool, 0, MAX_TIMESTAMP_QUERIES);
+        query_pool_info.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        query_pool_info.queryCount = MAX_TIMESTAMP_QUERIES;
+        VK_CHECK(vkCreateQueryPool(device, &query_pool_info, nullptr, &frame.query_pool_timestamp));
+
+        query_pool_info.queryType = VK_QUERY_TYPE_PIPELINE_STATISTICS;
+        query_pool_info.queryCount = MAX_PIPELINE_QUERIES;
+        query_pool_info.pipelineStatistics = VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT;
+        VK_CHECK(vkCreateQueryPool(device, &query_pool_info, nullptr, &frame.query_pool_pipeline));
+
+        vkResetQueryPool(device, frame.query_pool_timestamp, 0, MAX_TIMESTAMP_QUERIES);
+        vkResetQueryPool(device, frame.query_pool_pipeline, 0, MAX_PIPELINE_QUERIES);
     }
 }
 
@@ -413,7 +422,8 @@ void Engine::run()
     vkDestroyShaderModule(device, mesh_program.module, nullptr);
     vkDestroyShaderModule(device, cull_program.module, nullptr);
 
-    std::array<uint64_t, MAX_TIMESTAMP_QUERIES> query_results{};
+    std::array<uint64_t, MAX_TIMESTAMP_QUERIES> timestamp_results{};
+    std::array<uint64_t, MAX_PIPELINE_QUERIES> pipeline_results{};
 
     auto last_frame = SDL_GetTicks();
     bool quit{ false };
@@ -444,6 +454,13 @@ void Engine::run()
                                      {
                                          transition_images(cmd, {}, { depth_image.image });
                                      });
+                }
+                break;
+            case SDL_EVENT_KEY_DOWN:
+                if (event.key.key == SDLK_SPACE && event.key.repeat == 0)
+                {
+                    relative_mouse_mode = !relative_mouse_mode;
+                    SDL_SetWindowRelativeMouseMode(window, relative_mouse_mode);
                 }
                 break;
             default:
@@ -495,28 +512,45 @@ void Engine::run()
         VK_CHECK(vkResetFences(device, 1, &frame.fence));
 
         // Get query pool results
-        auto query_results_size = query_results.size();
+        auto timestamp_results_size = timestamp_results.size();
+        auto pipeline_results_size = pipeline_results.size();
 
         if (frame_number >= FRAMES_IN_FLIGHT)
         {
             VK_CHECK(vkGetQueryPoolResults(
                 device,
-                frame.query_pool,
+                frame.query_pool_timestamp,
                 0,
-                query_results_size,
-                query_results_size * sizeof(uint64_t),
-                query_results.data(),
+                timestamp_results_size,
+                timestamp_results_size * sizeof(uint64_t),
+                timestamp_results.data(),
+                sizeof(uint64_t),
+                VK_QUERY_RESULT_64_BIT
+            ));
+
+            VK_CHECK(vkGetQueryPoolResults(
+                device,
+                frame.query_pool_pipeline,
+                0,
+                pipeline_results_size,
+                pipeline_results_size * sizeof(uint64_t),
+                pipeline_results.data(),
                 sizeof(uint64_t),
                 VK_QUERY_RESULT_64_BIT
             ));
         }
 
-        double new_gpu_time = static_cast<double>(query_results[1] - query_results[0]) * timestamp_period * 1e-6;
+        double new_gpu_time = static_cast<double>(timestamp_results[1] - timestamp_results[0]) * timestamp_period * 1e-6;
         stats.gpu_time = new_gpu_time + 0.95 * (stats.gpu_time - new_gpu_time);
-        vkResetQueryPool(device, frame.query_pool, 0, MAX_TIMESTAMP_QUERIES);
+        auto triangles = pipeline_results[0];
+
+        vkResetQueryPool(device, frame.query_pool_timestamp, 0, MAX_TIMESTAMP_QUERIES);
+        vkResetQueryPool(device, frame.query_pool_pipeline, 0, MAX_PIPELINE_QUERIES);
 
         ImGui::Begin("Stats");
         ImGui::Text("GPU time:    %.3f ms", stats.gpu_time);
+        ImGui::Text("Triangles:   %u", static_cast<unsigned int>(triangles));
+        ImGui::Text("Triangles:   %.1fM", static_cast<double>(triangles) * 1e-6);
         ImGui::End();
         ImGui::Render();
 
@@ -528,7 +562,7 @@ void Engine::run()
         cmd_begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
         VK_CHECK(vkBeginCommandBuffer(cmd, &cmd_begin_info));
-        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool, 0);
+        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 0);
 
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &buffer_desc_set, 0, nullptr);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, 1, &storage_image_desc_set, 0, nullptr);
@@ -657,7 +691,9 @@ void Engine::run()
         vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
         vkCmdBindIndexBuffer2(cmd, index_buffer.buffer, 0, index_buffer.size, VK_INDEX_TYPE_UINT32);
         // We don't use queried max draw indirect count as validation layer wants buffer size to be able to store maxDrawCount, which is a waste of memory
+        vkCmdBeginQuery(cmd, frame.query_pool_pipeline, 0, 0);
         vkCmdDrawIndexedIndirectCount(cmd, draw_indirect_buffer.buffer, 0, dispatch_buffer.buffer, 0, renderables.size(), sizeof(VkDrawIndexedIndirectCommand));
+        vkCmdEndQuery(cmd, frame.query_pool_pipeline, 0);
         vkCmdEndRendering(cmd);
 
         stage_barrier(
@@ -699,7 +735,7 @@ void Engine::run()
             0
         );
 
-        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool, 1);
+        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 1);
         VK_CHECK(vkEndCommandBuffer(cmd));
 
         // Submit command buffer

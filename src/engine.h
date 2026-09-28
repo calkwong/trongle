@@ -19,7 +19,8 @@ struct FrameData
     VkCommandBuffer command_buffer;
     VkFence fence;
     VkSemaphore image_acquired_semaphore;
-    VkQueryPool query_pool;
+    VkQueryPool query_pool_timestamp;
+    VkQueryPool query_pool_pipeline;
 
     // TODO: deletion queue
 };
@@ -56,6 +57,7 @@ public:
     VkCommandBuffer imm_buf;
 
     SDL_Window* window;
+    bool relative_mouse_mode = true;
     bool swapchain_dirty;
     Swapchain swapchain;
 
