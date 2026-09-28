@@ -17,6 +17,19 @@ target_sources(basis_universal PRIVATE
 target_include_directories(engine PRIVATE basis_universal/transcoder)
 target_include_directories(engine PRIVATE basis_universal/zstd)
 
+target_sources(engine PRIVATE
+  imgui/imgui.cpp
+  imgui/imgui_draw.cpp
+  imgui/imgui_tables.cpp
+  imgui/imgui_widgets.cpp
+  imgui/imgui_demo.cpp
+  imgui/backends/imgui_impl_sdl3.cpp
+  imgui/backends/imgui_impl_vulkan.cpp
+)
+
+target_include_directories(engine PRIVATE imgui)
+target_include_directories(engine PRIVATE imgui/backends)
+
 target_link_libraries(engine PRIVATE
   fmt::fmt
   volk
@@ -33,3 +46,10 @@ find_package(TBB)
 if (TBB_FOUND)
   target_link_libraries(engine PRIVATE TBB::tbb)
 endif()
+
+
+target_compile_definitions(engine PRIVATE
+  GLM_FORCE_DEPTH_ZERO_TO_ONE
+  VK_NO_PROTOTYPES
+  IMGUI_IMPL_VULKAN_USE_VOLK
+)

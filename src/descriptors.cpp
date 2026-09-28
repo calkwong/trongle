@@ -5,12 +5,13 @@
 
 #include <cstdint>
 
-VkDescriptorPool create_descriptor_pool(VkDevice device, const VkDescriptorPoolSize* pool_sizes, uint32_t pool_size_count)
+VkDescriptorPool create_descriptor_pool(VkDevice device, const VkDescriptorPoolSize* pool_sizes, uint32_t pool_size_count, uint32_t max_sets, VkDescriptorPoolCreateFlags flags /*= 0*/)
 {
     VkDescriptorPool pool{};
 
     VkDescriptorPoolCreateInfo info{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     info.maxSets = 4;
+    info.flags = flags;
     info.poolSizeCount = pool_size_count;
     info.pPoolSizes = pool_sizes;
 

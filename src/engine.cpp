@@ -25,12 +25,17 @@
 #include <glm/ext/vector_float4.hpp>
 #include <glm/matrix.hpp>
 #include <glm/trigonometric.hpp>
+#include <imgui.h>
+#include <imgui_impl_sdl3.h>
+#include <imgui_impl_vulkan.h>
 
 #include <vector>
 #include <cstdlib>
 #include <cstdint>
 #include <cassert>
 #include <array>
+
+#define MAX_TIMESTAMP_QUERIES 30
 
 const char* ASSET_NAME = "Sponza/Sponza.gltf";
 
@@ -122,8 +127,8 @@ void Engine::init_vulkan()
 
     volkLoadInstance(instance);
 
-    // SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland");
-    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland");
+    // SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
     SDL_Init(SDL_INIT_VIDEO);
     auto window_flags = static_cast<SDL_WindowFlags>(SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
     window = SDL_CreateWindow("Untitled vulkan renderer", 1280u, 720u, window_flags);
@@ -152,6 +157,7 @@ void Engine::init_vulkan()
     features_12.shaderSampledImageArrayNonUniformIndexing = true;
     features_12.shaderStorageImageArrayNonUniformIndexing = true;
     features_12.drawIndirectCount = true;
+    features_12.hostQueryReset = true;
 
     VkPhysicalDeviceVulkan11Features features_11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
 
@@ -229,6 +235,8 @@ void Engine::cleanup()
 {
     vkDeviceWaitIdle(device);
 
+    destroy_imgui();
+
     vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
     vkDestroyPipeline(device, mesh_pass->pipeline, nullptr);
     vkDestroyPipeline(device, cull_pass->pipeline, nullptr);
@@ -244,6 +252,7 @@ void Engine::cleanup()
         vkDestroyCommandPool(device, frame.command_pool, nullptr);
         vkDestroyFence(device, frame.fence, nullptr);
         vkDestroySemaphore(device, frame.image_acquired_semaphore, nullptr);
+        vkDestroyQueryPool(device, frame.query_pool, nullptr);
     }
 
     vkDestroyCommandPool(device, imm_pool, nullptr);
@@ -305,6 +314,19 @@ void Engine::init_sync()
     VK_CHECK(vkCreateFence(device, &fence_info, nullptr, &imm_fence));
 }
 
+void Engine::init_query_pool()
+{
+    VkQueryPoolCreateInfo query_pool_info{ .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
+    query_pool_info.queryType = VK_QUERY_TYPE_TIMESTAMP;
+    query_pool_info.queryCount = MAX_TIMESTAMP_QUERIES;
+
+    for (auto& frame : frames)
+    {
+        VK_CHECK(vkCreateQueryPool(device, &query_pool_info, nullptr, &frame.query_pool));
+        vkResetQueryPool(device, frame.query_pool, 0, MAX_TIMESTAMP_QUERIES);
+    }
+}
+
 void Engine::run()
 {
     Camera camera{};
@@ -362,12 +384,14 @@ void Engine::run()
                          transition_images(cmd, {}, { depth_image.image });
                      });
 
-    // Init PSO
     VkPhysicalDeviceProperties2 properties2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
     vkGetPhysicalDeviceProperties2(physical_device, &properties2);
+    assert(properties2.properties.limits.timestampComputeAndGraphics);
     auto max_push_constant_size = properties2.properties.limits.maxPushConstantsSize;
-    VkPushConstantRange pc_range{ .stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = max_push_constant_size };
+    auto timestamp_period = properties2.properties.limits.timestampPeriod;
 
+    // Init PSO
+    VkPushConstantRange pc_range{ .stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = max_push_constant_size };
     std::array<VkDescriptorSetLayout, 4> desc_set_layouts{ buffer_layout, storage_image_layout, sampled_image_layout, sampler_layout };
     VkPipelineLayoutCreateInfo pipeline_layout_info{ .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
     pipeline_layout_info.pPushConstantRanges = &pc_range;
@@ -414,6 +438,7 @@ void Engine::run()
             }
 
             camera.process_sdl_event(event, SDL_GetWindowRelativeMouseMode(window));
+            ImGui_ImplSDL3_ProcessEvent(&event);
         }
 
         if (swapchain_dirty)
@@ -421,6 +446,10 @@ void Engine::run()
             update_swapchain(swapchain, window, physical_device, device, surface);
             swapchain_dirty = false;
         }
+
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplSDL3_NewFrame();
+        ImGui::NewFrame();
 
         // Update camera
         camera.update(delta_time);
@@ -445,6 +474,30 @@ void Engine::run()
         VK_CHECK_SWAPCHAIN(acquire_result);
         VK_CHECK(vkResetFences(device, 1, &frame.fence));
 
+        // Get query pool results
+        std::array<uint64_t, MAX_TIMESTAMP_QUERIES> query_results{};
+        auto query_results_size = query_results.size();
+
+        vkGetQueryPoolResults(
+            device,
+            frame.query_pool,
+            0,
+            query_results_size,
+            query_results_size * sizeof(uint64_t),
+            &query_results,
+            sizeof(uint64_t),
+            VK_QUERY_RESULT_64_BIT
+        );
+
+        double new_gpu_time = static_cast<double>(query_results[1] - query_results[0]) * timestamp_period * 1e-6;
+        stats.gpu_time = new_gpu_time + 0.95 * (stats.gpu_time - new_gpu_time);
+        vkResetQueryPool(device, frame.query_pool, 0, MAX_TIMESTAMP_QUERIES);
+
+        ImGui::Begin("Stats");
+        ImGui::Text("Total render time:    %.3f ms", stats.gpu_time);
+        ImGui::End();
+        ImGui::Render();
+
         // Record command buffer
         VkCommandBuffer cmd = frame.command_buffer;
         VK_CHECK(vkResetCommandPool(device, frame.command_pool, 0));
@@ -453,6 +506,7 @@ void Engine::run()
         cmd_begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
         VK_CHECK(vkBeginCommandBuffer(cmd, &cmd_begin_info));
+        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, frame.query_pool, 0);
 
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &buffer_desc_set, 0, nullptr);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, 1, &storage_image_desc_set, 0, nullptr);
@@ -587,6 +641,34 @@ void Engine::run()
 
         stage_barrier(
             cmd,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT
+        );
+
+        {
+            VkRenderingAttachmentInfo color_attachment{};
+            color_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+            color_attachment.imageView = swapchain.image_views[swapchain_image_idx];
+            color_attachment.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+            VkRenderingInfo render_info{};
+            render_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+            render_info.renderArea = VkRect2D{ VkOffset2D{ 0, 0 }, swapchain.extent };
+            render_info.layerCount = 1;
+            render_info.colorAttachmentCount = 1;
+            render_info.pColorAttachments = &color_attachment;
+
+            vkCmdBeginRendering(cmd, &render_info);
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+            vkCmdEndRendering(cmd);
+        }
+
+        stage_barrier(
+            cmd,
             swapchain.images[swapchain_image_idx],
             VK_IMAGE_LAYOUT_GENERAL,
             VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
@@ -596,6 +678,7 @@ void Engine::run()
             0
         );
 
+        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, frame.query_pool, 1);
         VK_CHECK(vkEndCommandBuffer(cmd));
 
         // Submit command buffer
@@ -708,7 +791,7 @@ void Engine::init_descriptors()
         VkDescriptorPoolSize{ .type = VK_DESCRIPTOR_TYPE_SAMPLER, .descriptorCount = sampler_count },
     };
 
-    desc_pool = create_descriptor_pool(device, pool_sizes.data(), pool_sizes.size());
+    desc_pool = create_descriptor_pool(device, pool_sizes.data(), pool_sizes.size(), 4);
 
     // Set up bindless
     VkDescriptorBindingFlags binding_flags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
@@ -732,6 +815,53 @@ void Engine::init_descriptors()
     sampler_desc_set = create_descriptor_set(device, desc_pool, &sampler_layout, &sampler_count);
 }
 
+void Engine::init_imgui()
+{
+    std::array<VkDescriptorPoolSize, 2> pool_sizes{
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, IMGUI_IMPL_VULKAN_MINIMUM_SAMPLED_IMAGE_POOL_SIZE },
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLER, IMGUI_IMPL_VULKAN_MINIMUM_SAMPLER_POOL_SIZE }
+    };
+
+    imgui_pool = create_descriptor_pool(device, pool_sizes.data(), pool_sizes.size(), 1, VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT);
+
+    // Setup Dear ImGui context
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
+
+    // Setup Platform/Renderer backends
+    ImGui_ImplSDL3_InitForVulkan(window);
+    ImGui_ImplVulkan_InitInfo init_info{};
+    init_info.ApiVersion = VK_API_VERSION_1_4;
+    init_info.Instance = instance;
+    init_info.PhysicalDevice = physical_device;
+    init_info.Device = device;
+    init_info.QueueFamily = graphics_queue_family;
+    init_info.Queue = graphics_queue;
+    init_info.DescriptorPool = imgui_pool;
+    init_info.MinImageCount = 2;
+    init_info.ImageCount = 2;
+    init_info.UseDynamicRendering = true;
+
+    VkPipelineRenderingCreateInfo render_info{ .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
+    render_info.colorAttachmentCount = 1;
+
+    auto swapchain_image_format = VK_FORMAT_B8G8R8A8_UNORM;
+    render_info.pColorAttachmentFormats = &swapchain_image_format;
+    init_info.PipelineInfoMain.PipelineRenderingCreateInfo = render_info;
+
+    ImGui_ImplVulkan_Init(&init_info);
+}
+
+void Engine::destroy_imgui()
+{
+    ImGui_ImplVulkan_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
+    ImGui::DestroyContext();
+    vkDestroyDescriptorPool(device, imgui_pool, nullptr);
+}
+
 int main()
 {
     Engine engine{};
@@ -739,7 +869,9 @@ int main()
     engine.init_vulkan();
     engine.init_commands();
     engine.init_sync();
+    engine.init_query_pool();
     engine.init_descriptors();
+    engine.init_imgui();
 
     engine.run();
 

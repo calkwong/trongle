@@ -5,7 +5,7 @@
 #include <cstdint>
 
 // Traditional
-VkDescriptorPool create_descriptor_pool(VkDevice device, const VkDescriptorPoolSize* pool_sizes, uint32_t pool_size_count);
+VkDescriptorPool create_descriptor_pool(VkDevice device, const VkDescriptorPoolSize* pool_sizes, uint32_t pool_size_count, uint32_t max_sets, VkDescriptorPoolCreateFlags flags = 0);
 
 VkDescriptorSetLayout create_descriptor_set_layout(
     VkDevice device,

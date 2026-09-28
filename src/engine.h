@@ -19,6 +19,7 @@ struct FrameData
     VkCommandBuffer command_buffer;
     VkFence fence;
     VkSemaphore image_acquired_semaphore;
+    VkQueryPool query_pool;
 
     // TODO: deletion queue
 };
@@ -28,6 +29,11 @@ struct ObjectData;
 struct Node;
 struct MeshData;
 struct GltfMesh;
+
+struct EngineStats
+{
+    double gpu_time;
+};
 
 class Engine
 {
@@ -56,6 +62,8 @@ public:
     uint32_t frame_number;
     std::array<FrameData, FRAMES_IN_FLIGHT> frames;
 
+    EngineStats stats;
+
     // Descriptors
     VkDescriptorPool desc_pool;
     VkDescriptorSetLayout buffer_layout;
@@ -66,6 +74,7 @@ public:
     VkDescriptorSet storage_image_desc_set;
     VkDescriptorSet sampled_image_desc_set;
     VkDescriptorSet sampler_desc_set;
+    VkDescriptorPool imgui_pool;
 
     // Scene data
     std::vector<ObjectData> renderables;
@@ -80,7 +89,10 @@ public:
     void cleanup();
     void init_commands();
     void init_sync();
+    void init_query_pool();
     void init_descriptors();
+    void init_imgui();
+    void destroy_imgui();
     void run();
     void register_object(const Node& node, const glm::mat4& top_matrix, const std::vector<Node>& children, const std::vector<GltfMesh>& meshes);
 };
