@@ -497,16 +497,19 @@ void Engine::run()
         // Get query pool results
         auto query_results_size = query_results.size();
 
-        vkGetQueryPoolResults(
-            device,
-            frame.query_pool,
-            0,
-            query_results_size,
-            query_results_size * sizeof(uint64_t),
-            query_results.data(),
-            sizeof(uint64_t),
-            VK_QUERY_RESULT_64_BIT
-        );
+        if (frame_number >= FRAMES_IN_FLIGHT)
+        {
+            VK_CHECK(vkGetQueryPoolResults(
+                device,
+                frame.query_pool,
+                0,
+                query_results_size,
+                query_results_size * sizeof(uint64_t),
+                query_results.data(),
+                sizeof(uint64_t),
+                VK_QUERY_RESULT_64_BIT
+            ));
+        }
 
         double new_gpu_time = static_cast<double>(query_results[1] - query_results[0]) * timestamp_period * 1e-6;
         stats.gpu_time = new_gpu_time + 0.95 * (stats.gpu_time - new_gpu_time);
@@ -525,7 +528,7 @@ void Engine::run()
         cmd_begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
         VK_CHECK(vkBeginCommandBuffer(cmd, &cmd_begin_info));
-        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, frame.query_pool, 0);
+        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool, 0);
 
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &buffer_desc_set, 0, nullptr);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, 1, &storage_image_desc_set, 0, nullptr);
@@ -594,9 +597,9 @@ void Engine::run()
         stage_barrier(
             cmd,
             VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-            VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
+            VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
             VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-            VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+            VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT
         );
 
         // TODO: create a render func
@@ -655,7 +658,6 @@ void Engine::run()
         vkCmdBindIndexBuffer2(cmd, index_buffer.buffer, 0, index_buffer.size, VK_INDEX_TYPE_UINT32);
         // We don't use queried max draw indirect count as validation layer wants buffer size to be able to store maxDrawCount, which is a waste of memory
         vkCmdDrawIndexedIndirectCount(cmd, draw_indirect_buffer.buffer, 0, dispatch_buffer.buffer, 0, renderables.size(), sizeof(VkDrawIndexedIndirectCommand));
-
         vkCmdEndRendering(cmd);
 
         stage_barrier(
@@ -697,7 +699,7 @@ void Engine::run()
             0
         );
 
-        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, frame.query_pool, 1);
+        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool, 1);
         VK_CHECK(vkEndCommandBuffer(cmd));
 
         // Submit command buffer
