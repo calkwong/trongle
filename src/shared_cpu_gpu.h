@@ -1,41 +1,57 @@
 #pragma once
 
-#include <glm/ext/vector_float4.hpp>
-#include <glm/ext/quaternion_float.hpp>
-#include <glm/ext/matrix_float4x4.hpp>
-#include <glm/ext/vector_float3.hpp>
+// clang-format off
+#ifdef __cplusplus
+    #include <glm/ext/vector_float4.hpp>
+    #include <glm/ext/quaternion_float.hpp>
+    #include <glm/ext/vector_float3.hpp>
+    #include <cstdint>
 
-#include <cstdint>
-#include <array>
+    #define PUBLIC_ACCESS
+    using float3 = glm::vec3;
+    using float4 = glm::vec4;
+#else // Slang
+    #define PUBLIC_ACCESS public
+#endif
+// clang-format on
 
-using vec3 = glm::vec3;
-
-struct Vertex
+PUBLIC_ACCESS struct Vertex
 {
+#ifdef __cplusplus
     uint16_t px;
     uint16_t py;
     uint16_t pz;
-    uint16_t tangent;
+#else
+    float16_t px;
+    float16_t py;
+    float16_t pz;
+#endif
 
+    uint16_t tangent;
     uint32_t normal;
 
+#ifdef __cplusplus
     uint16_t uv_x;
     uint16_t uv_y;
+#else
+    float16_t uv_x;
+    float16_t uv_y;
+#endif
 };
 
-struct ObjectData
+PUBLIC_ACCESS struct ObjectData
 {
-    vec3 translation;
+    float3 translation;
     float scale;
-    glm::quat orientation;
+    float4 orientation;
 
     uint32_t mesh_id;
     uint32_t material_id;
 };
 
-struct MaterialData
+PUBLIC_ACCESS struct MaterialData
 {
-    glm::vec4 base_color_factor = glm::vec4(1.0f);
+    float4 base_color_factor = float4(1.0f);
 
     float metallic_factor = 1.0f;
     float roughness_factor = 1.0f;
@@ -43,32 +59,32 @@ struct MaterialData
     uint32_t diffuse_id = -1;
     uint32_t metal_roughness_id = -1;
 
-    vec3 emissive_factor;
+    float3 emissive_factor;
     uint32_t normal_id = -1;
 
     uint32_t emissive_id = -1;
     uint32_t occlusion_id = -1;
 };
 
-struct MeshLod
+PUBLIC_ACCESS struct MeshLod
 {
     uint32_t first_index;
     uint32_t index_count;
     float error;
 };
 
-struct MeshData
+PUBLIC_ACCESS struct MeshData
 {
-    vec3 center;
+    float3 center;
     float radius;
 
     uint32_t lod_count;
     uint32_t vertex_offset;
 
-    std::array<MeshLod, 8> mesh_lods;
+    MeshLod mesh_lods[8];
 };
 
-struct DrawIndirect
+PUBLIC_ACCESS struct DrawIndirect
 {
     uint32_t index_count;
     uint32_t instance_count;
@@ -77,7 +93,7 @@ struct DrawIndirect
     uint32_t first_instance;
 };
 
-struct Dispatch
+PUBLIC_ACCESS struct Dispatch
 {
     uint32_t x;
     uint32_t y;

@@ -10,11 +10,10 @@
 #include <vector>
 #include <string>
 #include <cstdint>
-#include <array>
 
 struct GltfPrimitive
 {
-    std::array<MeshLod, 8> mesh_lods;
+    MeshLod mesh_lods[8];
 
     glm::vec3 center;
     float radius;

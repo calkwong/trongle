@@ -34,13 +34,14 @@
 #include <cstdint>
 #include <cassert>
 #include <array>
+#include <cstring>
 
 #define MAX_TIMESTAMP_QUERIES 2
 #define MAX_PIPELINE_QUERIES 1
 
-// const char* ASSET_NAME = "Sponza/Sponza.gltf";
+const char* ASSET_NAME = "Sponza/Sponza.gltf";
 
-const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
+// const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
 
 namespace
 {
@@ -820,21 +821,23 @@ void Engine::register_object(const Node& node, const glm::mat4& top_matrix, cons
             // TODO: handle non uniform scaling
             obj.translation = translation;
             obj.scale = glm::max(glm::max(scale.x, scale.y), scale.z);
-            obj.orientation = glm::quat(rotation.w, rotation.x, rotation.y, rotation.z);
+            obj.orientation = rotation;
             obj.material_id = mesh.material_id;
 
             // TODO: test req - do we need a mesh cache?
             obj.mesh_id = static_cast<uint32_t>(meshes.size());
 
             renderables.push_back(obj);
-            auto m = meshes.emplace_back(
+
+            auto& m = meshes.emplace_back(
                 MeshData{
                     .center = mesh.center,
                     .radius = mesh.radius,
                     .lod_count = mesh.lod_count,
-                    .vertex_offset = mesh.vertex_offset,
-                    .mesh_lods = mesh.mesh_lods }
+                    .vertex_offset = mesh.vertex_offset }
             );
+
+            memcpy(&m.mesh_lods, &mesh.mesh_lods, sizeof(mesh.mesh_lods));
         }
     }
 
