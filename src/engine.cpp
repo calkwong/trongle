@@ -261,6 +261,7 @@ void Engine::cleanup()
         vkDestroyFence(device, frame.fence, nullptr);
         vkDestroySemaphore(device, frame.image_acquired_semaphore, nullptr);
         vkDestroyQueryPool(device, frame.query_pool_timestamp, nullptr);
+        vkDestroyQueryPool(device, frame.query_pool_pipeline, nullptr);
     }
 
     vkDestroyCommandPool(device, imm_pool, nullptr);
