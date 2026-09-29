@@ -400,7 +400,139 @@ std::vector<Image> load_images(
     return images;
 }
 
-// TODO: optimize mesh
+void optimize_mesh(
+    std::vector<Vertex>& vertices,
+    std::vector<uint32_t>& indices,
+    GltfPrimitive& mesh,
+    std::vector<Vertex>& m_vertices,
+    std::vector<uint32_t>& m_indices
+)
+{
+    // TODO: Index filtering
+
+    // Indexing
+    std::vector<unsigned int> remap(vertices.size());
+    size_t vertex_count = meshopt_generateVertexRemap(remap.data(), indices.data(), indices.size(), vertices.data(), vertices.size(), sizeof(Vertex));
+
+    meshopt_remapIndexBuffer(indices.data(), indices.data(), indices.size(), remap.data());
+    meshopt_remapVertexBuffer(vertices.data(), vertices.data(), vertices.size(), sizeof(Vertex), remap.data());
+
+    vertices.resize(vertex_count);
+
+    // Vertex cache optimization
+    meshopt_optimizeVertexCache(indices.data(), indices.data(), indices.size(), vertices.size());
+
+    // TODO: (Optional) Overdraw optimization
+
+    // Vertex fetch optimization
+    meshopt_optimizeVertexFetch(vertices.data(), indices.data(), indices.size(), vertices.data(), vertices.size(), sizeof(Vertex));
+
+    // Dequantize for mesh center and radius
+    glm::vec3 center{};
+
+    std::vector<glm::vec3> positions(vertex_count);
+    for (size_t i = 0; i < vertex_count; i++)
+    {
+        float px = meshopt_dequantizeHalf(vertices[i].px);
+        float py = meshopt_dequantizeHalf(vertices[i].py);
+        float pz = meshopt_dequantizeHalf(vertices[i].pz);
+
+        positions[i] = glm::vec3(px, py, pz);
+        center += positions[i];
+    }
+
+    std::vector<glm::vec3> normals(vertex_count);
+    for (size_t i = 0; i < vertex_count; i++)
+    {
+        auto n = vertices[i].normal;
+        glm::vec3 normal = glm::vec3((n >> 20) & 1023, (n >> 10) & 1023, n & 1023) / glm::vec3(511.0) - glm::vec3(1.0);
+        normals[i] = normal;
+    }
+
+    center /= vertices.size();
+    float radius = 0.0;
+
+    for (size_t i = 0; i < vertex_count; i++)
+    {
+        radius = std::max(radius, glm::distance(center, positions[i]));
+    }
+
+    mesh.center = center;
+    mesh.radius = radius;
+
+    // Simplification
+    // REVIEW: simplify vs simplifyScale
+    constexpr uint32_t max_lod = 8;
+    float lod_error_scale = meshopt_simplifyScale(&positions[0].x, vertices.size(), sizeof(glm::vec3));
+    float target_error = 1e-1f;
+    float lod_error = 0.f;
+
+    constexpr float attr_weights[3] = { 1.f, 1.f, 1.f }; // For normals
+    float next_error{};
+    float simplify_threshold = 0.6f;
+
+    while (mesh.lod_count < max_lod)
+    {
+        uint32_t first_index = static_cast<uint32_t>(m_indices.size());
+        uint32_t index_count = static_cast<uint32_t>(indices.size());
+
+        m_indices.insert(m_indices.end(), indices.begin(), indices.end());
+
+        MeshLod lod{
+            .first_index = first_index,
+            .index_count = index_count,
+            .error = lod_error * lod_error_scale
+        };
+
+        size_t target_index_count = static_cast<size_t>(indices.size() * simplify_threshold) / 3 * 3;
+
+        mesh.mesh_lods[mesh.lod_count++] = lod;
+
+        // REVIEW
+        if (mesh.lod_count < max_lod)
+        {
+            size_t new_size = meshopt_simplifyWithAttributes(
+                indices.data(),
+                indices.data(),
+                indices.size(),
+                &positions[0].x,
+                vertices.size(),
+                sizeof(glm::vec3),
+                &normals[0].x,
+                sizeof(glm::vec3),
+                &attr_weights[0],
+                3,
+                nullptr,
+                target_index_count,
+                target_error,
+                0,
+                &next_error
+            );
+
+            assert(new_size <= indices.size());
+
+            if (new_size == 0)
+            {
+                break;
+            }
+
+            // Discard LOD if too similar to previous LOD, saves memory
+            if (new_size >= static_cast<size_t>(indices.size() * 0.85f))
+            {
+                break;
+            }
+
+            indices.resize(new_size);
+
+            // Accumulate error as its technically possible for lower LOD to have smaller error?
+            lod_error = glm::max(lod_error, next_error);
+
+            meshopt_optimizeVertexCache(indices.data(), indices.data(), indices.size(), vertices.size());
+        }
+    }
+
+    m_vertices.insert(m_vertices.end(), vertices.begin(), vertices.end());
+}
 } // namespace
 
 bool AssetLoader::load_gltf(
@@ -570,8 +702,6 @@ bool AssetLoader::load_gltf(
             using Position = std::array<uint16_t, 3>;
             std::vector<Position> positions{};
 
-            glm::vec3 center{}; // TODO: MOVE to meshOpt
-
             if (auto it = p.findAttribute("POSITION"); it != p.attributes.end())
             {
                 auto& position_accessor = asset.accessors[it->accessorIndex];
@@ -581,7 +711,6 @@ bool AssetLoader::load_gltf(
                     position_accessor,
                     [&](glm::vec3 pos, size_t index)
                     {
-                        center += pos; // TODO: MOVE to meshOpt
                         uint16_t px = meshopt_quantizeHalf(pos.x);
                         uint16_t py = meshopt_quantizeHalf(pos.y);
                         uint16_t pz = meshopt_quantizeHalf(pos.z);
@@ -589,20 +718,6 @@ bool AssetLoader::load_gltf(
                         positions[index] = Position{ px, py, pz };
                     }
                 );
-            }
-
-            // TODO: MOVE to meshOpt
-            center /= positions.size();
-            float radius{};
-            for (auto i = 0; i < positions.size(); i++)
-            {
-                float px = meshopt_dequantizeHalf(positions[i][0]);
-                float py = meshopt_dequantizeHalf(positions[i][1]);
-                float pz = meshopt_dequantizeHalf(positions[i][2]);
-
-                auto pos = glm::vec3(px, py, pz);
-
-                radius = glm::max(radius, glm::distance(center, pos));
             }
 
             std::vector<uint32_t> normals{};
@@ -711,18 +826,10 @@ bool AssetLoader::load_gltf(
                 assert(0);
             }
 
-            mesh_data.first_index = static_cast<uint32_t>(m_indices.size());
-            mesh_data.index_count = static_cast<uint32_t>(indices.size());
             mesh_data.vertex_offset = static_cast<uint32_t>(m_vertices.size());
 
-            // TODO: MOVE to meshOpt
-            mesh_data.radius = radius;
-            mesh_data.center = center;
-
+            optimize_mesh(vertices, indices, mesh_data, m_vertices, m_indices);
             new_mesh.mesh.push_back(mesh_data);
-
-            m_vertices.insert(m_vertices.end(), vertices.begin(), vertices.end());
-            m_indices.insert(m_indices.end(), indices.begin(), indices.end());
         }
 
         meshes.push_back(new_mesh);

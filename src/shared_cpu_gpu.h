@@ -6,6 +6,7 @@
 #include <glm/ext/vector_float3.hpp>
 
 #include <cstdint>
+#include <array>
 
 using vec3 = glm::vec3;
 
@@ -42,21 +43,29 @@ struct MaterialData
     uint32_t diffuse_id = -1;
     uint32_t metal_roughness_id = -1;
 
+    vec3 emissive_factor;
     uint32_t normal_id = -1;
-    glm::vec3 emissive_factor;
 
     uint32_t emissive_id = -1;
     uint32_t occlusion_id = -1;
 };
 
-struct MeshData
+struct MeshLod
 {
-    uint32_t vertex_offset;
     uint32_t first_index;
     uint32_t index_count;
+    float error;
+};
+
+struct MeshData
+{
+    vec3 center;
     float radius;
 
-    glm::vec3 center;
+    uint32_t lod_count;
+    uint32_t vertex_offset;
+
+    std::array<MeshLod, 8> mesh_lods;
 };
 
 struct DrawIndirect

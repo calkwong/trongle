@@ -14,6 +14,7 @@ struct PushConstants
     float near;
     float far;
     uint count;
+    float lod_distance_factor;
 }
 
 [[vk::push_constant]]
@@ -53,16 +54,27 @@ void main(uint3 global_id: SV_DispatchThreadID)
 
     if (!frustum_culled(center.xyz, radius))
     {
+        uint lod_index = 0;
+        float d = max(0.0, length(center) - radius);
+        float e = d * pc.lod_distance_factor / scale;
+
+        for (uint i = 0; i < mesh.lod_count; i++)
+        {
+            lod_index = e >= mesh.mesh_lods[i].error ? i : lod_index;
+        }
+
         uint count;
         InterlockedAdd(pc.dispatch_buffer.x, 1, count);
         pc.dispatch_buffer.y = 1;
         pc.dispatch_buffer.z = 1;
 
-        pc.draw_indirect_buffer[count].index_count = mesh.index_count;
+        pc.draw_indirect_buffer[count].index_count = mesh.mesh_lods[lod_index].index_count;
         pc.draw_indirect_buffer[count].instance_count = 1;
-        pc.draw_indirect_buffer[count].first_index = mesh.first_index;
+        pc.draw_indirect_buffer[count].first_index = mesh.mesh_lods[lod_index].first_index;
         pc.draw_indirect_buffer[count].vertex_offset = mesh.vertex_offset;
         pc.draw_indirect_buffer[count].first_instance = index;
     }
+
+    scale *= 1.0;
 }
 

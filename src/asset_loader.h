@@ -10,15 +10,18 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <array>
 
 struct GltfPrimitive
 {
-    uint32_t vertex_offset;
-    uint32_t first_index;
-    uint32_t index_count;
-    float radius;
+    std::array<MeshLod, 8> mesh_lods;
 
     glm::vec3 center;
+    float radius;
+
+    uint32_t lod_count;
+    uint32_t vertex_offset;
+
     uint32_t material_id;
 };
 

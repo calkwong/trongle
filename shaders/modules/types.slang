@@ -32,21 +32,29 @@ public struct MaterialData
     public uint32_t diffuse_id;
     public uint32_t metal_roughness_id;
 
-    public uint32_t normal_id;
     public float3 emissive_factor;
+    public uint32_t normal_id;
 
     public uint32_t emissive_id;
     public uint32_t occlusion_id;
 }
 
-public struct MeshData
+public struct MeshLod
 {
-    public uint32_t vertex_offset;
     public uint32_t first_index;
     public uint32_t index_count;
+    public float error;
+}
+
+public struct MeshData
+{
+    public float3 center;
     public float radius;
 
-    public float3 center;
+    public uint32_t lod_count;
+    public uint32_t vertex_offset;
+
+    public MeshLod mesh_lods[8];
 }
 
 public struct DrawIndirect

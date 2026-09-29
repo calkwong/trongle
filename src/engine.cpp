@@ -38,7 +38,9 @@
 #define MAX_TIMESTAMP_QUERIES 2
 #define MAX_PIPELINE_QUERIES 1
 
-const char* ASSET_NAME = "Sponza/Sponza.gltf";
+// const char* ASSET_NAME = "Sponza/Sponza.gltf";
+
+const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
 
 namespace
 {
@@ -128,8 +130,8 @@ void Engine::init_vulkan()
 
     volkLoadInstance(instance);
 
-    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland");
-    // SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
+    // SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland");
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
     SDL_Init(SDL_INIT_VIDEO);
     auto window_flags = static_cast<SDL_WindowFlags>(SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
     window = SDL_CreateWindow("Untitled vulkan renderer", 1280u, 720u, window_flags);
@@ -355,6 +357,10 @@ void Engine::run()
     if (!loaded)
     {
         assert(0 && "load_gltf failed");
+    }
+    else
+    {
+        fmt::println("Gltf loaded");
     }
 
     for (const auto& node : asset_loader.parent_nodes)
@@ -603,6 +609,7 @@ void Engine::run()
             float near;
             float far;
             uint32_t count;
+            float lod_distance_factor;
         };
 
         auto proj_t = glm::transpose(proj);
@@ -624,6 +631,7 @@ void Engine::run()
         push.near = camera.near;
         push.far = camera.far;
         push.count = renderables.size();
+        push.lod_distance_factor = 2.0f / (push.p11 * swapchain.extent.height);
 
         vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushData), &push);
         vkCmdDispatch(cmd, get_group_count(renderables.size(), 256), 1, 1);
@@ -816,13 +824,13 @@ void Engine::register_object(const Node& node, const glm::mat4& top_matrix, cons
             obj.mesh_id = static_cast<uint32_t>(meshes.size());
 
             renderables.push_back(obj);
-            meshes.push_back(
+            auto m = meshes.emplace_back(
                 MeshData{
-                    .vertex_offset = mesh.vertex_offset,
-                    .first_index = mesh.first_index,
-                    .index_count = mesh.index_count,
+                    .center = mesh.center,
                     .radius = mesh.radius,
-                    .center = mesh.center }
+                    .lod_count = mesh.lod_count,
+                    .vertex_offset = mesh.vertex_offset,
+                    .mesh_lods = mesh.mesh_lods }
             );
         }
     }
