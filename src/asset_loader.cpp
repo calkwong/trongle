@@ -408,7 +408,8 @@ void optimize_mesh(
     std::vector<uint32_t>& m_indices
 )
 {
-    // TODO: Index filtering
+    // Index filtering
+    indices.resize(meshopt_filterIndexBuffer(indices.data(), indices.data(), indices.size(), vertices.data(), vertices.size(), sizeof(uint16_t) * 3, sizeof(Vertex)));
 
     // Indexing
     std::vector<unsigned int> remap(vertices.size());
@@ -461,7 +462,6 @@ void optimize_mesh(
     mesh.radius = radius;
 
     // Simplification
-    // REVIEW: simplify vs simplifyScale
     constexpr uint32_t max_lod = 8;
     float lod_error_scale = meshopt_simplifyScale(&positions[0].x, vertices.size(), sizeof(glm::vec3));
     float target_error = 1e-1f;
@@ -484,11 +484,12 @@ void optimize_mesh(
             .error = lod_error * lod_error_scale
         };
 
-        size_t target_index_count = static_cast<size_t>(indices.size() * simplify_threshold) / 3 * 3;
+        size_t target_index_count = (static_cast<size_t>(indices.size() * simplify_threshold) / 3) * 3;
 
         mesh.mesh_lods[mesh.lod_count++] = lod;
 
-        // REVIEW
+        unsigned int options = meshopt_SimplifyErrorClamped;
+
         if (mesh.lod_count < max_lod)
         {
             size_t new_size = meshopt_simplifyWithAttributes(
@@ -505,13 +506,14 @@ void optimize_mesh(
                 nullptr,
                 target_index_count,
                 target_error,
-                0,
+                options,
                 &next_error
             );
 
             assert(new_size <= indices.size());
 
-            if (new_size == 0)
+            // Reached error bound
+            if (new_size == indices.size() || new_size == 0)
             {
                 break;
             }
@@ -524,8 +526,8 @@ void optimize_mesh(
 
             indices.resize(new_size);
 
-            // Accumulate error as its technically possible for lower LOD to have smaller error?
-            lod_error = glm::max(lod_error, next_error);
+            // REVIEW - Since we start from last LOD, we need to accumulate error?
+            lod_error = glm::max(lod_error * 1.5f, next_error);
 
             meshopt_optimizeVertexCache(indices.data(), indices.data(), indices.size(), vertices.size());
         }
