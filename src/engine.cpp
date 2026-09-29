@@ -454,6 +454,7 @@ void Engine::run()
                 if (event.window.data1 > 0 && event.window.data2 > 0)
                 {
                     update_swapchain(swapchain, window, physical_device, device, surface);
+                    proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
 
                     destroy_image(device, allocator, depth_image);
                     depth_image = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
@@ -482,6 +483,7 @@ void Engine::run()
         {
             update_swapchain(swapchain, window, physical_device, device, surface);
             swapchain_dirty = false;
+            proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
 
             destroy_image(device, allocator, depth_image);
             depth_image = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
