@@ -56,5 +56,5 @@ struct AssetLoader
     std::vector<Node> children_nodes;
 
     void cleanup();
-    bool load_gltf(VkQueue queue, VkFence fence, VkCommandPool command_pool, VkCommandBuffer cmd, const std::string& file_path);
+    bool load_gltf(VkQueue queue, VkFence fence, VkCommandPool command_pool, VkCommandBuffer cmd, const std::string& file_path, uint32_t texture_offset);
 };

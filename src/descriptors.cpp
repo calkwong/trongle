@@ -92,3 +92,12 @@ VkWriteDescriptorSet write_sampler_descriptor(VkDescriptorSet set, VkDescriptorT
 
     return write;
 }
+
+uint32_t ImageManager::add(VkImageView view, VkImageLayout layout)
+{
+    uint32_t index = static_cast<uint32_t>(infos.size());
+
+    infos.emplace_back(VkDescriptorImageInfo{ .imageView = view, .imageLayout = layout });
+
+    return index;
+}

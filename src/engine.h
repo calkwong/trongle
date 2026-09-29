@@ -1,6 +1,7 @@
 #pragma once
 
 #include "swapchain.h"
+#include "descriptors.h"
 
 #include <volk.h>
 #include <vk_mem_alloc.h>
@@ -77,6 +78,8 @@ public:
     VkDescriptorSet sampled_image_desc_set;
     VkDescriptorSet sampler_desc_set;
     VkDescriptorPool imgui_pool;
+
+    ImageManager image_manager;
 
     // Scene data
     std::vector<ObjectData> renderables;

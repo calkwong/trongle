@@ -355,7 +355,8 @@ void Engine::run()
 
     // Init scene
     AssetLoader asset_loader{ .device = device, .allocator = allocator };
-    bool loaded = asset_loader.load_gltf(graphics_queue, imm_fence, imm_pool, imm_buf, ASSET_NAME);
+
+    bool loaded = asset_loader.load_gltf(graphics_queue, imm_fence, imm_pool, imm_buf, ASSET_NAME, static_cast<uint32_t>(image_manager.infos.size()));
     if (!loaded)
     {
         assert(0 && "load_gltf failed");
@@ -372,22 +373,24 @@ void Engine::run()
 
     // Update descriptors
     std::vector<VkWriteDescriptorSet> writes{};
-    std::vector<VkDescriptorImageInfo> image_infos(asset_loader.images.size());
-    for (uint32_t handle = 0; handle < asset_loader.images.size(); handle++)
+
+    image_manager.infos.reserve(image_manager.infos.size() + asset_loader.images.size());
+    for (auto i = 0; i < asset_loader.images.size(); i++)
     {
-        image_infos[handle] = VkDescriptorImageInfo{ .imageView = asset_loader.images[handle].view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
-        writes.emplace_back(write_image_descriptor(sampled_image_desc_set, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, handle, &image_infos[handle]));
+        auto id = image_manager.add(asset_loader.images[i].view, VK_IMAGE_LAYOUT_GENERAL);
+        writes.emplace_back(write_image_descriptor(sampled_image_desc_set, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, id, &image_manager.infos[id]));
     }
     vkUpdateDescriptorSets(device, writes.size(), writes.data(), 0, nullptr);
 
-    writes.clear();
-    image_infos.clear();
-
     // Create sampler
+    std::vector<VkDescriptorImageInfo> desc_info{};
     VkSampler linear_samp = create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT);
-    image_infos.emplace_back(VkDescriptorImageInfo{ .sampler = linear_samp });
-    writes.emplace_back(write_sampler_descriptor(sampler_desc_set, VK_DESCRIPTOR_TYPE_SAMPLER, 0, &image_infos[0]));
+    desc_info.emplace_back(VkDescriptorImageInfo{ .sampler = linear_samp });
+    writes.emplace_back(write_sampler_descriptor(sampler_desc_set, VK_DESCRIPTOR_TYPE_SAMPLER, 0, &desc_info[0]));
     vkUpdateDescriptorSets(device, writes.size(), writes.data(), 0, nullptr);
+
+    writes.clear();
+    desc_info.clear();
 
     // Load GPU data
     Buffer vertex_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.m_vertices.data(), asset_loader.m_vertices.size() * sizeof(Vertex));

@@ -542,7 +542,8 @@ bool AssetLoader::load_gltf(
     VkFence fence,
     VkCommandPool command_pool,
     VkCommandBuffer cmd,
-    const std::string& gltf_file
+    const std::string& gltf_file,
+    uint32_t texture_offset
 )
 {
     std::filesystem::path asset_path = "../assets/" + gltf_file;
@@ -633,7 +634,7 @@ bool AssetLoader::load_gltf(
                 ? asset.textures[mat.pbrData.baseColorTexture.value().textureIndex].imageIndex.value()
                 : asset.textures[mat.pbrData.baseColorTexture.value().textureIndex].basisuImageIndex.value();
 
-            mat_data.diffuse_id = static_cast<uint32_t>(image_index);
+            mat_data.diffuse_id = static_cast<uint32_t>(image_index) + texture_offset;
         }
 
         if (mat.pbrData.metallicRoughnessTexture.has_value())
@@ -643,7 +644,7 @@ bool AssetLoader::load_gltf(
                 ? asset.textures[mat.pbrData.metallicRoughnessTexture.value().textureIndex].imageIndex.value()
                 : asset.textures[mat.pbrData.metallicRoughnessTexture.value().textureIndex].basisuImageIndex.value();
 
-            mat_data.metal_roughness_id = static_cast<uint32_t>(image_index);
+            mat_data.metal_roughness_id = static_cast<uint32_t>(image_index) + texture_offset;
         }
 
         if (mat.normalTexture.has_value())
@@ -653,7 +654,7 @@ bool AssetLoader::load_gltf(
                 ? asset.textures[mat.normalTexture.value().textureIndex].imageIndex.value()
                 : asset.textures[mat.normalTexture.value().textureIndex].basisuImageIndex.value();
 
-            mat_data.normal_id = static_cast<uint32_t>(image_index);
+            mat_data.normal_id = static_cast<uint32_t>(image_index) + texture_offset;
         }
 
         if (mat.occlusionTexture.has_value())
@@ -663,7 +664,7 @@ bool AssetLoader::load_gltf(
                 ? asset.textures[mat.occlusionTexture.value().textureIndex].imageIndex.value()
                 : asset.textures[mat.occlusionTexture.value().textureIndex].basisuImageIndex.value();
 
-            mat_data.occlusion_id = static_cast<uint32_t>(image_index);
+            mat_data.occlusion_id = static_cast<uint32_t>(image_index) + texture_offset;
         }
 
         if (mat.emissiveTexture.has_value())
@@ -673,7 +674,7 @@ bool AssetLoader::load_gltf(
                 ? asset.textures[mat.emissiveTexture.value().textureIndex].imageIndex.value()
                 : asset.textures[mat.emissiveTexture.value().textureIndex].basisuImageIndex.value();
 
-            mat_data.emissive_id = static_cast<uint32_t>(image_index);
+            mat_data.emissive_id = static_cast<uint32_t>(image_index) + texture_offset;
         }
 
         materials.push_back(mat_data);

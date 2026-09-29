@@ -3,6 +3,17 @@
 #include <volk.h>
 
 #include <cstdint>
+#include <vector>
+
+struct ImageManager
+{
+    // TODO: update and/or free ids
+
+    std::vector<VkDescriptorImageInfo> infos;
+    // std::vector<uint32_t> unused;
+
+    uint32_t add(VkImageView view, VkImageLayout layout);
+};
 
 // Traditional
 VkDescriptorPool create_descriptor_pool(VkDevice device, const VkDescriptorPoolSize* pool_sizes, uint32_t pool_size_count, uint32_t max_sets, VkDescriptorPoolCreateFlags flags = 0);
