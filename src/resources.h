@@ -90,7 +90,7 @@ Image create_image(
     VkExtent3D extent,
     VkFormat format,
     VkImageUsageFlags usage,
-    VkImageAspectFlags aspect,
+    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT,
     VmaAllocationCreateFlags allocation_flags = 0,
     bool mipmapped = false
 );
@@ -108,3 +108,5 @@ void transition_images(
     std::initializer_list<VkImage> images,
     std::initializer_list<VkImage> depth_images
 );
+
+void copy_image(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent2D src_extent, VkExtent2D dst_extent);

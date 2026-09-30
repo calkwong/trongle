@@ -48,7 +48,12 @@ Interp vs_main(uint instance_id: SV_VulkanInstanceID, uint vertex_id: SV_VulkanV
 }
 
 [shader("pixel")]
-void ps_main(Interp in, out float4 out_color: SV_Target0)
+void ps_main(
+    Interp in,
+    out float4 out_color: SV_Target0,
+    out float4 out_normal: SV_Target1,
+    out float2 out_mr: SV_Target2
+)
 {
     MaterialData m = pc.material_buffer[in.material_id];
 
@@ -61,14 +66,26 @@ void ps_main(Interp in, out float4 out_color: SV_Target0)
         albedo.xyz *= tex.Sample(samp, in.uv).xyz;
     }
 
-    out_color = albedo;
+    float3 N;
+    if (m.normal_id != INVALID_ID)
+    {
+        Texture2D tex = get_nonuniform_sampled_image<Texture2D>(m.normal_id);
+        N = tex.Sample(samp, in.uv).xyz;
+    }
+    else
+    {
+        N = normalize(in.normal);
+    }
 
-    //     float perceptual_roughness = m.roughness_factor;
-    //     if (m.metal_roughness_id != INVALID_ID)
-    //     {
-    //         perceptual_roughness *= get_nonuniform_sampled_image<Texture2D>(m.metal_roughness_id).Sample(samp, in.uv).g;
-    //     }
-    //
-    //     out_color = float4(float3(perceptual_roughness), 1.0);
+    float2 metal_roughness = float2(m.metallic_factor, m.roughness_factor);
+    if (m.metal_roughness_id != INVALID_ID)
+    {
+        Texture2D tex = get_nonuniform_sampled_image<Texture2D>(m.metal_roughness_id);
+        metal_roughness *= tex.Sample(samp, in.uv).bg;
+    }
+
+    out_color = albedo;
+    out_normal = float4(N, 1.0);
+    out_mr = float2(metal_roughness);
 }
 

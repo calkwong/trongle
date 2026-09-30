@@ -124,7 +124,7 @@ Image create_image(
     VkExtent3D extent,
     VkFormat format,
     VkImageUsageFlags usage,
-    VkImageAspectFlags aspect,
+    VkImageAspectFlags aspect /*= VK_IMAGE_ASPECT_COLOR_BIT*/,
     VmaAllocationCreateFlags allocation_flags /*= 0*/,
     bool mipmapped /*= false*/
 )
@@ -325,7 +325,7 @@ void transition_images(
     std::initializer_list<VkImage> depth_images
 )
 {
-    std::vector<VkImageMemoryBarrier2> barriers(images.size());
+    std::vector<VkImageMemoryBarrier2> barriers{};
 
     VkImageSubresourceRange subresource_range{};
     subresource_range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -337,7 +337,6 @@ void transition_images(
     for (auto image : images)
     {
         barriers.emplace_back(VkImageMemoryBarrier2{
-
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
             .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
             .newLayout = VK_IMAGE_LAYOUT_GENERAL,
@@ -350,7 +349,6 @@ void transition_images(
     for (auto image : depth_images)
     {
         barriers.emplace_back(VkImageMemoryBarrier2{
-
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
             .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
             .newLayout = VK_IMAGE_LAYOUT_GENERAL,
@@ -364,4 +362,36 @@ void transition_images(
     info.pImageMemoryBarriers = barriers.data();
 
     vkCmdPipelineBarrier2(cmd, &info);
+}
+
+void copy_image(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent2D src_extent, VkExtent2D dst_extent)
+{
+    VkImageBlit2 blit{ .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2 };
+    blit.srcOffsets[1].x = src_extent.width;
+    blit.srcOffsets[1].y = src_extent.height;
+    blit.srcOffsets[1].z = 1;
+    blit.dstOffsets[1].x = dst_extent.width;
+    blit.dstOffsets[1].y = dst_extent.height;
+    blit.dstOffsets[1].z = 1;
+
+    blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    blit.srcSubresource.baseArrayLayer = 0;
+    blit.srcSubresource.layerCount = 1;
+    blit.srcSubresource.mipLevel = 0;
+
+    blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    blit.dstSubresource.baseArrayLayer = 0;
+    blit.dstSubresource.layerCount = 1;
+    blit.dstSubresource.mipLevel = 0;
+
+    VkBlitImageInfo2 blit_info{ .sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2 };
+    blit_info.dstImage = dst;
+    blit_info.dstImageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    blit_info.srcImage = src;
+    blit_info.srcImageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    blit_info.filter = VK_FILTER_LINEAR;
+    blit_info.regionCount = 1;
+    blit_info.pRegions = &blit;
+
+    vkCmdBlitImage2(cmd, &blit_info);
 }

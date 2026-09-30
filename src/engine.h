@@ -9,7 +9,6 @@
 
 #include <cstdint>
 #include <array>
-#include <memory>
 #include <vector>
 
 constexpr uint32_t FRAMES_IN_FLIGHT = 2;
@@ -50,8 +49,6 @@ public:
     VkDebugUtilsMessengerEXT debug_messenger;
 
     VkPipelineLayout pipeline_layout;
-    std::unique_ptr<ShaderPass> mesh_pass;
-    std::unique_ptr<ShaderPass> cull_pass;
 
     VkFence imm_fence;
     VkCommandPool imm_pool;

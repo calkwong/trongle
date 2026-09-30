@@ -25,6 +25,7 @@
 #include <glm/ext/vector_float4.hpp>
 #include <glm/matrix.hpp>
 #include <glm/trigonometric.hpp>
+#include <glm/ext/vector_uint2.hpp>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
@@ -39,9 +40,11 @@
 #define MAX_TIMESTAMP_QUERIES 2
 #define MAX_PIPELINE_QUERIES 1
 
-const char* ASSET_NAME = "Sponza/Sponza.gltf";
+// const char* ASSET_NAME = "Sponza/Sponza.gltf";
 
-// const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
+const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
+// TODO: switch via imgui
+uint32_t GBUFFER_DEBUG_ID = 1; // color, normal, metal, roughness
 
 namespace
 {
@@ -217,8 +220,11 @@ void Engine::init_vulkan()
     graphics_queue = graphics_queue_ret.value();
     graphics_queue_family = vkb_device.get_queue_index(vkb::QueueType::graphics).value();
 
-    auto window_width = 1280u;
-    auto window_height = 720u;
+    // auto window_width = 1280u;
+    // auto window_height = 720u;
+    // TODO: fix this after implementing rendergraph managed resources
+    auto window_width = 936u;
+    auto window_height = 1012u;
     swapchain = create_swapchain(physical_device, device, surface, window_width, window_height);
 
     VmaAllocatorCreateInfo allocator_info{};
@@ -247,8 +253,6 @@ void Engine::cleanup()
     destroy_imgui();
 
     vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
-    vkDestroyPipeline(device, mesh_pass->pipeline, nullptr);
-    vkDestroyPipeline(device, cull_pass->pipeline, nullptr);
 
     vkDestroyDescriptorPool(device, desc_pool, nullptr);
     vkDestroyDescriptorSetLayout(device, buffer_layout, nullptr);
@@ -374,6 +378,7 @@ void Engine::run()
     // Update descriptors
     std::vector<VkWriteDescriptorSet> writes{};
 
+    // TODO: create_material_image variant?
     image_manager.infos.reserve(image_manager.infos.size() + asset_loader.images.size());
     for (auto i = 0; i < asset_loader.images.size(); i++)
     {
@@ -402,11 +407,34 @@ void Engine::run()
     Buffer dispatch_buffer = create_buffer(device, allocator, sizeof(Dispatch), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT);
 
     Image depth_image = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+    Image draw_image = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+    Image gbuffer_color = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT);
+    Image gbuffer_normal = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT);
+    Image gbuffer_mr = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_R8G8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT);
 
     immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
                      {
-                         transition_images(cmd, {}, { depth_image.image });
+                         transition_images(cmd, { draw_image.image, gbuffer_color.image, gbuffer_normal.image, gbuffer_mr.image }, { depth_image.image });
                      });
+
+    // Update descriptors
+    image_manager.add(depth_image.view, VK_IMAGE_LAYOUT_GENERAL);
+    auto draw_id = image_manager.add(draw_image.view, VK_IMAGE_LAYOUT_GENERAL);
+    auto gbuffer_color_id = image_manager.add(gbuffer_color.view, VK_IMAGE_LAYOUT_GENERAL);
+    auto gbuffer_normal_id = image_manager.add(gbuffer_normal.view, VK_IMAGE_LAYOUT_GENERAL);
+    auto gbuffer_metal_roughness_id = image_manager.add(gbuffer_mr.view, VK_IMAGE_LAYOUT_GENERAL);
+
+    // TODO: This sucks, move into create_image?
+    writes.emplace_back(write_image_descriptor(sampled_image_desc_set, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, draw_id, &image_manager.infos[draw_id]));
+    writes.emplace_back(write_image_descriptor(sampled_image_desc_set, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, gbuffer_color_id, &image_manager.infos[gbuffer_color_id]));
+    writes.emplace_back(write_image_descriptor(sampled_image_desc_set, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, gbuffer_normal_id, &image_manager.infos[gbuffer_normal_id]));
+    writes.emplace_back(write_image_descriptor(sampled_image_desc_set, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, gbuffer_metal_roughness_id, &image_manager.infos[gbuffer_metal_roughness_id]));
+    writes.emplace_back(write_image_descriptor(storage_image_desc_set, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, draw_id, &image_manager.infos[draw_id]));
+    writes.emplace_back(write_image_descriptor(storage_image_desc_set, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, gbuffer_color_id, &image_manager.infos[gbuffer_color_id]));
+    writes.emplace_back(write_image_descriptor(storage_image_desc_set, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, gbuffer_normal_id, &image_manager.infos[gbuffer_normal_id]));
+    writes.emplace_back(write_image_descriptor(storage_image_desc_set, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, gbuffer_metal_roughness_id, &image_manager.infos[gbuffer_metal_roughness_id]));
+    vkUpdateDescriptorSets(device, writes.size(), writes.data(), 0, nullptr);
+    writes.clear();
 
     VkPhysicalDeviceProperties2 properties2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
     vkGetPhysicalDeviceProperties2(physical_device, &properties2);
@@ -425,13 +453,16 @@ void Engine::run()
     VK_CHECK(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &pipeline_layout));
 
     auto swapchain_format = VK_FORMAT_B8G8R8A8_UNORM;
-    auto mesh_program = load_shader_program("mesh.slang", device);
+    auto gbuffer_program = load_shader_program("gbuffer.slang", device);
     auto cull_program = load_shader_program("culling.slang", device);
+    auto debug_program = load_shader_program("debug.slang", device);
 
-    mesh_pass = create_graphics_pipeline(device, &mesh_program, { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT }, nullptr, &pipeline_layout, { swapchain_format });
-    cull_pass = create_compute_pipeline(device, &cull_program, nullptr, &pipeline_layout);
-    vkDestroyShaderModule(device, mesh_program.module, nullptr);
+    auto gbuffer_pass = create_graphics_pipeline(device, &gbuffer_program, { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT }, nullptr, &pipeline_layout, { VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8_UNORM });
+    auto cull_pass = create_compute_pipeline(device, &cull_program, nullptr, &pipeline_layout);
+    auto debug_pass = create_compute_pipeline(device, &debug_program, nullptr, &pipeline_layout);
+    vkDestroyShaderModule(device, gbuffer_program.module, nullptr);
     vkDestroyShaderModule(device, cull_program.module, nullptr);
+    vkDestroyShaderModule(device, debug_program.module, nullptr);
 
     std::array<uint64_t, MAX_TIMESTAMP_QUERIES> timestamp_results{};
     std::array<uint64_t, MAX_PIPELINE_QUERIES> pipeline_results{};
@@ -603,45 +634,47 @@ void Engine::run()
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_pass->pipeline);
 
-        struct ComputePushData
         {
-            glm::mat4 view;
-            VkDeviceAddress mesh_buffer;
-            VkDeviceAddress object_buffer;
-            VkDeviceAddress draw_indirect_buffer;
-            VkDeviceAddress dispatch_buffer;
-            glm::vec4 planes;
-            float p00;
-            float p11;
-            float near;
-            float far;
-            uint32_t count;
-            float lod_distance_factor;
-        };
+            struct PushData
+            {
+                glm::mat4 view;
+                VkDeviceAddress mesh_buffer;
+                VkDeviceAddress object_buffer;
+                VkDeviceAddress draw_indirect_buffer;
+                VkDeviceAddress dispatch_buffer;
+                glm::vec4 planes;
+                float p00;
+                float p11;
+                float near;
+                float far;
+                uint32_t count;
+                float lod_distance_factor;
+            };
 
-        auto proj_t = glm::transpose(proj);
-        auto m0 = proj_t[0];
-        auto m1 = proj_t[1];
-        auto m3 = proj_t[3];
-        auto left_plane = glm::normalize(glm::vec3(m3 + m0));
-        auto bottom_plane = glm::normalize(glm::vec3(m3 + m1));
+            auto proj_t = glm::transpose(proj);
+            auto m0 = proj_t[0];
+            auto m1 = proj_t[1];
+            auto m3 = proj_t[3];
+            auto left_plane = glm::normalize(glm::vec3(m3 + m0));
+            auto bottom_plane = glm::normalize(glm::vec3(m3 + m1));
 
-        ComputePushData push{};
-        push.view = view;
-        push.mesh_buffer = mesh_buffer.address;
-        push.object_buffer = object_buffer.address;
-        push.draw_indirect_buffer = draw_indirect_buffer.address;
-        push.dispatch_buffer = dispatch_buffer.address;
-        push.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
-        push.p00 = proj[0][0];
-        push.p11 = proj[1][1];
-        push.near = camera.near;
-        push.far = camera.far;
-        push.count = renderables.size();
-        push.lod_distance_factor = 2.0f / (push.p11 * swapchain.extent.height);
+            PushData data{};
+            data.view = view;
+            data.mesh_buffer = mesh_buffer.address;
+            data.object_buffer = object_buffer.address;
+            data.draw_indirect_buffer = draw_indirect_buffer.address;
+            data.dispatch_buffer = dispatch_buffer.address;
+            data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
+            data.p00 = proj[0][0];
+            data.p11 = proj[1][1];
+            data.near = camera.near;
+            data.far = camera.far;
+            data.count = renderables.size();
+            data.lod_distance_factor = 2.0f / (data.p11 * swapchain.extent.height);
 
-        vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(ComputePushData), &push);
-        vkCmdDispatch(cmd, get_group_count(renderables.size(), 256), 1, 1);
+            vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+            vkCmdDispatch(cmd, get_group_count(renderables.size(), 256), 1, 1);
+        }
 
         stage_barrier(
             cmd,
@@ -651,72 +684,128 @@ void Engine::run()
             VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT
         );
 
-        // TODO: create a render func
-        VkClearColorValue clear_color_value = { 0.f, 0.f, 0.f, 1.f };
-        VkClearValue clear_value{ .color = clear_color_value };
-
-        VkRenderingAttachmentInfo rendering_attachment_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
-        rendering_attachment_info.imageView = swapchain.image_views[swapchain_image_idx];
-        rendering_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-        rendering_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        rendering_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-
-        VkRenderingAttachmentInfo depth_attachment_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
-        depth_attachment_info.imageView = depth_image.view;
-        depth_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-        depth_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depth_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-
-        VkRenderingInfo rendering_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_INFO };
-        rendering_info.renderArea = VkRect2D{ VkOffset2D{ 0, 0 }, swapchain.extent };
-        rendering_info.layerCount = 1;
-        rendering_info.colorAttachmentCount = 1;
-        rendering_info.pColorAttachments = &rendering_attachment_info;
-        rendering_info.pDepthAttachment = &depth_attachment_info;
-
-        vkCmdBeginRendering(cmd, &rendering_info);
-
-        VkViewport viewport{};
-        viewport.x = 0;
-        viewport.y = static_cast<float>(swapchain.extent.height);
-        viewport.width = static_cast<float>(swapchain.extent.width);
-        viewport.height = -static_cast<float>(swapchain.extent.height);
-        viewport.minDepth = 0.0f;
-        viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
-
-        VkRect2D scissor{};
-        scissor.offset.x = 0;
-        scissor.offset.y = 0;
-        scissor.extent.width = swapchain.extent.width;
-        scissor.extent.height = swapchain.extent.height;
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_pass->pipeline);
-
-        struct PushData
+        // Rasterization
         {
-            glm::mat4 view_proj;
-            VkDeviceAddress vb;
-            VkDeviceAddress ob;
-            VkDeviceAddress mb;
-        };
+            VkClearColorValue clear_color_value = { 0.f, 0.f, 0.f, 1.f };
+            VkClearValue clear_value{ .color = clear_color_value };
 
-        PushData data{ view_proj, vertex_buffer.address, object_buffer.address, material_buffer.address };
-        vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
-        vkCmdBindIndexBuffer2(cmd, index_buffer.buffer, 0, index_buffer.size, VK_INDEX_TYPE_UINT32);
-        // We don't use queried max draw indirect count as validation layer wants buffer size to be able to store maxDrawCount, which is a waste of memory
-        vkCmdBeginQuery(cmd, frame.query_pool_pipeline, 0, 0);
-        vkCmdDrawIndexedIndirectCount(cmd, draw_indirect_buffer.buffer, 0, dispatch_buffer.buffer, 0, renderables.size(), sizeof(VkDrawIndexedIndirectCommand));
-        vkCmdEndQuery(cmd, frame.query_pool_pipeline, 0);
-        vkCmdEndRendering(cmd);
+            std::array<VkRenderingAttachmentInfo, 3> rendering_attachment_infos{};
+            std::array<VkImageView, 3> gbuffer_views{ gbuffer_color.view, gbuffer_normal.view, gbuffer_mr.view };
+
+            for (auto i = 0; i < rendering_attachment_infos.size(); i++)
+            {
+                rendering_attachment_infos[i] =
+                    VkRenderingAttachmentInfo{
+                        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                        .imageView = gbuffer_views[i],
+                        .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+                        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                        .storeOp = VK_ATTACHMENT_STORE_OP_STORE
+                    };
+            }
+
+            VkRenderingAttachmentInfo depth_attachment_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+            depth_attachment_info.imageView = depth_image.view;
+            depth_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            depth_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            depth_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+            VkRenderingInfo rendering_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_INFO };
+            rendering_info.renderArea = VkRect2D{ VkOffset2D{ 0, 0 }, swapchain.extent };
+            rendering_info.layerCount = 1;
+            rendering_info.colorAttachmentCount = static_cast<uint32_t>(rendering_attachment_infos.size());
+            rendering_info.pColorAttachments = rendering_attachment_infos.data();
+            rendering_info.pDepthAttachment = &depth_attachment_info;
+
+            vkCmdBeginRendering(cmd, &rendering_info);
+
+            VkViewport viewport{};
+            viewport.x = 0;
+            viewport.y = static_cast<float>(swapchain.extent.height);
+            viewport.width = static_cast<float>(swapchain.extent.width);
+            viewport.height = -static_cast<float>(swapchain.extent.height);
+            viewport.minDepth = 0.0f;
+            viewport.maxDepth = 1.0f;
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+            VkRect2D scissor{};
+            scissor.offset.x = 0;
+            scissor.offset.y = 0;
+            scissor.extent.width = swapchain.extent.width;
+            scissor.extent.height = swapchain.extent.height;
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gbuffer_pass->pipeline);
+
+            struct PushData
+            {
+                glm::mat4 view_proj;
+                VkDeviceAddress vb;
+                VkDeviceAddress ob;
+                VkDeviceAddress mb;
+            };
+
+            PushData data{ view_proj, vertex_buffer.address, object_buffer.address, material_buffer.address };
+            vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
+            vkCmdBindIndexBuffer2(cmd, index_buffer.buffer, 0, index_buffer.size, VK_INDEX_TYPE_UINT32);
+            // We don't use queried max draw indirect count as validation layer wants buffer size to be able to store maxDrawCount, which is a waste of memory
+            vkCmdBeginQuery(cmd, frame.query_pool_pipeline, 0, 0);
+            vkCmdDrawIndexedIndirectCount(cmd, draw_indirect_buffer.buffer, 0, dispatch_buffer.buffer, 0, renderables.size(), sizeof(VkDrawIndexedIndirectCommand));
+            vkCmdEndQuery(cmd, frame.query_pool_pipeline, 0);
+            vkCmdEndRendering(cmd);
+        }
 
         stage_barrier(
             cmd,
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT
+            VK_ACCESS_2_SHADER_WRITE_BIT
+        );
+
+        {
+            struct PushData
+            {
+                glm::uvec2 extent;
+                uint32_t debug_id;
+                uint32_t color_id;
+                uint32_t normal_id;
+                uint32_t metal_roughness_id;
+                uint32_t draw_id;
+            };
+
+            PushData data{};
+            data.extent = glm::uvec2(swapchain.extent.width, swapchain.extent.height);
+            data.debug_id = GBUFFER_DEBUG_ID;
+            data.color_id = gbuffer_color_id;
+            data.normal_id = gbuffer_normal_id;
+            data.metal_roughness_id = gbuffer_metal_roughness_id;
+            data.draw_id = draw_id;
+
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, debug_pass->pipeline);
+            vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+            vkCmdDispatch(cmd, get_group_count(swapchain.extent.width, 8), get_group_count(swapchain.extent.height, 8), 1);
+        }
+
+        stage_barrier(
+            cmd,
+            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+            VK_ACCESS_2_SHADER_WRITE_BIT,
+            VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT
+        );
+
+        // REVIEW
+        {
+            copy_image(cmd, draw_image.image, swapchain.images[swapchain_image_idx], swapchain.extent, swapchain.extent);
+        }
+
+        stage_barrier(
+            cmd,
+            VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_ACCESS_2_TRANSFER_WRITE_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT
         );
 
         {
@@ -800,7 +889,15 @@ void Engine::run()
     destroy_buffer(allocator, draw_indirect_buffer);
     destroy_buffer(allocator, dispatch_buffer);
     destroy_image(device, allocator, depth_image);
+    destroy_image(device, allocator, draw_image);
+    destroy_image(device, allocator, gbuffer_color);
+    destroy_image(device, allocator, gbuffer_normal);
+    destroy_image(device, allocator, gbuffer_mr);
     vkDestroySampler(device, linear_samp, nullptr);
+
+    vkDestroyPipeline(device, gbuffer_pass->pipeline, nullptr);
+    vkDestroyPipeline(device, cull_pass->pipeline, nullptr);
+    vkDestroyPipeline(device, debug_pass->pipeline, nullptr);
 
     asset_loader.cleanup();
 }
