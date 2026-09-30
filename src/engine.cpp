@@ -40,11 +40,11 @@
 #define MAX_TIMESTAMP_QUERIES 2
 #define MAX_PIPELINE_QUERIES 1
 
-// const char* ASSET_NAME = "Sponza/Sponza.gltf";
+const char* ASSET_NAME = "Sponza/Sponza.gltf";
 
-const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
+// const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
 // TODO: switch via imgui
-uint32_t GBUFFER_DEBUG_ID = 1; // color, normal, metal, roughness
+uint32_t GBUFFER_DEBUG_ID = 0; // color, normal, metal, roughness
 
 namespace
 {
@@ -376,22 +376,17 @@ void Engine::run()
     }
 
     // Update descriptors
-    std::vector<VkWriteDescriptorSet> writes{};
-
-    // TODO: create_material_image variant?
-    image_manager.infos.reserve(image_manager.infos.size() + asset_loader.images.size());
-    for (auto i = 0; i < asset_loader.images.size(); i++)
+    for (const auto& image : asset_loader.images)
     {
-        auto id = image_manager.add(asset_loader.images[i].view, VK_IMAGE_LAYOUT_GENERAL);
-        writes.emplace_back(write_image_descriptor(sampled_image_desc_set, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, id, &image_manager.infos[id]));
+        image_manager.register_sampled_image(device, sampled_image_desc_set, image.view, VK_IMAGE_LAYOUT_GENERAL);
     }
-    vkUpdateDescriptorSets(device, writes.size(), writes.data(), 0, nullptr);
 
     // Create sampler
+    std::vector<VkWriteDescriptorSet> writes{};
     std::vector<VkDescriptorImageInfo> desc_info{};
     VkSampler linear_samp = create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT);
     desc_info.emplace_back(VkDescriptorImageInfo{ .sampler = linear_samp });
-    writes.emplace_back(write_sampler_descriptor(sampler_desc_set, VK_DESCRIPTOR_TYPE_SAMPLER, 0, &desc_info[0]));
+    writes.emplace_back(write_sampler_descriptor(sampler_desc_set, 0, &desc_info[0]));
     vkUpdateDescriptorSets(device, writes.size(), writes.data(), 0, nullptr);
 
     writes.clear();
@@ -418,23 +413,10 @@ void Engine::run()
                      });
 
     // Update descriptors
-    image_manager.add(depth_image.view, VK_IMAGE_LAYOUT_GENERAL);
-    auto draw_id = image_manager.add(draw_image.view, VK_IMAGE_LAYOUT_GENERAL);
-    auto gbuffer_color_id = image_manager.add(gbuffer_color.view, VK_IMAGE_LAYOUT_GENERAL);
-    auto gbuffer_normal_id = image_manager.add(gbuffer_normal.view, VK_IMAGE_LAYOUT_GENERAL);
-    auto gbuffer_metal_roughness_id = image_manager.add(gbuffer_mr.view, VK_IMAGE_LAYOUT_GENERAL);
-
-    // TODO: This sucks, move into create_image?
-    writes.emplace_back(write_image_descriptor(sampled_image_desc_set, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, draw_id, &image_manager.infos[draw_id]));
-    writes.emplace_back(write_image_descriptor(sampled_image_desc_set, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, gbuffer_color_id, &image_manager.infos[gbuffer_color_id]));
-    writes.emplace_back(write_image_descriptor(sampled_image_desc_set, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, gbuffer_normal_id, &image_manager.infos[gbuffer_normal_id]));
-    writes.emplace_back(write_image_descriptor(sampled_image_desc_set, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, gbuffer_metal_roughness_id, &image_manager.infos[gbuffer_metal_roughness_id]));
-    writes.emplace_back(write_image_descriptor(storage_image_desc_set, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, draw_id, &image_manager.infos[draw_id]));
-    writes.emplace_back(write_image_descriptor(storage_image_desc_set, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, gbuffer_color_id, &image_manager.infos[gbuffer_color_id]));
-    writes.emplace_back(write_image_descriptor(storage_image_desc_set, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, gbuffer_normal_id, &image_manager.infos[gbuffer_normal_id]));
-    writes.emplace_back(write_image_descriptor(storage_image_desc_set, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, gbuffer_metal_roughness_id, &image_manager.infos[gbuffer_metal_roughness_id]));
-    vkUpdateDescriptorSets(device, writes.size(), writes.data(), 0, nullptr);
-    writes.clear();
+    auto draw_id = image_manager.register_image(device, sampled_image_desc_set, storage_image_desc_set, draw_image.view, VK_IMAGE_LAYOUT_GENERAL);
+    auto gbuffer_color_id = image_manager.register_image(device, sampled_image_desc_set, storage_image_desc_set, gbuffer_color.view, VK_IMAGE_LAYOUT_GENERAL);
+    auto gbuffer_normal_id = image_manager.register_image(device, sampled_image_desc_set, storage_image_desc_set, gbuffer_normal.view, VK_IMAGE_LAYOUT_GENERAL);
+    auto gbuffer_metal_roughness_id = image_manager.register_image(device, sampled_image_desc_set, storage_image_desc_set, gbuffer_mr.view, VK_IMAGE_LAYOUT_GENERAL);
 
     VkPhysicalDeviceProperties2 properties2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
     vkGetPhysicalDeviceProperties2(physical_device, &properties2);

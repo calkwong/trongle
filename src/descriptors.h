@@ -5,14 +5,16 @@
 #include <cstdint>
 #include <vector>
 
+// This assigns the same bindless id to both storage and sampled descriptor sets. This provides convenience at the cost of memory and holes
+// in our descriptor sets.
 struct ImageManager
 {
-    // TODO: update and/or free ids
-
     std::vector<VkDescriptorImageInfo> infos;
     // std::vector<uint32_t> unused;
 
     uint32_t add(VkImageView view, VkImageLayout layout);
+    uint32_t register_image(VkDevice device, VkDescriptorSet sampled_set, VkDescriptorSet storage_set, VkImageView view, VkImageLayout layout);
+    uint32_t register_sampled_image(VkDevice device, VkDescriptorSet set, VkImageView view, VkImageLayout layout);
 };
 
 // Traditional
@@ -30,6 +32,6 @@ VkDescriptorSet create_descriptor_set(VkDevice device, VkDescriptorPool pool, co
 
 VkWriteDescriptorSet write_image_descriptor(VkDescriptorSet set, VkDescriptorType type, uint32_t handle, const VkDescriptorImageInfo* info);
 VkWriteDescriptorSet write_buffer_descriptor(VkDescriptorSet set, VkDescriptorType type, uint32_t handle, const VkDescriptorBufferInfo* info);
-VkWriteDescriptorSet write_sampler_descriptor(VkDescriptorSet set, VkDescriptorType type, uint32_t handle, const VkDescriptorImageInfo* info);
+VkWriteDescriptorSet write_sampler_descriptor(VkDescriptorSet set, uint32_t handle, const VkDescriptorImageInfo* info);
 
 // Descriptor Heap

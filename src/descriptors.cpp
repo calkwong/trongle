@@ -80,14 +80,14 @@ VkWriteDescriptorSet write_buffer_descriptor(VkDescriptorSet set, VkDescriptorTy
     return write;
 }
 
-VkWriteDescriptorSet write_sampler_descriptor(VkDescriptorSet set, VkDescriptorType type, uint32_t handle, const VkDescriptorImageInfo* info)
+VkWriteDescriptorSet write_sampler_descriptor(VkDescriptorSet set, uint32_t handle, const VkDescriptorImageInfo* info)
 {
     VkWriteDescriptorSet write{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
     write.dstSet = set;
     write.dstBinding = 0;
     write.dstArrayElement = handle;
     write.descriptorCount = 1;
-    write.descriptorType = type;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
     write.pImageInfo = info;
 
     return write;
@@ -100,4 +100,30 @@ uint32_t ImageManager::add(VkImageView view, VkImageLayout layout)
     infos.emplace_back(VkDescriptorImageInfo{ .imageView = view, .imageLayout = layout });
 
     return index;
+}
+
+uint32_t ImageManager::register_image(VkDevice device, VkDescriptorSet sampled_set, VkDescriptorSet storage_set, VkImageView view, VkImageLayout layout)
+{
+    uint32_t handle = add(view, layout);
+
+    VkWriteDescriptorSet writes[2] = { write_image_descriptor(sampled_set, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, handle, &infos[handle]),
+                                       write_image_descriptor(storage_set, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, handle, &infos[handle]) };
+    vkUpdateDescriptorSets(device, 2, &writes[0], 0, nullptr);
+    return handle;
+}
+
+uint32_t ImageManager::register_sampled_image(VkDevice device, VkDescriptorSet set, VkImageView view, VkImageLayout layout)
+{
+    uint32_t handle = add(view, layout);
+
+    VkWriteDescriptorSet write{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+    write.dstSet = set;
+    write.dstBinding = 0;
+    write.dstArrayElement = handle;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    write.pImageInfo = &infos[handle];
+
+    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    return handle;
 }
