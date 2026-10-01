@@ -4,6 +4,7 @@
 #include "sync.h"
 
 #include <volk.h>
+#include <fmt/core.h>
 
 #include <cstdint>
 #include <cassert>
@@ -13,7 +14,7 @@
 #include <cstddef>
 
 // REVIEW
-size_t std::hash<ResourceInfo>::operator()(const ResourceInfo& key) const noexcept
+size_t std::hash<ImageResourceDesc>::operator()(const ImageResourceDesc& key) const noexcept
 {
     size_t ret = 0;
 
@@ -35,59 +36,122 @@ size_t std::hash<ResourceInfo>::operator()(const ResourceInfo& key) const noexce
     return ret;
 }
 
-void Pass::read_image(uint32_t handle, AccessType access_type)
+// REVIEW
+size_t std::hash<BufferResourceDesc>::operator()(const BufferResourceDesc& key) const noexcept
+{
+    size_t ret = 0;
+
+    auto combine = [&](uint32_t value)
+    {
+        ret ^= hash<uint32_t>()(value)
+            + static_cast<size_t>(0x9e3779b9)
+            + (ret << 6)
+            + (ret >> 2);
+    };
+
+    combine(key.alloc_size);
+    combine(static_cast<uint32_t>(key.usage));
+
+    return ret;
+}
+
+void Pass::read(uint32_t handle, AccessType access_type)
 {
     reads.push_back(PassInfo{ handle, access_type });
 }
 
-void Pass::write_image(uint32_t handle, AccessType access_type)
+void Pass::write(uint32_t handle, AccessType access_type)
 {
     writes.push_back(PassInfo{ handle, access_type });
 }
 
-bool ResourceInfo::operator==(const ResourceInfo& info) const
+bool ImageResourceDesc::operator==(const ImageResourceDesc& desc) const
 {
-    return extent.width == info.extent.width
-        && extent.height == info.extent.height
-        && extent.depth == info.extent.depth
-        && format == info.format && usage == info.usage && aspect == info.aspect;
+    return extent.width == desc.extent.width
+        && extent.height == desc.extent.height
+        && extent.depth == desc.extent.depth
+        && format == desc.format && usage == desc.usage && aspect == desc.aspect;
 }
 
-uint32_t Rendergraph::register_resource(ResourceInfo info)
+bool BufferResourceDesc::operator==(const BufferResourceDesc& desc) const
+{
+    return alloc_size == desc.alloc_size
+        && usage == desc.usage;
+}
+
+uint32_t Rendergraph::create_task_image(ImageResourceDesc desc)
 {
     uint32_t id = static_cast<uint32_t>(resource_infos.size());
+
+    auto info = ResourceInfo{};
+    info.type = ResourceType::ImageResourceDesc;
+    info.res_desc.image = desc;
+
     resource_infos.push_back(info);
+
+    return id;
+}
+
+uint32_t Rendergraph::create_task_buffer(BufferResourceDesc desc)
+{
+    uint32_t id = static_cast<uint32_t>(resource_infos.size());
+
+    auto info = ResourceInfo{};
+    info.type = ResourceType::BufferResourceDesc;
+    info.res_desc.buffer = desc;
+
+    resource_infos.push_back(info);
+
     return id;
 }
 
 void Rendergraph::resolve_resources(VkDescriptorSet sampled_set, VkDescriptorSet storage_set)
 {
-    for (uint32_t handle = 0; handle < resource_infos.size(); handle++)
+    auto create_new_resource = [&](ResourceInfo info, ResourceList& res_list)
     {
-        const auto& info = resource_infos[handle];
-
-        auto [iter, inserted] = resource_cache.try_emplace(info);
-        ResourceList& res_list = iter->second;
-
-        auto create_new_resource = [&]()
+        switch (info.type)
         {
-            auto image = create_image(device, allocator, info.extent, info.format, info.usage, info.aspect);
+        case ResourceType::ImageResourceDesc:
+        {
+            auto image = create_image(device, allocator, info.res_desc.image.extent, info.res_desc.image.format, info.res_desc.image.usage, info.res_desc.image.aspect);
 
-            auto tracked_res = res_list.resources.emplace_back(
-                TrackedResource{
-                    .image = image,
-                    .handle = image_manager->register_image(device, sampled_set, storage_set, image.view, VK_IMAGE_LAYOUT_GENERAL),
-                    .unused = 0,
-                    .state = AccessInfo{ VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE } }
-            );
+            TrackedResource tracked_res{};
+            tracked_res.type = TrackedResourceType::Image;
+            tracked_res.res.image = image;
+            tracked_res.handle = image_manager->register_image(device, sampled_set, storage_set, image.view, VK_IMAGE_LAYOUT_GENERAL);
+            tracked_res.unused = 0;
+            tracked_res.state = AccessInfo{ VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE };
 
+            res_list.resources.push_back(tracked_res);
+            images_to_transition.push_back(res_list.resources[res_list.cursor++].res.image);
             physical_resources.push_back(tracked_res);
-            images_to_transition.push_back(res_list.resources[res_list.cursor++].image);
-        };
+            break;
+        }
+        case ResourceType::BufferResourceDesc:
+        {
+            auto buffer = create_buffer(device, allocator, info.res_desc.buffer.alloc_size, 0, info.res_desc.buffer.usage);
 
+            TrackedResource tracked_res{};
+            tracked_res.type = TrackedResourceType::Buffer;
+            tracked_res.res.buffer = buffer;
+            tracked_res.handle = -1;
+            tracked_res.unused = 0;
+            tracked_res.state = AccessInfo{ VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE };
+
+            res_list.resources.push_back(tracked_res);
+            physical_resources.push_back(tracked_res);
+            break;
+        }
+        default:
+            assert(0 && "Imported resources not yet implemented");
+        }
+    };
+
+    auto create_or_extract_resource = [&](ResourceInfo info, ResourceList& res_list, bool inserted)
+    {
         if (inserted)
         {
-            create_new_resource();
+            create_new_resource(info, res_list);
         }
         else
         {
@@ -99,8 +163,36 @@ void Rendergraph::resolve_resources(VkDescriptorSet sampled_set, VkDescriptorSet
             // Create new resource
             else
             {
-                create_new_resource();
+                create_new_resource(info, res_list);
             }
+        }
+    };
+
+    for (uint32_t handle = 0; handle < resource_infos.size(); handle++)
+    {
+        const auto& info = resource_infos[handle];
+
+        switch (info.type)
+        {
+        case ResourceType::ImageResourceDesc:
+        {
+            auto [iter, inserted] = image_resource_cache.try_emplace(info.res_desc.image);
+            ResourceList& res_list = iter->second;
+            create_or_extract_resource(info, res_list, inserted);
+            break;
+        }
+        case ResourceType::BufferResourceDesc:
+        {
+            auto [iter, inserted] = buffer_resource_cache.try_emplace(info.res_desc.buffer);
+            ResourceList& res_list = iter->second;
+            create_or_extract_resource(info, res_list, inserted);
+            break;
+        }
+        default:
+        {
+            assert(0 && "Imported resources not yet implemented");
+            break;
+        }
         }
     }
 }
@@ -120,7 +212,7 @@ void Rendergraph::reset()
     barriers.clear();
 
     // Reset cursor to the beginning of resources and recycle zombie descriptor IDs
-    for (auto& [_, res_list] : resource_cache)
+    for (auto& [_, res_list] : image_resource_cache)
     {
         for (auto i = res_list.cursor; i < res_list.resources.size(); i++)
         {
@@ -129,9 +221,27 @@ void Rendergraph::reset()
 
             if (tracked_res.unused > FRAMES_UNUSED)
             {
-                destroy_image(device, allocator, tracked_res.image);
+                destroy_image(device, allocator, tracked_res.res.image);
 
                 image_manager->free_ids.push_back(tracked_res.handle);
+
+                // TODO: refactor - we don't want to be shifting vector elements
+                res_list.resources.erase(res_list.resources.begin() + i);
+            }
+        }
+        res_list.cursor = 0;
+    }
+
+    for (auto& [_, res_list] : buffer_resource_cache)
+    {
+        for (auto i = res_list.cursor; i < res_list.resources.size(); i++)
+        {
+            auto& tracked_res = res_list.resources[i];
+            tracked_res.unused += 1;
+
+            if (tracked_res.unused > FRAMES_UNUSED)
+            {
+                destroy_buffer(allocator, tracked_res.res.buffer);
 
                 // TODO: refactor - we don't want to be shifting vector elements
                 res_list.resources.erase(res_list.resources.begin() + i);
@@ -153,11 +263,19 @@ void Rendergraph::add_pass(const std::string& name, std::function<void(Pass& pas
 
 void Rendergraph::cleanup()
 {
-    for (const auto& [_, res_list] : resource_cache)
+    for (const auto& [_, res_list] : image_resource_cache)
     {
         for (const auto& res : res_list.resources)
         {
-            destroy_image(device, allocator, res.image);
+            destroy_image(device, allocator, res.res.image);
+        }
+    }
+
+    for (const auto& [_, res_list] : buffer_resource_cache)
+    {
+        for (const auto& res : res_list.resources)
+        {
+            destroy_buffer(allocator, res.res.buffer);
         }
     }
 }
@@ -211,10 +329,25 @@ uint32_t get_image_id(const Rendergraph& graph, uint32_t handle)
 
 VkImageView get_image_view(const Rendergraph& graph, uint32_t handle)
 {
-    return graph.physical_resources[handle].image.view;
+    return graph.physical_resources[handle].res.image.view;
 }
 
 VkImage get_image(const Rendergraph& graph, uint32_t handle)
 {
-    return graph.physical_resources[handle].image.image;
+    return graph.physical_resources[handle].res.image.image;
+}
+
+VkDeviceAddress get_buffer_address(const Rendergraph& graph, uint32_t handle)
+{
+    return graph.physical_resources[handle].res.buffer.address;
+}
+
+VkBuffer get_buffer(const Rendergraph& graph, uint32_t handle)
+{
+    return graph.physical_resources[handle].res.buffer.buffer;
+}
+
+VkDeviceSize get_buffer_size(const Rendergraph& graph, uint32_t handle)
+{
+    return graph.physical_resources[handle].res.buffer.size;
 }

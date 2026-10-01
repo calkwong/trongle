@@ -14,25 +14,73 @@
 
 constexpr uint32_t FRAMES_UNUSED = 4;
 
-struct ResourceInfo
+struct ImageResourceDesc
 {
     VkExtent3D extent;
     VkFormat format;
     VkImageUsageFlags usage;
     VkImageAspectFlags aspect;
 
-    bool operator==(const ResourceInfo& info) const;
+    bool operator==(const ImageResourceDesc& desc) const;
+};
+
+struct BufferResourceDesc
+{
+    uint64_t alloc_size;
+    VkBufferUsageFlags usage;
+
+    bool operator==(const BufferResourceDesc& desc) const;
+};
+
+enum class ResourceType
+{
+    ImageResourceDesc,
+    BufferResourceDesc,
+    ImportedImage,
+    ImportedBuffer,
+};
+
+struct ResourceInfo
+{
+    ResourceType type;
+
+    union ResourceDesc
+    {
+        ImageResourceDesc image;
+        BufferResourceDesc buffer;
+    } res_desc;
+
+    void* imported_res;
 };
 
 template<>
-struct std::hash<ResourceInfo>
+struct std::hash<ImageResourceDesc>
 {
-    size_t operator()(const ResourceInfo& key) const noexcept;
+    size_t operator()(const ImageResourceDesc& key) const noexcept;
+};
+
+template<>
+struct std::hash<BufferResourceDesc>
+{
+    size_t operator()(const BufferResourceDesc& key) const noexcept;
+};
+
+enum class TrackedResourceType
+{
+    Image,
+    Buffer,
 };
 
 struct TrackedResource
 {
-    Image image;
+    TrackedResourceType type;
+
+    union Resource
+    {
+        Image image;
+        Buffer buffer;
+    } res;
+
     uint32_t handle;
     uint32_t unused;
     AccessInfo state;
@@ -58,9 +106,8 @@ struct Pass
     std::vector<PassInfo> reads;
     std::vector<PassInfo> writes;
 
-    // TODO: AccessType
-    void read_image(uint32_t handle, AccessType access_type);
-    void write_image(uint32_t handle, AccessType access_type);
+    void read(uint32_t handle, AccessType access_type);
+    void write(uint32_t handle, AccessType access_type);
 };
 
 // Immediate mode
@@ -70,7 +117,8 @@ struct Rendergraph
     VmaAllocator allocator;
     ImageManager* image_manager;
 
-    std::unordered_map<ResourceInfo, ResourceList> resource_cache;
+    std::unordered_map<ImageResourceDesc, ResourceList> image_resource_cache;
+    std::unordered_map<BufferResourceDesc, ResourceList> buffer_resource_cache;
     std::vector<ResourceInfo> resource_infos;
     std::vector<TrackedResource> physical_resources;
     std::vector<Image> images_to_transition;
@@ -78,7 +126,8 @@ struct Rendergraph
     std::vector<std::function<void()>> executes;
     std::vector<VkMemoryBarrier2> barriers;
 
-    uint32_t register_resource(ResourceInfo info);
+    uint32_t create_task_image(ImageResourceDesc info);
+    uint32_t create_task_buffer(BufferResourceDesc info);
 
     // Grab an existing physical resource, or create one + assign bindless ID
     void resolve_resources(VkDescriptorSet sampled_set, VkDescriptorSet storage_set);
@@ -100,6 +149,9 @@ uint32_t get_image_id(const Rendergraph& graph, uint32_t handle);
 
 VkImageView get_image_view(const Rendergraph& graph, uint32_t handle);
 VkImage get_image(const Rendergraph& graph, uint32_t handle);
+VkDeviceAddress get_buffer_address(const Rendergraph& graph, uint32_t handle);
+VkBuffer get_buffer(const Rendergraph& graph, uint32_t handle);
+VkDeviceSize get_buffer_size(const Rendergraph& graph, uint32_t handle);
 
 // TODO:
 // - read/write, AccessType

@@ -8,7 +8,6 @@
 #include "camera.h"
 #include "descriptors.h"
 #include "rendergraph.h"
-#include "sync.h"
 
 #include <volk.h>
 #include <vk_mem_alloc.h>
@@ -401,8 +400,6 @@ void Engine::run()
     Buffer object_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, renderables.data(), renderables.size() * sizeof(ObjectData));
     Buffer material_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.materials.data(), asset_loader.materials.size() * sizeof(MaterialData));
     Buffer mesh_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, meshes.data(), meshes.size() * sizeof(MeshData));
-    Buffer draw_indirect_buffer = create_buffer(device, allocator, renderables.size() * sizeof(VkDrawIndexedIndirectCommand), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT);
-    Buffer dispatch_buffer = create_buffer(device, allocator, sizeof(Dispatch), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT);
 
     Image depth_image = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
 
@@ -573,34 +570,37 @@ void Engine::run()
         ImGui::End();
         ImGui::Render();
 
-        auto draw_image = graph.register_resource(
-            ResourceInfo{
+        auto draw_image = graph.create_task_image(
+            ImageResourceDesc{
                 VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
                 VK_FORMAT_R16G16B16A16_SFLOAT,
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                 VK_IMAGE_ASPECT_COLOR_BIT }
         );
-        auto gbuffer_color = graph.register_resource(
-            ResourceInfo{
+        auto gbuffer_color = graph.create_task_image(
+            ImageResourceDesc{
                 VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
                 VK_FORMAT_R16G16B16A16_SFLOAT,
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
                 VK_IMAGE_ASPECT_COLOR_BIT }
         );
-        auto gbuffer_normal = graph.register_resource(
-            ResourceInfo{
+        auto gbuffer_normal = graph.create_task_image(
+            ImageResourceDesc{
                 VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
                 VK_FORMAT_R8G8B8A8_UNORM,
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
                 VK_IMAGE_ASPECT_COLOR_BIT }
         );
-        auto gbuffer_mr = graph.register_resource(
-            ResourceInfo{
+        auto gbuffer_mr = graph.create_task_image(
+            ImageResourceDesc{
                 VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
                 VK_FORMAT_R8G8_UNORM,
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
                 VK_IMAGE_ASPECT_COLOR_BIT }
         );
+
+        auto draw_indirect_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = renderables.size() * sizeof(VkDrawIndexedIndirectCommand), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT });
+        auto dispatch_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(Dispatch), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
 
         // Record command buffer
         VkCommandBuffer cmd = frame.command_buffer;
@@ -637,9 +637,9 @@ void Engine::run()
             [&](Pass& pass)
             {
             },
-            [=]()
+            [&]()
             {
-                vkCmdFillBuffer(cmd, dispatch_buffer.buffer, 0, dispatch_buffer.size, 0);
+                vkCmdFillBuffer(cmd, get_buffer(graph, dispatch_buffer), 0, get_buffer_size(graph, dispatch_buffer), 0);
             }
         );
 
@@ -677,8 +677,8 @@ void Engine::run()
                 data.view = view;
                 data.mesh_buffer = mesh_buffer.address;
                 data.object_buffer = object_buffer.address;
-                data.draw_indirect_buffer = draw_indirect_buffer.address;
-                data.dispatch_buffer = dispatch_buffer.address;
+                data.draw_indirect_buffer = get_buffer_address(graph, draw_indirect_buffer);
+                data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
                 data.p00 = proj[0][0];
                 data.p11 = proj[1][1];
@@ -764,7 +764,7 @@ void Engine::run()
                 vkCmdBindIndexBuffer2(cmd, index_buffer.buffer, 0, index_buffer.size, VK_INDEX_TYPE_UINT32);
                 // We don't use queried max draw indirect count as validation layer wants buffer size to be able to store maxDrawCount, which is a waste of memory
                 vkCmdBeginQuery(cmd, frame.query_pool_pipeline, 0, 0);
-                vkCmdDrawIndexedIndirectCount(cmd, draw_indirect_buffer.buffer, 0, dispatch_buffer.buffer, 0, renderables.size(), sizeof(VkDrawIndexedIndirectCommand));
+                vkCmdDrawIndexedIndirectCount(cmd, get_buffer(graph, draw_indirect_buffer), 0, get_buffer(graph, dispatch_buffer), 0, renderables.size(), sizeof(VkDrawIndexedIndirectCommand));
                 vkCmdEndQuery(cmd, frame.query_pool_pipeline, 0);
                 vkCmdEndRendering(cmd);
             }
@@ -904,8 +904,6 @@ void Engine::run()
     destroy_buffer(allocator, object_buffer);
     destroy_buffer(allocator, material_buffer);
     destroy_buffer(allocator, mesh_buffer);
-    destroy_buffer(allocator, draw_indirect_buffer);
-    destroy_buffer(allocator, dispatch_buffer);
     destroy_image(device, allocator, depth_image);
     vkDestroySampler(device, linear_samp, nullptr);
 
