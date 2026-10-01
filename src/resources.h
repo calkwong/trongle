@@ -64,6 +64,7 @@ Buffer create_buffer(
     VkDeviceSize alignment = 0
 );
 
+// REVIEW - unused?
 Buffer create_staging_buffer(
     VkDevice device,
     VmaAllocator allocator,

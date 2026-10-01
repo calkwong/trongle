@@ -95,17 +95,19 @@ VkWriteDescriptorSet write_sampler_descriptor(VkDescriptorSet set, uint32_t hand
 
 uint32_t ImageManager::add(VkImageView view, VkImageLayout layout)
 {
+    auto info = VkDescriptorImageInfo{ .imageView = view, .imageLayout = layout };
+
     uint32_t index = static_cast<uint32_t>(infos.size());
 
-    if (free_ids.size() > 0)
+    if (!free_ids.empty())
     {
         index = free_ids.back();
         free_ids.pop_back();
-        infos[index] = VkDescriptorImageInfo{ .imageView = view, .imageLayout = layout };
+        infos[index] = info;
     }
     else
     {
-        infos.emplace_back(VkDescriptorImageInfo{ .imageView = view, .imageLayout = layout });
+        infos.push_back(info);
     }
 
     return index;
