@@ -364,6 +364,39 @@ void transition_images(
     vkCmdPipelineBarrier2(cmd, &info);
 }
 
+void transition_images(
+    VkCommandBuffer cmd,
+    std::vector<Image>& images
+)
+{
+    std::vector<VkImageMemoryBarrier2> barriers{};
+
+    VkImageSubresourceRange subresource_range{};
+    subresource_range.baseMipLevel = 0;
+    subresource_range.levelCount = VK_REMAINING_MIP_LEVELS;
+    subresource_range.baseArrayLayer = 0;
+    subresource_range.layerCount = VK_REMAINING_ARRAY_LAYERS;
+
+    for (const auto& image : images)
+    {
+        subresource_range.aspectMask = image.format != VK_FORMAT_D32_SFLOAT ? VK_IMAGE_ASPECT_COLOR_BIT : VK_IMAGE_ASPECT_DEPTH_BIT;
+
+        barriers.emplace_back(VkImageMemoryBarrier2{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .image = image.image,
+            .subresourceRange = subresource_range,
+        });
+    }
+
+    VkDependencyInfo info{ .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+    info.imageMemoryBarrierCount = barriers.size();
+    info.pImageMemoryBarriers = barriers.data();
+
+    vkCmdPipelineBarrier2(cmd, &info);
+}
+
 void copy_image(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent2D src_extent, VkExtent2D dst_extent)
 {
     VkImageBlit2 blit{ .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2 };

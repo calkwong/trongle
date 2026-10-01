@@ -7,6 +7,7 @@
 #include "shared_cpu_gpu.h"
 #include "camera.h"
 #include "descriptors.h"
+#include "rendergraph.h"
 
 #include <volk.h>
 #include <vk_mem_alloc.h>
@@ -40,9 +41,9 @@
 #define MAX_TIMESTAMP_QUERIES 2
 #define MAX_PIPELINE_QUERIES 1
 
-const char* ASSET_NAME = "Sponza/Sponza.gltf";
+// const char* ASSET_NAME = "Sponza/Sponza.gltf";
 
-// const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
+const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
 // TODO: switch via imgui
 uint32_t GBUFFER_DEBUG_ID = 0; // color, normal, metal, roughness
 
@@ -402,21 +403,13 @@ void Engine::run()
     Buffer dispatch_buffer = create_buffer(device, allocator, sizeof(Dispatch), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT);
 
     Image depth_image = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
-    Image draw_image = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
-    Image gbuffer_color = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT);
-    Image gbuffer_normal = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT);
-    Image gbuffer_mr = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_R8G8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT);
+
+    Rendergraph graph{ .device = device, .allocator = allocator, .image_manager = &image_manager };
 
     immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
                      {
-                         transition_images(cmd, { draw_image.image, gbuffer_color.image, gbuffer_normal.image, gbuffer_mr.image }, { depth_image.image });
+                         transition_images(cmd, {}, { depth_image.image });
                      });
-
-    // Update descriptors
-    auto draw_id = image_manager.register_image(device, sampled_image_desc_set, storage_image_desc_set, draw_image.view, VK_IMAGE_LAYOUT_GENERAL);
-    auto gbuffer_color_id = image_manager.register_image(device, sampled_image_desc_set, storage_image_desc_set, gbuffer_color.view, VK_IMAGE_LAYOUT_GENERAL);
-    auto gbuffer_normal_id = image_manager.register_image(device, sampled_image_desc_set, storage_image_desc_set, gbuffer_normal.view, VK_IMAGE_LAYOUT_GENERAL);
-    auto gbuffer_metal_roughness_id = image_manager.register_image(device, sampled_image_desc_set, storage_image_desc_set, gbuffer_mr.view, VK_IMAGE_LAYOUT_GENERAL);
 
     VkPhysicalDeviceProperties2 properties2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
     vkGetPhysicalDeviceProperties2(physical_device, &properties2);
@@ -580,6 +573,35 @@ void Engine::run()
         ImGui::End();
         ImGui::Render();
 
+        auto draw_image = graph.register_resource(
+            ResourceInfo{
+                VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
+                VK_FORMAT_R16G16B16A16_SFLOAT,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT }
+        );
+        auto gbuffer_color = graph.register_resource(
+            ResourceInfo{
+                VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
+                VK_FORMAT_R16G16B16A16_SFLOAT,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT }
+        );
+        auto gbuffer_normal = graph.register_resource(
+            ResourceInfo{
+                VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
+                VK_FORMAT_R8G8B8A8_UNORM,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT }
+        );
+        auto gbuffer_mr = graph.register_resource(
+            ResourceInfo{
+                VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
+                VK_FORMAT_R8G8_UNORM,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT }
+        );
+
         // Record command buffer
         VkCommandBuffer cmd = frame.command_buffer;
         VK_CHECK(vkResetCommandPool(device, frame.command_pool, 0));
@@ -589,6 +611,9 @@ void Engine::run()
 
         VK_CHECK(vkBeginCommandBuffer(cmd, &cmd_begin_info));
         vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 0);
+
+        graph.resolve_resources(sampled_image_desc_set, storage_image_desc_set);
+        graph.transition_image_layouts(cmd);
 
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &buffer_desc_set, 0, nullptr);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, 1, &storage_image_desc_set, 0, nullptr);
@@ -672,7 +697,7 @@ void Engine::run()
             VkClearValue clear_value{ .color = clear_color_value };
 
             std::array<VkRenderingAttachmentInfo, 3> rendering_attachment_infos{};
-            std::array<VkImageView, 3> gbuffer_views{ gbuffer_color.view, gbuffer_normal.view, gbuffer_mr.view };
+            std::array<VkImageView, 3> gbuffer_views{ get_image_view(graph, gbuffer_color), get_image_view(graph, gbuffer_normal), get_image_view(graph, gbuffer_mr) };
 
             for (auto i = 0; i < rendering_attachment_infos.size(); i++)
             {
@@ -759,10 +784,10 @@ void Engine::run()
             PushData data{};
             data.extent = glm::uvec2(swapchain.extent.width, swapchain.extent.height);
             data.debug_id = GBUFFER_DEBUG_ID;
-            data.color_id = gbuffer_color_id;
-            data.normal_id = gbuffer_normal_id;
-            data.metal_roughness_id = gbuffer_metal_roughness_id;
-            data.draw_id = draw_id;
+            data.color_id = get_image_id(graph, gbuffer_color);
+            data.normal_id = get_image_id(graph, gbuffer_normal);
+            data.metal_roughness_id = get_image_id(graph, gbuffer_mr);
+            data.draw_id = get_image_id(graph, draw_image);
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, debug_pass->pipeline);
             vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
@@ -779,7 +804,8 @@ void Engine::run()
 
         // REVIEW
         {
-            copy_image(cmd, draw_image.image, swapchain.images[swapchain_image_idx], swapchain.extent, swapchain.extent);
+            // TODO: refactor
+            copy_image(cmd, graph.physical_resources[draw_image].image.image, swapchain.images[swapchain_image_idx], swapchain.extent, swapchain.extent);
         }
 
         stage_barrier(
@@ -858,6 +884,8 @@ void Engine::run()
         VkResult present_result = vkQueuePresentKHR(graphics_queue, &present_info);
         VK_CHECK_SWAPCHAIN(present_result);
 
+        graph.reset();
+
         frame_number++;
     }
 
@@ -871,10 +899,6 @@ void Engine::run()
     destroy_buffer(allocator, draw_indirect_buffer);
     destroy_buffer(allocator, dispatch_buffer);
     destroy_image(device, allocator, depth_image);
-    destroy_image(device, allocator, draw_image);
-    destroy_image(device, allocator, gbuffer_color);
-    destroy_image(device, allocator, gbuffer_normal);
-    destroy_image(device, allocator, gbuffer_mr);
     vkDestroySampler(device, linear_samp, nullptr);
 
     vkDestroyPipeline(device, gbuffer_pass->pipeline, nullptr);
@@ -882,6 +906,7 @@ void Engine::run()
     vkDestroyPipeline(device, debug_pass->pipeline, nullptr);
 
     asset_loader.cleanup();
+    graph.cleanup();
 }
 
 void Engine::register_object(const Node& node, const glm::mat4& top_matrix, const std::vector<Node>& children, const std::vector<GltfMesh>& mesh_assets)
