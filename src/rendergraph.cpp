@@ -81,119 +81,105 @@ bool BufferResourceDesc::operator==(const BufferResourceDesc& desc) const
 
 uint32_t Rendergraph::create_task_image(ImageResourceDesc desc)
 {
-    uint32_t id = static_cast<uint32_t>(resource_infos.size());
-
-    auto info = ResourceInfo{};
-    info.type = ResourceType::ImageResourceDesc;
-    info.res_desc.image = desc;
-
-    resource_infos.push_back(info);
+    uint32_t id = static_cast<uint32_t>(image_descs.size());
+    image_descs.push_back(desc);
 
     return id;
 }
 
 uint32_t Rendergraph::create_task_buffer(BufferResourceDesc desc)
 {
-    uint32_t id = static_cast<uint32_t>(resource_infos.size());
-
-    auto info = ResourceInfo{};
-    info.type = ResourceType::BufferResourceDesc;
-    info.res_desc.buffer = desc;
-
-    resource_infos.push_back(info);
+    uint32_t id = static_cast<uint32_t>(buffer_descs.size());
+    buffer_descs.push_back(desc);
 
     return id;
 }
 
-void Rendergraph::resolve_resources(VkDescriptorSet sampled_set, VkDescriptorSet storage_set)
+void Rendergraph::resolve_images(VkDescriptorSet sampled_set, VkDescriptorSet storage_set)
 {
-    auto create_new_resource = [&](ResourceInfo info, ResourceList& res_list)
+    auto create_new_image_resource = [&](const ImageResourceDesc& desc, ResourceList<TrackedImage>& res_list)
     {
-        switch (info.type)
-        {
-        case ResourceType::ImageResourceDesc:
-        {
-            auto image = create_image(device, allocator, info.res_desc.image.extent, info.res_desc.image.format, info.res_desc.image.usage, info.res_desc.image.aspect);
-
-            TrackedResource tracked_res{};
-            tracked_res.type = TrackedResourceType::Image;
-            tracked_res.res.image = image;
-            tracked_res.handle = image_manager->register_image(device, sampled_set, storage_set, image.view, VK_IMAGE_LAYOUT_GENERAL);
-            tracked_res.unused = 0;
-            tracked_res.state = AccessInfo{ VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE };
-
-            res_list.resources.push_back(tracked_res);
-            images_to_transition.push_back(res_list.resources[res_list.cursor++].res.image);
-            physical_resources.push_back(tracked_res);
-            break;
-        }
-        case ResourceType::BufferResourceDesc:
-        {
-            auto buffer = create_buffer(device, allocator, info.res_desc.buffer.alloc_size, 0, info.res_desc.buffer.usage);
-
-            TrackedResource tracked_res{};
-            tracked_res.type = TrackedResourceType::Buffer;
-            tracked_res.res.buffer = buffer;
-            tracked_res.handle = -1;
-            tracked_res.unused = 0;
-            tracked_res.state = AccessInfo{ VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE };
-
-            res_list.resources.push_back(tracked_res);
-            physical_resources.push_back(tracked_res);
-            break;
-        }
-        default:
-            assert(0 && "Imported resources not yet implemented");
-        }
+        auto image = create_image(device, allocator, desc.extent, desc.format, desc.usage, desc.aspect);
+        auto& tracked_res = res_list.resources.emplace_back(
+            TrackedImage{
+                .image = image,
+                .handle = image_manager->register_image(device, sampled_set, storage_set, image.view, VK_IMAGE_LAYOUT_GENERAL),
+                .unused = 0,
+                .state = AccessInfo{ VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE } }
+        );
+        images_to_transition.push_back(res_list.resources[res_list.cursor++].image);
+        physical_images.push_back(tracked_res);
     };
 
-    auto create_or_extract_resource = [&](ResourceInfo info, ResourceList& res_list, bool inserted)
+    auto create_or_extract_resource = [&](const ImageResourceDesc& desc, ResourceList<TrackedImage>& res_list, bool inserted)
     {
         if (inserted)
         {
-            create_new_resource(info, res_list);
+            create_new_image_resource(desc, res_list);
         }
         else
         {
             // Resource exists
             if (res_list.cursor < res_list.resources.size())
             {
-                physical_resources.push_back(res_list.resources[res_list.cursor++]);
+                physical_images.push_back(res_list.resources[res_list.cursor++]);
             }
             // Create new resource
             else
             {
-                create_new_resource(info, res_list);
+                create_new_image_resource(desc, res_list);
             }
         }
     };
 
-    for (uint32_t handle = 0; handle < resource_infos.size(); handle++)
+    for (const auto& desc : image_descs)
     {
-        const auto& info = resource_infos[handle];
+        auto [iter, inserted] = image_resource_cache.try_emplace(desc);
+        ResourceList<TrackedImage>& res_list = iter->second;
+        create_or_extract_resource(desc, res_list, inserted);
+    }
+}
 
-        switch (info.type)
+void Rendergraph::resolve_buffers(VkDescriptorSet sampled_set, VkDescriptorSet storage_set)
+{
+    auto create_new_buffer_resource = [&](const BufferResourceDesc& desc, ResourceList<TrackedBuffer>& res_list)
+    {
+        auto buffer = create_buffer(device, allocator, desc.alloc_size, 0, desc.usage);
+        auto& tracked_res = res_list.resources.emplace_back(
+            TrackedBuffer{
+                .buffer = buffer,
+                .unused = 0,
+                .state = AccessInfo{ VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE } }
+        );
+        physical_buffers.push_back(tracked_res);
+    };
+
+    auto create_or_extract_resource = [&](const BufferResourceDesc& desc, ResourceList<TrackedBuffer>& res_list, bool inserted)
+    {
+        if (inserted)
         {
-        case ResourceType::ImageResourceDesc:
+            create_new_buffer_resource(desc, res_list);
+        }
+        else
         {
-            auto [iter, inserted] = image_resource_cache.try_emplace(info.res_desc.image);
-            ResourceList& res_list = iter->second;
-            create_or_extract_resource(info, res_list, inserted);
-            break;
+            // Resource exists
+            if (res_list.cursor < res_list.resources.size())
+            {
+                physical_buffers.push_back(res_list.resources[res_list.cursor++]);
+            }
+            // Create new resource
+            else
+            {
+                create_new_buffer_resource(desc, res_list);
+            }
         }
-        case ResourceType::BufferResourceDesc:
-        {
-            auto [iter, inserted] = buffer_resource_cache.try_emplace(info.res_desc.buffer);
-            ResourceList& res_list = iter->second;
-            create_or_extract_resource(info, res_list, inserted);
-            break;
-        }
-        default:
-        {
-            assert(0 && "Imported resources not yet implemented");
-            break;
-        }
-        }
+    };
+
+    for (const auto& desc : buffer_descs)
+    {
+        auto [iter, inserted] = buffer_resource_cache.try_emplace(desc);
+        ResourceList<TrackedBuffer>& res_list = iter->second;
+        create_or_extract_resource(desc, res_list, inserted);
     }
 }
 
@@ -204,8 +190,10 @@ void Rendergraph::transition_image_layouts(VkCommandBuffer cmd)
 
 void Rendergraph::reset()
 {
-    resource_infos.clear();
-    physical_resources.clear();
+    image_descs.clear();
+    buffer_descs.clear();
+    physical_images.clear();
+    physical_buffers.clear();
     images_to_transition.clear();
     passes.clear();
     executes.clear();
@@ -221,7 +209,7 @@ void Rendergraph::reset()
 
             if (tracked_res.unused > FRAMES_UNUSED)
             {
-                destroy_image(device, allocator, tracked_res.res.image);
+                destroy_image(device, allocator, tracked_res.image);
 
                 image_manager->free_ids.push_back(tracked_res.handle);
 
@@ -241,7 +229,7 @@ void Rendergraph::reset()
 
             if (tracked_res.unused > FRAMES_UNUSED)
             {
-                destroy_buffer(allocator, tracked_res.res.buffer);
+                destroy_buffer(allocator, tracked_res.buffer);
 
                 // TODO: refactor - we don't want to be shifting vector elements
                 res_list.resources.erase(res_list.resources.begin() + i);
@@ -257,7 +245,6 @@ void Rendergraph::add_pass(const std::string& name, std::function<void(Pass& pas
 
     setup(pass);
 
-    // REVIEW
     executes.push_back(std::move(execute));
 }
 
@@ -267,7 +254,7 @@ void Rendergraph::cleanup()
     {
         for (const auto& res : res_list.resources)
         {
-            destroy_image(device, allocator, res.res.image);
+            destroy_image(device, allocator, res.image);
         }
     }
 
@@ -275,7 +262,7 @@ void Rendergraph::cleanup()
     {
         for (const auto& res : res_list.resources)
         {
-            destroy_buffer(allocator, res.res.buffer);
+            destroy_buffer(allocator, res.buffer);
         }
     }
 }
@@ -283,7 +270,8 @@ void Rendergraph::cleanup()
 // TODO: refactor parameters
 void Rendergraph::compile(VkCommandBuffer cmd, VkDescriptorSet sampled_set, VkDescriptorSet storage_set)
 {
-    resolve_resources(sampled_set, storage_set);
+    resolve_images(sampled_set, storage_set);
+    resolve_buffers(sampled_set, storage_set);
     transition_image_layouts(cmd);
     prepare_barriers();
 }
@@ -324,30 +312,30 @@ void Rendergraph::execute(VkCommandBuffer cmd)
 
 uint32_t get_image_id(const Rendergraph& graph, uint32_t handle)
 {
-    return graph.physical_resources[handle].handle;
+    return graph.physical_images[handle].handle;
 }
 
 VkImageView get_image_view(const Rendergraph& graph, uint32_t handle)
 {
-    return graph.physical_resources[handle].res.image.view;
+    return graph.physical_images[handle].image.view;
 }
 
 VkImage get_image(const Rendergraph& graph, uint32_t handle)
 {
-    return graph.physical_resources[handle].res.image.image;
+    return graph.physical_images[handle].image.image;
 }
 
 VkDeviceAddress get_buffer_address(const Rendergraph& graph, uint32_t handle)
 {
-    return graph.physical_resources[handle].res.buffer.address;
+    return graph.physical_buffers[handle].buffer.address;
 }
 
 VkBuffer get_buffer(const Rendergraph& graph, uint32_t handle)
 {
-    return graph.physical_resources[handle].res.buffer.buffer;
+    return graph.physical_buffers[handle].buffer.buffer;
 }
 
 VkDeviceSize get_buffer_size(const Rendergraph& graph, uint32_t handle)
 {
-    return graph.physical_resources[handle].res.buffer.size;
+    return graph.physical_buffers[handle].buffer.size;
 }

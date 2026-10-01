@@ -32,27 +32,6 @@ struct BufferResourceDesc
     bool operator==(const BufferResourceDesc& desc) const;
 };
 
-enum class ResourceType
-{
-    ImageResourceDesc,
-    BufferResourceDesc,
-    ImportedImage,
-    ImportedBuffer,
-};
-
-struct ResourceInfo
-{
-    ResourceType type;
-
-    union ResourceDesc
-    {
-        ImageResourceDesc image;
-        BufferResourceDesc buffer;
-    } res_desc;
-
-    void* imported_res;
-};
-
 template<>
 struct std::hash<ImageResourceDesc>
 {
@@ -65,30 +44,25 @@ struct std::hash<BufferResourceDesc>
     size_t operator()(const BufferResourceDesc& key) const noexcept;
 };
 
-enum class TrackedResourceType
+struct TrackedImage
 {
-    Image,
-    Buffer,
-};
-
-struct TrackedResource
-{
-    TrackedResourceType type;
-
-    union Resource
-    {
-        Image image;
-        Buffer buffer;
-    } res;
-
+    Image image;
     uint32_t handle;
     uint32_t unused;
     AccessInfo state;
 };
 
+struct TrackedBuffer
+{
+    Buffer buffer;
+    uint32_t unused;
+    AccessInfo state;
+};
+
+template<typename T>
 struct ResourceList
 {
-    std::vector<TrackedResource> resources;
+    std::vector<T> resources;
     uint32_t cursor = 0;
 };
 
@@ -106,6 +80,7 @@ struct Pass
     std::vector<PassInfo> reads;
     std::vector<PassInfo> writes;
 
+    // TODO: likely need image and buffer variants
     void read(uint32_t handle, AccessType access_type);
     void write(uint32_t handle, AccessType access_type);
 };
@@ -117,12 +92,14 @@ struct Rendergraph
     VmaAllocator allocator;
     ImageManager* image_manager;
 
-    std::unordered_map<ImageResourceDesc, ResourceList> image_resource_cache;
-    std::unordered_map<BufferResourceDesc, ResourceList> buffer_resource_cache;
-    std::vector<ResourceInfo> resource_infos;
-    std::vector<TrackedResource> physical_resources;
-    std::vector<Image> images_to_transition;
     std::vector<Pass> passes;
+    std::vector<ImageResourceDesc> image_descs;
+    std::vector<BufferResourceDesc> buffer_descs;
+    std::unordered_map<ImageResourceDesc, ResourceList<TrackedImage>> image_resource_cache;
+    std::unordered_map<BufferResourceDesc, ResourceList<TrackedBuffer>> buffer_resource_cache;
+    std::vector<Image> images_to_transition;
+    std::vector<TrackedImage> physical_images;
+    std::vector<TrackedBuffer> physical_buffers;
     std::vector<std::function<void()>> executes;
     std::vector<VkMemoryBarrier2> barriers;
 
@@ -130,7 +107,8 @@ struct Rendergraph
     uint32_t create_task_buffer(BufferResourceDesc info);
 
     // Grab an existing physical resource, or create one + assign bindless ID
-    void resolve_resources(VkDescriptorSet sampled_set, VkDescriptorSet storage_set);
+    void resolve_images(VkDescriptorSet sampled_set, VkDescriptorSet storage_set);
+    void resolve_buffers(VkDescriptorSet sampled_set, VkDescriptorSet storage_set);
 
     // Transition newly created images from UNDEFINED -> GENERAL
     void transition_image_layouts(VkCommandBuffer cmd);
@@ -156,3 +134,5 @@ VkDeviceSize get_buffer_size(const Rendergraph& graph, uint32_t handle);
 // TODO:
 // - read/write, AccessType
 // - auto barriers, need a global resource state per resource
+// - fix cases where unused needs to be set back to 0
+// - possible vector shifting bug
