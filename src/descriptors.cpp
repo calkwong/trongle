@@ -97,7 +97,16 @@ uint32_t ImageManager::add(VkImageView view, VkImageLayout layout)
 {
     uint32_t index = static_cast<uint32_t>(infos.size());
 
-    infos.emplace_back(VkDescriptorImageInfo{ .imageView = view, .imageLayout = layout });
+    if (free_ids.size() > 0)
+    {
+        index = free_ids.back();
+        free_ids.pop_back();
+        infos[index] = VkDescriptorImageInfo{ .imageView = view, .imageLayout = layout };
+    }
+    else
+    {
+        infos.emplace_back(VkDescriptorImageInfo{ .imageView = view, .imageLayout = layout });
+    }
 
     return index;
 }

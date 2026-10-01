@@ -221,11 +221,8 @@ void Engine::init_vulkan()
     graphics_queue = graphics_queue_ret.value();
     graphics_queue_family = vkb_device.get_queue_index(vkb::QueueType::graphics).value();
 
-    // auto window_width = 1280u;
-    // auto window_height = 720u;
-    // TODO: fix this after implementing rendergraph managed resources
-    auto window_width = 936u;
-    auto window_height = 1012u;
+    auto window_width = 1280u;
+    auto window_height = 720u;
     swapchain = create_swapchain(physical_device, device, surface, window_width, window_height);
 
     VmaAllocatorCreateInfo allocator_info{};

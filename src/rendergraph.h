@@ -10,6 +10,8 @@
 #include <functional>
 #include <cstddef>
 
+constexpr uint32_t FRAMES_UNUSED = 4;
+
 struct ResourceInfo
 {
     VkExtent3D extent;
@@ -96,4 +98,5 @@ uint32_t get_image_id(const Rendergraph& graph, uint32_t handle);
 VkImageView get_image_view(const Rendergraph& graph, uint32_t handle);
 
 // TODO:
-// - handle deletion queue + unused counter
+// - rendergraph passes
+// - auto barriers

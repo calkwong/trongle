@@ -10,7 +10,7 @@
 struct ImageManager
 {
     std::vector<VkDescriptorImageInfo> infos;
-    // std::vector<uint32_t> unused;
+    std::vector<uint32_t> free_ids;
 
     uint32_t add(VkImageView view, VkImageLayout layout);
     uint32_t register_image(VkDevice device, VkDescriptorSet sampled_set, VkDescriptorSet storage_set, VkImageView view, VkImageLayout layout);
