@@ -1,6 +1,7 @@
 #pragma once
 
 #include "resources.h"
+#include "sync.h"
 
 #include <volk.h>
 
@@ -23,43 +24,18 @@ struct ResourceInfo
     bool operator==(const ResourceInfo& info) const;
 };
 
-// REVIEW
-namespace std
-{
 template<>
-struct hash<ResourceInfo>
+struct std::hash<ResourceInfo>
 {
-    size_t operator()(const ResourceInfo& key) const noexcept
-    {
-        size_t ret = 0;
-
-        auto combine = [&](uint32_t value)
-        {
-            ret ^= hash<uint32_t>()(value)
-                + static_cast<size_t>(0x9e3779b9)
-                + (ret << 6)
-                + (ret >> 2);
-        };
-
-        combine(key.extent.width);
-        combine(key.extent.height);
-        combine(key.extent.depth);
-        combine(static_cast<uint32_t>(key.format));
-        combine(static_cast<uint32_t>(key.usage));
-        combine(static_cast<uint32_t>(key.aspect));
-
-        return ret;
-    }
+    size_t operator()(const ResourceInfo& key) const noexcept;
 };
-} // namespace std
 
 struct TrackedResource
 {
     Image image;
     uint32_t handle;
-
-    // TODO
     uint32_t unused;
+    AccessInfo state;
 };
 
 struct ResourceList
@@ -70,15 +46,21 @@ struct ResourceList
 
 struct ImageManager;
 
+struct PassInfo
+{
+    uint32_t handle;
+    AccessType access_type;
+};
+
 struct Pass
 {
     std::string name;
-    std::vector<uint32_t> reads;
-    std::vector<uint32_t> writes;
+    std::vector<PassInfo> reads;
+    std::vector<PassInfo> writes;
 
     // TODO: AccessType
-    void read_image(uint32_t handle);
-    void write_image(uint32_t handle);
+    void read_image(uint32_t handle, AccessType access_type);
+    void write_image(uint32_t handle, AccessType access_type);
 };
 
 // Immediate mode
@@ -120,5 +102,5 @@ VkImageView get_image_view(const Rendergraph& graph, uint32_t handle);
 VkImage get_image(const Rendergraph& graph, uint32_t handle);
 
 // TODO:
-// - rendergraph passes
-// - auto barriers
+// - read/write, AccessType
+// - auto barriers, need a global resource state per resource

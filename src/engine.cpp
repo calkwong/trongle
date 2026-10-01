@@ -8,6 +8,7 @@
 #include "camera.h"
 #include "descriptors.h"
 #include "rendergraph.h"
+#include "sync.h"
 
 #include <volk.h>
 #include <vk_mem_alloc.h>
@@ -635,7 +636,6 @@ void Engine::run()
             "Zero buffers",
             [&](Pass& pass)
             {
-
             },
             [=]()
             {

@@ -21,8 +21,6 @@ struct FrameData
     VkSemaphore image_acquired_semaphore;
     VkQueryPool query_pool_timestamp;
     VkQueryPool query_pool_pipeline;
-
-    // TODO: deletion queue
 };
 
 struct ShaderPass;

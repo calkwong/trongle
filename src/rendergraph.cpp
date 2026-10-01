@@ -1,24 +1,48 @@
 #include "rendergraph.h"
 #include "resources.h"
 #include "descriptors.h"
+#include "sync.h"
 
 #include <volk.h>
-#include <fmt/core.h>
 
 #include <cstdint>
 #include <cassert>
 #include <string>
 #include <functional>
 #include <utility>
+#include <cstddef>
 
-void Pass::read_image(uint32_t handle)
+// REVIEW
+size_t std::hash<ResourceInfo>::operator()(const ResourceInfo& key) const noexcept
 {
-    reads.push_back(handle);
+    size_t ret = 0;
+
+    auto combine = [&](uint32_t value)
+    {
+        ret ^= hash<uint32_t>()(value)
+            + static_cast<size_t>(0x9e3779b9)
+            + (ret << 6)
+            + (ret >> 2);
+    };
+
+    combine(key.extent.width);
+    combine(key.extent.height);
+    combine(key.extent.depth);
+    combine(static_cast<uint32_t>(key.format));
+    combine(static_cast<uint32_t>(key.usage));
+    combine(static_cast<uint32_t>(key.aspect));
+
+    return ret;
 }
 
-void Pass::write_image(uint32_t handle)
+void Pass::read_image(uint32_t handle, AccessType access_type)
 {
-    writes.push_back(handle);
+    reads.push_back(PassInfo{ handle, access_type });
+}
+
+void Pass::write_image(uint32_t handle, AccessType access_type)
+{
+    writes.push_back(PassInfo{ handle, access_type });
 }
 
 bool ResourceInfo::operator==(const ResourceInfo& info) const
@@ -53,7 +77,8 @@ void Rendergraph::resolve_resources(VkDescriptorSet sampled_set, VkDescriptorSet
                 TrackedResource{
                     .image = image,
                     .handle = image_manager->register_image(device, sampled_set, storage_set, image.view, VK_IMAGE_LAYOUT_GENERAL),
-                    .unused = 0 }
+                    .unused = 0,
+                    .state = AccessInfo{ VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE } }
             );
 
             physical_resources.push_back(tracked_res);

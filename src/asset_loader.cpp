@@ -73,7 +73,6 @@ bool read_raw_image_data_from_file(const char* filename, std::vector<uint8_t>& k
     return true;
 }
 
-// TODO: handle descriptor ids
 std::vector<Image> load_images(
     const fastgltf::Asset& asset,
     VkDevice device,
@@ -301,8 +300,6 @@ std::vector<Image> load_images(
             true
         ));
     }
-
-    // TODO: assign descriptor IDs here?
 
     auto flush_uploads = [&]()
     {
