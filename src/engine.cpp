@@ -503,10 +503,6 @@ void Engine::run()
                              });
         }
 
-        ImGui_ImplVulkan_NewFrame();
-        ImGui_ImplSDL3_NewFrame();
-        ImGui::NewFrame();
-
         // Update camera
         camera.update(delta_time);
         auto view = camera.get_view_matrix();
@@ -529,6 +525,10 @@ void Engine::run()
         }
         VK_CHECK_SWAPCHAIN(acquire_result);
         VK_CHECK(vkResetFences(device, 1, &frame.fence));
+
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplSDL3_NewFrame();
+        ImGui::NewFrame();
 
         // Get query pool results
         auto timestamp_results_size = timestamp_results.size();
