@@ -633,3 +633,13 @@ VkDeviceSize get_buffer_size(const Rendergraph& graph, uint32_t handle)
 {
     return graph.physical_buffers[handle].size;
 }
+
+void invalidate_imported_image(Rendergraph& graph, VkImage image)
+{
+    graph.persistent_image_cache.erase(image);
+}
+
+void invalidate_imported_buffer(Rendergraph& graph, uint64_t address)
+{
+    graph.persistent_buffer_cache.erase(address);
+}

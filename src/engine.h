@@ -2,6 +2,7 @@
 
 #include "swapchain.h"
 #include "descriptors.h"
+#include "rendergraph.h"
 
 #include <volk.h>
 #include <vk_mem_alloc.h>
@@ -73,6 +74,8 @@ public:
     VkDescriptorPool imgui_pool;
 
     ImageManager image_manager;
+
+    Rendergraph graph;
 
     // Scene data
     std::vector<ObjectData> renderables;

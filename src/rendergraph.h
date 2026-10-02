@@ -132,14 +132,20 @@ struct TrackedImage
 {
     Image image;
     uint32_t handle;
+
+    // Only used by Owned resources
     uint32_t unused;
+
     AccessState state;
 };
 
 struct TrackedBuffer
 {
     Buffer buffer;
+
+    // Only used by Owned resources
     uint32_t unused;
+
     AccessState state;
 };
 
@@ -179,7 +185,6 @@ struct Rendergraph
     std::unordered_map<ImageResourceDesc, ResourceList<TrackedImage>> image_resource_cache;
     std::unordered_map<BufferResourceDesc, ResourceList<TrackedBuffer>> buffer_resource_cache;
 
-    // TODO: handle unused -> remove zombie key/value pair from cache
     std::unordered_map<VkImage, TrackedImage, VkImageHash> persistent_image_cache;
     std::unordered_map<uint64_t, TrackedBuffer> persistent_buffer_cache;
     std::vector<VkImageMemoryBarrier2> image_barriers;
@@ -235,3 +240,6 @@ VkImage get_image(const Rendergraph& graph, uint32_t handle);
 VkDeviceAddress get_buffer_address(const Rendergraph& graph, uint32_t handle);
 VkBuffer get_buffer(const Rendergraph& graph, uint32_t handle);
 VkDeviceSize get_buffer_size(const Rendergraph& graph, uint32_t handle);
+
+void invalidate_imported_image(Rendergraph& graph, VkImage image);
+void invalidate_imported_buffer(Rendergraph& graph, uint64_t address);

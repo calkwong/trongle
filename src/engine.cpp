@@ -42,9 +42,9 @@
 #define MAX_TIMESTAMP_QUERIES 2
 #define MAX_PIPELINE_QUERIES 1
 
-const char* ASSET_NAME = "Sponza/Sponza.gltf";
+// const char* ASSET_NAME = "Sponza/Sponza.gltf";
 
-// const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
+const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
 // TODO: switch via imgui
 uint32_t GBUFFER_DEBUG_ID = 0; // color, normal, metal, roughness
 
@@ -402,7 +402,9 @@ void Engine::run()
     Buffer mesh_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, meshes.data(), meshes.size() * sizeof(MeshData));
 
     // Init rendergraph
-    Rendergraph graph{ .device = device, .allocator = allocator, .image_manager = &image_manager };
+    graph.device = device;
+    graph.allocator = allocator;
+    graph.image_manager = &image_manager;
 
     VkPhysicalDeviceProperties2 properties2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
     vkGetPhysicalDeviceProperties2(physical_device, &properties2);
@@ -456,6 +458,10 @@ void Engine::run()
             case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
                 if (event.window.data1 > 0 && event.window.data2 > 0)
                 {
+                    for (const auto& image : swapchain.images)
+                    {
+                        invalidate_imported_image(graph, image);
+                    }
                     update_swapchain(swapchain, window, physical_device, device, surface);
                     proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
                 }
@@ -477,6 +483,10 @@ void Engine::run()
 
         if (swapchain_dirty)
         {
+            for (const auto& image : swapchain.images)
+            {
+                invalidate_imported_image(graph, image);
+            }
             update_swapchain(swapchain, window, physical_device, device, surface);
             swapchain_dirty = false;
             proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
@@ -550,7 +560,7 @@ void Engine::run()
         ImGui::End();
         ImGui::Render();
 
-        auto swapchain_id = graph.import_swapchain(swapchain.images[swapchain_image_idx], swapchain.image_views[swapchain_image_idx]);
+        auto swapchain_image = graph.import_swapchain(swapchain.images[swapchain_image_idx], swapchain.image_views[swapchain_image_idx]);
 
         auto depth_image = graph.create_task_image(
             ImageResourceDesc{
@@ -792,11 +802,11 @@ void Engine::run()
             [&](Pass& pass)
             {
                 pass.read_image(draw_image, AccessType::TransferRead);
-                pass.write_image(swapchain_id, AccessType::TransferWrite);
+                pass.write_image(swapchain_image, AccessType::TransferWrite);
             },
             [&]()
             {
-                copy_image(cmd, get_image(graph, draw_image), get_image(graph, swapchain_id), swapchain.extent, swapchain.extent);
+                copy_image(cmd, get_image(graph, draw_image), get_image(graph, swapchain_image), swapchain.extent, swapchain.extent);
             }
         );
 
@@ -804,7 +814,7 @@ void Engine::run()
             "ImGui",
             [&](Pass& pass)
             {
-                pass.write_image(swapchain_id, AccessType::ColorAttachmentReadWrite);
+                pass.write_image(swapchain_image, AccessType::ColorAttachmentReadWrite);
             },
             [&]()
             {
