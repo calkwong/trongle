@@ -8,6 +8,7 @@
 #include "camera.h"
 #include "descriptors.h"
 #include "rendergraph.h"
+#include "sync.h"
 
 #include <volk.h>
 #include <vk_mem_alloc.h>
@@ -603,6 +604,7 @@ void Engine::run()
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 3, &sets[0], 0, nullptr);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 3, &sets[0], 0, nullptr);
 
+        // TODO: incorporate into rendergraph?
         stage_barrier(
             cmd,
             swapchain.images[swapchain_image_idx],
@@ -618,6 +620,7 @@ void Engine::run()
             "Zero buffers",
             [&](Pass& pass)
             {
+                pass.write_buffer(dispatch_buffer, AccessType::TransferWrite);
             },
             [&]()
             {
@@ -629,6 +632,8 @@ void Engine::run()
             "Compute cull",
             [&](Pass& pass)
             {
+                pass.write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite);
+                pass.write_buffer(draw_indirect_buffer, AccessType::ComputeShaderWrite);
             },
             [&]()
             {
@@ -679,6 +684,11 @@ void Engine::run()
             "Gbuffers",
             [&](Pass& pass)
             {
+                pass.read_buffer(dispatch_buffer, AccessType::IndirectBuffer);
+                pass.read_buffer(draw_indirect_buffer, AccessType::IndirectBuffer);
+                pass.write_image(gbuffer_color, AccessType::ColorAttachmentWrite);
+                pass.write_image(gbuffer_normal, AccessType::ColorAttachmentWrite);
+                pass.write_image(gbuffer_mr, AccessType::ColorAttachmentWrite);
             },
             [&]()
             {
@@ -756,6 +766,10 @@ void Engine::run()
             "Debug gbuffers",
             [&](Pass& pass)
             {
+                pass.read_image(gbuffer_color, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
+                pass.read_image(gbuffer_normal, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
+                pass.read_image(gbuffer_mr, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
+                pass.write_image(draw_image, AccessType::ComputeShaderWrite);
             },
             [&]()
             {
@@ -787,11 +801,15 @@ void Engine::run()
             "Copy to swapchain",
             [&](Pass& pass)
             {
+                pass.read_image(draw_image, AccessType::TransferRead);
+                // TODO: import swapchain into rendergraph
+                // pass.write_image(swapchain, AccessType::TransferWrite);
             },
             [&]()
             {
                 // TODO: refactor
                 copy_image(cmd, get_image(graph, draw_image), swapchain.images[swapchain_image_idx], swapchain.extent, swapchain.extent);
+                giga_barrier(cmd);
             }
         );
 
@@ -799,6 +817,7 @@ void Engine::run()
             "ImGui",
             [&](Pass& pass)
             {
+                // TODO: import swapchain into rendergraph
             },
             [&]()
             {
@@ -826,6 +845,7 @@ void Engine::run()
         graph.compile(cmd);
         graph.execute(cmd);
 
+        // TODO: incorporate into rendergraph?
         stage_barrier(
             cmd,
             swapchain.images[swapchain_image_idx],
