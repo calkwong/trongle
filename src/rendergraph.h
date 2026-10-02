@@ -115,7 +115,7 @@ struct Rendergraph
     std::vector<BufferResourceDesc> buffer_descs;
     std::unordered_map<ImageResourceDesc, ResourceList<TrackedImage>> image_resource_cache;
     std::unordered_map<BufferResourceDesc, ResourceList<TrackedBuffer>> buffer_resource_cache;
-    std::vector<Image> images_to_transition;
+    std::vector<VkImageMemoryBarrier2> image_barriers;
     std::vector<TrackedImage> physical_images;
     std::vector<TrackedBuffer> physical_buffers;
     std::vector<std::function<void()>> executes;
@@ -134,9 +134,6 @@ struct Rendergraph
     // Also assigns a slot in image/buffer_states for per pass update of FrameLocalAccessState
     void resolve_images();
     void resolve_buffers();
-
-    // Transition newly created images from UNDEFINED -> GENERAL
-    void transition_image_layouts(VkCommandBuffer cmd);
 
     void add_pass(const std::string& name, std::function<void(Pass& pass)> setup, std::function<void()> execute);
 
@@ -162,9 +159,3 @@ VkImage get_image(const Rendergraph& graph, uint32_t handle);
 VkDeviceAddress get_buffer_address(const Rendergraph& graph, uint32_t handle);
 VkBuffer get_buffer(const Rendergraph& graph, uint32_t handle);
 VkDeviceSize get_buffer_size(const Rendergraph& graph, uint32_t handle);
-
-// TODO:
-// - read/write, AccessType
-// - auto barriers, need a global resource state per resource
-// - fix cases where unused needs to be set back to 0
-// - possible vector shifting bug

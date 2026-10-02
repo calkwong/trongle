@@ -101,6 +101,5 @@ void immediate_submit(VkDevice device, VkQueue queue, VkFence fence, VkCommandPo
 VkSampler create_sampler(VkDevice device, VkFilter filter, VkSamplerMipmapMode mipmap, VkSamplerAddressMode address);
 
 void transition_images(VkCommandBuffer cmd, std::initializer_list<VkImage> images, std::initializer_list<VkImage> depth_images);
-void transition_images(VkCommandBuffer cmd, std::vector<Image>& images);
 
 void copy_image(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent2D src_extent, VkExtent2D dst_extent);

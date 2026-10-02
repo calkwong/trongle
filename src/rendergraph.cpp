@@ -118,7 +118,9 @@ void Rendergraph::resolve_images()
                 .unused = 0,
                 .state = AccessState{} }
         );
-        images_to_transition.push_back(res_list.resources[res_list.cursor++].image);
+
+        image_barriers.emplace_back(image_barrier(image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, 0, 0, 0, desc.aspect));
+        res_list.cursor++;
         physical_images.push_back(tracked_res);
 
         image_states.emplace_back(FrameLocalAccessState<TrackedImage>{ .state = AccessState{}, .res_list = &res_list, .index = index });
@@ -211,18 +213,13 @@ void Rendergraph::resolve_buffers()
     assert(buffer_states.size() == buffer_descs.size());
 }
 
-void Rendergraph::transition_image_layouts(VkCommandBuffer cmd)
-{
-    transition_images(cmd, images_to_transition);
-}
-
 void Rendergraph::reset()
 {
     image_descs.clear();
     buffer_descs.clear();
     physical_images.clear();
     physical_buffers.clear();
-    images_to_transition.clear();
+    image_barriers.clear();
     passes.clear();
     executes.clear();
     barriers.clear();
@@ -324,10 +321,6 @@ void Rendergraph::compile(VkCommandBuffer cmd)
 {
     resolve_images();
     resolve_buffers();
-
-    // TODO: we could possibly combine this into prepare_barriers
-    transition_image_layouts(cmd);
-
     prepare_barriers();
     update_cached_resource_states();
 }
@@ -429,23 +422,37 @@ void Rendergraph::prepare_barriers()
 void Rendergraph::execute(VkCommandBuffer cmd)
 {
     assert(barriers.size() == executes.size());
-    for (auto i = 0; i < executes.size(); i++)
-    {
-        auto& barrier = barriers[i];
 
-        // TODO: review if this needs to be refactored for non gigabarrier path
+    auto pipeline_barrier_and_execute = [&](VkMemoryBarrier2& barrier, std::function<void()>& callback, size_t index)
+    {
+        VkDependencyInfo info{ .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+
+        if (index == 0 && !image_barriers.empty())
+        {
+            info.pImageMemoryBarriers = image_barriers.data();
+            info.imageMemoryBarrierCount = static_cast<uint32_t>(image_barriers.size());
+        }
+
         // Check for redundant barriers (AccessType::Nothing)
         if (barrier.srcStageMask != 0 && barrier.srcAccessMask != 0)
         {
-            VkDependencyInfo info{ .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
             info.memoryBarrierCount = 1;
             info.pMemoryBarriers = &barrier;
+        }
 
+        if (info.imageMemoryBarrierCount != 0 || info.memoryBarrierCount != 0)
+        {
             vkCmdPipelineBarrier2(cmd, &info);
         }
 
-        auto& callback = executes[i];
         callback();
+    };
+
+    for (auto i = 0; i < executes.size(); i++)
+    {
+        auto& barrier = barriers[i];
+        auto& callback = executes[i];
+        pipeline_barrier_and_execute(barrier, callback, i);
     }
 }
 
