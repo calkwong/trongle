@@ -199,42 +199,65 @@ void Rendergraph::reset()
     executes.clear();
     barriers.clear();
 
-    // Reset cursor to the beginning of resources and recycle zombie descriptor IDs
+    // Reset unused counter, set cursor back to the beginning of resource list and recycle zombie descriptor IDs
     for (auto& [_, res_list] : image_resource_cache)
     {
-        for (auto i = res_list.cursor; i < res_list.resources.size(); i++)
+        auto tracked_res = res_list.resources.begin();
+        while (tracked_res != res_list.resources.begin() + res_list.cursor)
         {
-            auto& tracked_res = res_list.resources[i];
-            tracked_res.unused += 1;
+            tracked_res->unused = 0;
+            tracked_res++;
+        }
 
-            if (tracked_res.unused > FRAMES_UNUSED)
+        // Advances from cursor
+        while (tracked_res != res_list.resources.end())
+        {
+            tracked_res->unused += 1;
+
+            if (tracked_res->unused > FRAMES_UNUSED)
             {
-                destroy_image(device, allocator, tracked_res.image);
-
-                image_manager->free_ids.push_back(tracked_res.handle);
+                destroy_image(device, allocator, tracked_res->image);
+                image_manager->free_ids.push_back(tracked_res->handle);
 
                 // TODO: refactor - we don't want to be shifting vector elements
-                res_list.resources.erase(res_list.resources.begin() + i);
+                tracked_res = res_list.resources.erase(tracked_res);
+            }
+            else
+            {
+                tracked_res++;
             }
         }
+
         res_list.cursor = 0;
     }
 
     for (auto& [_, res_list] : buffer_resource_cache)
     {
-        for (auto i = res_list.cursor; i < res_list.resources.size(); i++)
+        auto tracked_res = res_list.resources.begin();
+        while (tracked_res != res_list.resources.begin() + res_list.cursor)
         {
-            auto& tracked_res = res_list.resources[i];
-            tracked_res.unused += 1;
+            tracked_res->unused = 0;
+            tracked_res++;
+        }
 
-            if (tracked_res.unused > FRAMES_UNUSED)
+        // Advances from cursor
+        while (tracked_res != res_list.resources.end())
+        {
+            tracked_res->unused += 1;
+
+            if (tracked_res->unused > FRAMES_UNUSED)
             {
-                destroy_buffer(allocator, tracked_res.buffer);
+                destroy_buffer(allocator, tracked_res->buffer);
 
                 // TODO: refactor - we don't want to be shifting vector elements
-                res_list.resources.erase(res_list.resources.begin() + i);
+                tracked_res = res_list.resources.erase(tracked_res);
+            }
+            else
+            {
+                tracked_res++;
             }
         }
+
         res_list.cursor = 0;
     }
 }
