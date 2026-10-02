@@ -9,12 +9,13 @@
 // in our descriptor sets.
 struct ImageManager
 {
+    VkDescriptorSet set;
     std::vector<VkDescriptorImageInfo> infos;
     std::vector<uint32_t> free_ids;
 
     uint32_t add(VkImageView view, VkImageLayout layout);
-    uint32_t register_image(VkDevice device, VkDescriptorSet sampled_set, VkDescriptorSet storage_set, VkImageView view, VkImageLayout layout);
-    uint32_t register_sampled_image(VkDevice device, VkDescriptorSet set, VkImageView view, VkImageLayout layout);
+    uint32_t register_image(VkDevice device, VkImageView view, VkImageLayout layout);
+    uint32_t register_sampled_image(VkDevice device, VkImageView view, VkImageLayout layout);
 };
 
 // Traditional
@@ -24,13 +25,14 @@ VkDescriptorSetLayout create_descriptor_set_layout(
     VkDevice device,
     const VkDescriptorSetLayoutBinding* bindings,
     uint32_t binding_count,
-    const VkDescriptorSetLayoutBindingFlagsCreateInfo* p_next = 0,
-    VkDescriptorSetLayoutCreateFlags flags = 0
+    const VkDescriptorBindingFlags* binding_flags = nullptr,
+    uint32_t binding_flags_count = 0,
+    VkDescriptorSetLayoutCreateFlags layout_flags = 0
 );
 
 VkDescriptorSet create_descriptor_set(VkDevice device, VkDescriptorPool pool, const VkDescriptorSetLayout* layout, const uint32_t* descriptor_counts);
 
-VkWriteDescriptorSet write_image_descriptor(VkDescriptorSet set, VkDescriptorType type, uint32_t handle, const VkDescriptorImageInfo* info);
+VkWriteDescriptorSet write_image_descriptor(VkDescriptorSet set, VkDescriptorType type, uint32_t handle, const VkDescriptorImageInfo* info, uint32_t binding);
 VkWriteDescriptorSet write_buffer_descriptor(VkDescriptorSet set, VkDescriptorType type, uint32_t handle, const VkDescriptorBufferInfo* info);
 VkWriteDescriptorSet write_sampler_descriptor(VkDescriptorSet set, uint32_t handle, const VkDescriptorImageInfo* info);
 

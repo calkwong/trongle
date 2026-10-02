@@ -95,7 +95,7 @@ uint32_t Rendergraph::create_task_buffer(BufferResourceDesc desc)
     return id;
 }
 
-void Rendergraph::resolve_images(VkDescriptorSet sampled_set, VkDescriptorSet storage_set)
+void Rendergraph::resolve_images()
 {
     auto create_new_image_resource = [&](const ImageResourceDesc& desc, ResourceList<TrackedImage>& res_list)
     {
@@ -103,7 +103,7 @@ void Rendergraph::resolve_images(VkDescriptorSet sampled_set, VkDescriptorSet st
         auto& tracked_res = res_list.resources.emplace_back(
             TrackedImage{
                 .image = image,
-                .handle = image_manager->register_image(device, sampled_set, storage_set, image.view, VK_IMAGE_LAYOUT_GENERAL),
+                .handle = image_manager->register_image(device, image.view, VK_IMAGE_LAYOUT_GENERAL),
                 .unused = 0,
                 .state = AccessInfo{ VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE } }
         );
@@ -140,7 +140,7 @@ void Rendergraph::resolve_images(VkDescriptorSet sampled_set, VkDescriptorSet st
     }
 }
 
-void Rendergraph::resolve_buffers(VkDescriptorSet sampled_set, VkDescriptorSet storage_set)
+void Rendergraph::resolve_buffers()
 {
     auto create_new_buffer_resource = [&](const BufferResourceDesc& desc, ResourceList<TrackedBuffer>& res_list)
     {
@@ -291,10 +291,10 @@ void Rendergraph::cleanup()
 }
 
 // TODO: refactor parameters
-void Rendergraph::compile(VkCommandBuffer cmd, VkDescriptorSet sampled_set, VkDescriptorSet storage_set)
+void Rendergraph::compile(VkCommandBuffer cmd)
 {
-    resolve_images(sampled_set, storage_set);
-    resolve_buffers(sampled_set, storage_set);
+    resolve_images();
+    resolve_buffers();
     transition_image_layouts(cmd);
     prepare_barriers();
 }

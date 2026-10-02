@@ -20,13 +20,17 @@ VkDescriptorPool create_descriptor_pool(VkDevice device, const VkDescriptorPoolS
     return pool;
 }
 
-VkDescriptorSetLayout create_descriptor_set_layout(VkDevice device, const VkDescriptorSetLayoutBinding* bindings, uint32_t binding_count, const VkDescriptorSetLayoutBindingFlagsCreateInfo* p_next /*= 0*/, VkDescriptorSetLayoutCreateFlags flags /*= 0*/)
+VkDescriptorSetLayout create_descriptor_set_layout(VkDevice device, const VkDescriptorSetLayoutBinding* bindings, uint32_t binding_count, const VkDescriptorBindingFlags* binding_flags /*= nullptr*/, uint32_t binding_flags_count /*= 0*/, VkDescriptorSetLayoutCreateFlags layout_flags /*= 0*/)
 {
     VkDescriptorSetLayout layout{};
 
+    VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_info{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
+    binding_flags_info.pBindingFlags = binding_flags;
+    binding_flags_info.bindingCount = binding_flags_count;
+
     VkDescriptorSetLayoutCreateInfo info{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-    info.pNext = p_next;
-    info.flags = flags;
+    info.pNext = &binding_flags_info;
+    info.flags = layout_flags;
     info.bindingCount = binding_count;
     info.pBindings = bindings;
 
@@ -54,11 +58,11 @@ VkDescriptorSet create_descriptor_set(VkDevice device, VkDescriptorPool pool, co
     return set;
 }
 
-VkWriteDescriptorSet write_image_descriptor(VkDescriptorSet set, VkDescriptorType type, uint32_t handle, const VkDescriptorImageInfo* info)
+VkWriteDescriptorSet write_image_descriptor(VkDescriptorSet set, VkDescriptorType type, uint32_t handle, const VkDescriptorImageInfo* info, uint32_t binding)
 {
     VkWriteDescriptorSet write{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
     write.dstSet = set;
-    write.dstBinding = 0;
+    write.dstBinding = binding;
     write.dstArrayElement = handle;
     write.descriptorCount = 1;
     write.descriptorType = type;
@@ -113,23 +117,23 @@ uint32_t ImageManager::add(VkImageView view, VkImageLayout layout)
     return index;
 }
 
-uint32_t ImageManager::register_image(VkDevice device, VkDescriptorSet sampled_set, VkDescriptorSet storage_set, VkImageView view, VkImageLayout layout)
+uint32_t ImageManager::register_image(VkDevice device, VkImageView view, VkImageLayout layout)
 {
     uint32_t handle = add(view, layout);
 
-    VkWriteDescriptorSet writes[2] = { write_image_descriptor(sampled_set, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, handle, &infos[handle]),
-                                       write_image_descriptor(storage_set, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, handle, &infos[handle]) };
+    VkWriteDescriptorSet writes[2] = { write_image_descriptor(set, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, handle, &infos[handle], 0),
+                                       write_image_descriptor(set, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, handle, &infos[handle], 1) };
     vkUpdateDescriptorSets(device, 2, &writes[0], 0, nullptr);
     return handle;
 }
 
-uint32_t ImageManager::register_sampled_image(VkDevice device, VkDescriptorSet set, VkImageView view, VkImageLayout layout)
+uint32_t ImageManager::register_sampled_image(VkDevice device, VkImageView view, VkImageLayout layout)
 {
     uint32_t handle = add(view, layout);
 
     VkWriteDescriptorSet write{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
     write.dstSet = set;
-    write.dstBinding = 0;
+    write.dstBinding = 1;
     write.dstArrayElement = handle;
     write.descriptorCount = 1;
     write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;

@@ -65,13 +65,11 @@ public:
     // Descriptors
     VkDescriptorPool desc_pool;
     VkDescriptorSetLayout buffer_layout;
-    VkDescriptorSetLayout storage_image_layout;
-    VkDescriptorSetLayout sampled_image_layout;
+    VkDescriptorSetLayout image_layout;
     VkDescriptorSetLayout sampler_layout;
-    VkDescriptorSet buffer_desc_set;
-    VkDescriptorSet storage_image_desc_set;
-    VkDescriptorSet sampled_image_desc_set;
-    VkDescriptorSet sampler_desc_set;
+    VkDescriptorSet buffer_set;
+    VkDescriptorSet image_set;
+    VkDescriptorSet sampler_set;
     VkDescriptorPool imgui_pool;
 
     ImageManager image_manager;

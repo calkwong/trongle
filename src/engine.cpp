@@ -135,8 +135,8 @@ void Engine::init_vulkan()
 
     volkLoadInstance(instance);
 
-    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland");
-    // SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
+    // SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland");
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
     SDL_Init(SDL_INIT_VIDEO);
     auto window_flags = static_cast<SDL_WindowFlags>(SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
     window = SDL_CreateWindow("Untitled vulkan renderer", 1280u, 720u, window_flags);
@@ -258,8 +258,7 @@ void Engine::cleanup()
 
     vkDestroyDescriptorPool(device, desc_pool, nullptr);
     vkDestroyDescriptorSetLayout(device, buffer_layout, nullptr);
-    vkDestroyDescriptorSetLayout(device, storage_image_layout, nullptr);
-    vkDestroyDescriptorSetLayout(device, sampled_image_layout, nullptr);
+    vkDestroyDescriptorSetLayout(device, image_layout, nullptr);
     vkDestroyDescriptorSetLayout(device, sampler_layout, nullptr);
 
     for (auto& frame : frames)
@@ -380,7 +379,7 @@ void Engine::run()
     // Update descriptors
     for (const auto& image : asset_loader.images)
     {
-        image_manager.register_sampled_image(device, sampled_image_desc_set, image.view, VK_IMAGE_LAYOUT_GENERAL);
+        image_manager.register_sampled_image(device, image.view, VK_IMAGE_LAYOUT_GENERAL);
     }
 
     // Create sampler
@@ -388,7 +387,7 @@ void Engine::run()
     std::vector<VkDescriptorImageInfo> desc_info{};
     VkSampler linear_samp = create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT);
     desc_info.emplace_back(VkDescriptorImageInfo{ .sampler = linear_samp });
-    writes.emplace_back(write_sampler_descriptor(sampler_desc_set, 0, &desc_info[0]));
+    writes.emplace_back(write_sampler_descriptor(sampler_set, 0, &desc_info[0]));
     vkUpdateDescriptorSets(device, writes.size(), writes.data(), 0, nullptr);
 
     writes.clear();
@@ -412,7 +411,7 @@ void Engine::run()
 
     // Init PSO
     VkPushConstantRange pc_range{ .stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = max_push_constant_size };
-    std::array<VkDescriptorSetLayout, 4> desc_set_layouts{ buffer_layout, storage_image_layout, sampled_image_layout, sampler_layout };
+    std::array<VkDescriptorSetLayout, 3> desc_set_layouts{ buffer_layout, image_layout, sampler_layout };
     VkPipelineLayoutCreateInfo pipeline_layout_info{ .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
     pipeline_layout_info.pPushConstantRanges = &pc_range;
     pipeline_layout_info.pushConstantRangeCount = 1;
@@ -599,14 +598,10 @@ void Engine::run()
         VK_CHECK(vkBeginCommandBuffer(cmd, &cmd_begin_info));
         vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 0);
 
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &buffer_desc_set, 0, nullptr);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, 1, &storage_image_desc_set, 0, nullptr);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, 1, &sampled_image_desc_set, 0, nullptr);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 3, 1, &sampler_desc_set, 0, nullptr);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 1, &buffer_desc_set, 0, nullptr);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 1, 1, &storage_image_desc_set, 0, nullptr);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 2, 1, &sampled_image_desc_set, 0, nullptr);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 3, 1, &sampler_desc_set, 0, nullptr);
+        VkDescriptorSet sets[3] = { buffer_set, image_set, sampler_set };
+
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 3, &sets[0], 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 3, &sets[0], 0, nullptr);
 
         stage_barrier(
             cmd,
@@ -828,7 +823,7 @@ void Engine::run()
         );
 
         // Rendergraph compilation
-        graph.compile(cmd, sampled_image_desc_set, storage_image_desc_set);
+        graph.compile(cmd);
         graph.execute(cmd);
 
         stage_barrier(
@@ -950,39 +945,41 @@ void Engine::register_object(const Node& node, const glm::mat4& top_matrix, cons
 void Engine::init_descriptors()
 {
     uint32_t buffer_count = 10;
-    uint32_t storage_image_count = 300;
-    uint32_t sampled_image_count = 300;
+    uint32_t image_count = 300;
     uint32_t sampler_count = 5;
 
     std::array<VkDescriptorPoolSize, 4> pool_sizes{
         VkDescriptorPoolSize{ .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = buffer_count },
-        VkDescriptorPoolSize{ .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = storage_image_count },
-        VkDescriptorPoolSize{ .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .descriptorCount = sampled_image_count },
+        VkDescriptorPoolSize{ .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = image_count },
+        VkDescriptorPoolSize{ .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .descriptorCount = image_count },
         VkDescriptorPoolSize{ .type = VK_DESCRIPTOR_TYPE_SAMPLER, .descriptorCount = sampler_count },
     };
 
     desc_pool = create_descriptor_pool(device, pool_sizes.data(), pool_sizes.size(), 4, VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT);
 
     // Set up bindless
-    VkDescriptorBindingFlags binding_flags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
-    VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_info{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
-    binding_flags_info.pBindingFlags = &binding_flags;
-    binding_flags_info.bindingCount = 1;
-
+    VkDescriptorSetLayoutBinding image_bindings[2] = {
+        VkDescriptorSetLayoutBinding{ .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = image_count, .stageFlags = VK_SHADER_STAGE_ALL },
+        VkDescriptorSetLayoutBinding{ .binding = 1, .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .descriptorCount = image_count, .stageFlags = VK_SHADER_STAGE_ALL }
+    };
     VkDescriptorSetLayoutBinding buffer_binding{ .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = buffer_count, .stageFlags = VK_SHADER_STAGE_ALL };
-    VkDescriptorSetLayoutBinding storage_image_binding{ .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = storage_image_count, .stageFlags = VK_SHADER_STAGE_ALL };
-    VkDescriptorSetLayoutBinding sampled_image_binding{ .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .descriptorCount = sampled_image_count, .stageFlags = VK_SHADER_STAGE_ALL };
     VkDescriptorSetLayoutBinding sampler_binding{ .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER, .descriptorCount = sampler_count, .stageFlags = VK_SHADER_STAGE_ALL };
+    VkDescriptorBindingFlags binding_flags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+    VkDescriptorBindingFlags image_binding_flags[2] = {
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT
+    };
 
-    buffer_layout = create_descriptor_set_layout(device, &buffer_binding, 1, &binding_flags_info, VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT);
-    storage_image_layout = create_descriptor_set_layout(device, &storage_image_binding, 1, &binding_flags_info, VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT);
-    sampled_image_layout = create_descriptor_set_layout(device, &sampled_image_binding, 1, &binding_flags_info, VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT);
-    sampler_layout = create_descriptor_set_layout(device, &sampler_binding, 1, &binding_flags_info, VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT);
+    buffer_layout = create_descriptor_set_layout(device, &buffer_binding, 1, &binding_flags, 1, VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT);
+    image_layout = create_descriptor_set_layout(device, &image_bindings[0], 2, &image_binding_flags[0], 2, VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT);
+    sampler_layout = create_descriptor_set_layout(device, &sampler_binding, 1, &binding_flags, 1, VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT);
 
-    buffer_desc_set = create_descriptor_set(device, desc_pool, &buffer_layout, &buffer_count);
-    storage_image_desc_set = create_descriptor_set(device, desc_pool, &storage_image_layout, &storage_image_count);
-    sampled_image_desc_set = create_descriptor_set(device, desc_pool, &sampled_image_layout, &sampled_image_count);
-    sampler_desc_set = create_descriptor_set(device, desc_pool, &sampler_layout, &sampler_count);
+    buffer_set = create_descriptor_set(device, desc_pool, &buffer_layout, &buffer_count);
+    image_set = create_descriptor_set(device, desc_pool, &image_layout, &image_count);
+    sampler_set = create_descriptor_set(device, desc_pool, &sampler_layout, &sampler_count);
+
+    image_manager.set = image_set;
+    assert(image_manager.set != nullptr);
 }
 
 void Engine::init_imgui()

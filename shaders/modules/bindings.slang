@@ -8,10 +8,10 @@ __DynamicResource<__DynamicResourceKind.General> storage_buffers[];
 [vk::binding(0, 1)]
 __DynamicResource<__DynamicResourceKind.General> storage_images[];
 
-[vk::binding(0, 2)]
+[vk::binding(1, 1)]
 __DynamicResource<__DynamicResourceKind.General> sampled_images[];
 
-[vk::binding(0, 3)]
+[vk::binding(0, 2)]
 __DynamicResource<__DynamicResourceKind.Sampler> samplers[];
 
 public T get_storage_image<T>(uint handle)

@@ -104,18 +104,19 @@ struct Rendergraph
     std::vector<VkMemoryBarrier2> barriers;
 
     uint32_t create_task_image(ImageResourceDesc info);
+    // TODO: implement mapping buffer to descriptor
     uint32_t create_task_buffer(BufferResourceDesc info);
 
     // Grab an existing physical resource, or create one + assign bindless ID
-    void resolve_images(VkDescriptorSet sampled_set, VkDescriptorSet storage_set);
-    void resolve_buffers(VkDescriptorSet sampled_set, VkDescriptorSet storage_set);
+    void resolve_images();
+    void resolve_buffers();
 
     // Transition newly created images from UNDEFINED -> GENERAL
     void transition_image_layouts(VkCommandBuffer cmd);
 
     void add_pass(const std::string& name, std::function<void(Pass& pass)> setup, std::function<void()> execute);
 
-    void compile(VkCommandBuffer cmd, VkDescriptorSet sampled_set, VkDescriptorSet storage_set);
+    void compile(VkCommandBuffer cmd);
     void prepare_barriers();
     void execute(VkCommandBuffer cmd);
     void reset();
