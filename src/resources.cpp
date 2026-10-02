@@ -265,13 +265,17 @@ VkImageMemoryBarrier2 image_barrier(
     VkImageLayout old_layout,
     VkImageLayout new_layout,
     VkPipelineStageFlags2 src_stage_mask,
+    VkAccessFlags2 src_access_mask,
     VkPipelineStageFlags2 dst_stage_mask,
+    VkAccessFlags2 dst_access_mask,
     VkImageAspectFlags aspect /*= VK_IMAGE_ASPECT_COLOR_BIT*/
 )
 {
     VkImageMemoryBarrier2 barrier{ .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
     barrier.srcStageMask = src_stage_mask;
+    barrier.srcAccessMask = src_access_mask;
     barrier.dstStageMask = dst_stage_mask;
+    barrier.dstAccessMask = dst_access_mask;
     barrier.oldLayout = old_layout;
     barrier.newLayout = new_layout;
     barrier.image = image;

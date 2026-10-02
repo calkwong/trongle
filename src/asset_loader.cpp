@@ -369,8 +369,10 @@ std::vector<Image> load_images(
             images[i].image,
             VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_GENERAL,
-            VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-            VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT
+            0,
+            0,
+            0,
+            0
         );
     }
 
