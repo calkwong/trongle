@@ -36,6 +36,11 @@ struct std::hash<ImageResourceDesc>
     size_t operator()(const ImageResourceDesc& key) const noexcept;
 };
 
+struct VkImageHash
+{
+    size_t operator()(VkImage handle) const noexcept;
+};
+
 struct BufferResourceDesc
 {
     uint64_t alloc_size;
@@ -102,7 +107,10 @@ struct FrameLocalAccessState
 {
     AccessState state;
     ResourceList<T>* res_list;
-    uint32_t index; // index into the vector res_list holds
+
+    // For Owned images, this is for indexing res_list; for External images, index into physical_images/buffers
+    uint32_t index;
+
     bool imported = false;
 };
 
@@ -172,7 +180,7 @@ struct Rendergraph
     std::unordered_map<BufferResourceDesc, ResourceList<TrackedBuffer>> buffer_resource_cache;
 
     // TODO: handle unused -> remove zombie key/value pair from cache
-    std::unordered_map<uint64_t, TrackedImage> persistent_image_cache;
+    std::unordered_map<VkImage, TrackedImage, VkImageHash> persistent_image_cache;
     std::unordered_map<uint64_t, TrackedBuffer> persistent_buffer_cache;
     std::vector<VkImageMemoryBarrier2> image_barriers;
 
@@ -192,7 +200,7 @@ struct Rendergraph
     // TODO: implement mapping buffer to descriptor
     uint32_t create_task_buffer(BufferResourceDesc info);
 
-    // TODO: these 2 need testing
+    // TODO: TEST REQUIRED
     uint32_t import_image(Image image, uint32_t descriptor_handle);
     uint32_t import_buffer(Buffer buffer, uint32_t descriptor_handle);
 

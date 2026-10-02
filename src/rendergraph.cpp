@@ -13,14 +13,14 @@
 #include <utility>
 #include <cstddef>
 
-// REVIEW
 size_t std::hash<ImageResourceDesc>::operator()(const ImageResourceDesc& key) const noexcept
 {
     size_t ret = 0;
 
+    // REVIEW
     auto combine = [&](uint32_t value)
     {
-        ret ^= hash<uint32_t>()(value)
+        ret ^= std::hash<uint32_t>{}(value)
             + static_cast<size_t>(0x9e3779b9)
             + (ret << 6)
             + (ret >> 2);
@@ -36,14 +36,14 @@ size_t std::hash<ImageResourceDesc>::operator()(const ImageResourceDesc& key) co
     return ret;
 }
 
-// REVIEW
 size_t std::hash<BufferResourceDesc>::operator()(const BufferResourceDesc& key) const noexcept
 {
     size_t ret = 0;
 
+    // REVIEW
     auto combine = [&](uint32_t value)
     {
-        ret ^= hash<uint32_t>()(value)
+        ret ^= std::hash<uint32_t>{}(value)
             + static_cast<size_t>(0x9e3779b9)
             + (ret << 6)
             + (ret >> 2);
@@ -53,6 +53,19 @@ size_t std::hash<BufferResourceDesc>::operator()(const BufferResourceDesc& key) 
     combine(static_cast<uint32_t>(key.usage));
 
     return ret;
+}
+
+size_t VkImageHash::operator()(VkImage handle) const noexcept
+{
+#ifdef VK_USE_64_BIT_PTR_DEFINES
+    return std::hash<uintptr_t>{}(
+        reinterpret_cast<uintptr_t>(handle)
+    );
+#else
+    return std::hash<uint64_t>{}(
+        static_cast<uint64_t>(handle)
+    );
+#endif
 }
 
 void Pass::read_image(uint32_t handle, AccessType access_type)
@@ -219,8 +232,7 @@ void Rendergraph::resolve_images()
         {
             const Image& image = info.res.data.image;
             auto descriptor_handle = info.res.data.id;
-            // TODO: refactor reinterpret cast hack
-            auto [iter, inserted] = persistent_image_cache.try_emplace(reinterpret_cast<uint64_t>(image.image));
+            auto [iter, inserted] = persistent_image_cache.try_emplace(image.image);
             TrackedImage& tracked_res = iter->second;
             if (inserted)
             {
@@ -569,7 +581,7 @@ void Rendergraph::update_cached_resource_states()
     {
         if (state.imported)
         {
-            uint64_t key = reinterpret_cast<uint64_t>(physical_images[state.index].image);
+            VkImage key = physical_images[state.index].image;
             persistent_image_cache[key].state = state.state;
         }
         else
@@ -582,7 +594,7 @@ void Rendergraph::update_cached_resource_states()
     {
         if (state.imported)
         {
-            uint64_t key = static_cast<uint64_t>(physical_buffers[state.index].address);
+            uint64_t key = physical_buffers[state.index].address;
             persistent_buffer_cache[key].state = state.state;
         }
         else
