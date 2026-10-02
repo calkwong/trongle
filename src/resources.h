@@ -46,6 +46,8 @@ void stage_barrier(
     VkAccessFlags2 dst_access_mask
 );
 
+void giga_barrier(VkCommandBuffer cmd);
+
 VkImageMemoryBarrier2 image_barrier(
     VkImage image,
     VkImageLayout old_layout,

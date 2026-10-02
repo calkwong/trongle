@@ -71,6 +71,12 @@ void stage_barrier(
     vkCmdPipelineBarrier2(cmd, &info);
 }
 
+void giga_barrier(VkCommandBuffer cmd)
+{
+    auto memory_flags = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+    stage_barrier(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, memory_flags, memory_flags);
+}
+
 // REVIEW: alignment
 Buffer create_buffer(VkDevice device, VmaAllocator allocator, size_t alloc_size, VmaAllocationCreateFlags allocation_flags, VkBufferUsageFlags usage_flags, VkDeviceSize alignment /* = 0 */, bool staging /*= false*/)
 {
