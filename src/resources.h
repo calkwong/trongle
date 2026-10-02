@@ -61,17 +61,8 @@ Buffer create_buffer(
     size_t alloc_size,
     VmaAllocationCreateFlags allocation_flags,
     VkBufferUsageFlags usage_flags,
-    VkDeviceSize alignment = 0
-);
-
-// REVIEW - unused?
-Buffer create_staging_buffer(
-    VkDevice device,
-    VmaAllocator allocator,
-    size_t alloc_size,
-    VmaAllocationCreateFlags allocation_flags,
-    VkBufferUsageFlags usage_flags,
-    VkDeviceSize alignment = 0
+    VkDeviceSize alignment = 0,
+    bool staging = false
 );
 
 Buffer create_buffer_with_data(

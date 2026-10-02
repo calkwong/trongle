@@ -401,14 +401,8 @@ void Engine::run()
     Buffer material_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.materials.data(), asset_loader.materials.size() * sizeof(MaterialData));
     Buffer mesh_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, meshes.data(), meshes.size() * sizeof(MeshData));
 
-    Image depth_image = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
-
+    // Init rendergraph
     Rendergraph graph{ .device = device, .allocator = allocator, .image_manager = &image_manager };
-
-    immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
-                     {
-                         transition_images(cmd, {}, { depth_image.image });
-                     });
 
     VkPhysicalDeviceProperties2 properties2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
     vkGetPhysicalDeviceProperties2(physical_device, &properties2);
@@ -464,13 +458,6 @@ void Engine::run()
                 {
                     update_swapchain(swapchain, window, physical_device, device, surface);
                     proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
-
-                    destroy_image(device, allocator, depth_image);
-                    depth_image = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
-                    immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
-                                     {
-                                         transition_images(cmd, {}, { depth_image.image });
-                                     });
                 }
                 break;
             case SDL_EVENT_KEY_DOWN:
@@ -493,13 +480,6 @@ void Engine::run()
             update_swapchain(swapchain, window, physical_device, device, surface);
             swapchain_dirty = false;
             proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
-
-            destroy_image(device, allocator, depth_image);
-            depth_image = create_image(device, allocator, VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 }, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
-            immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
-                             {
-                                 transition_images(cmd, {}, { depth_image.image });
-                             });
         }
 
         // Update camera
@@ -570,6 +550,13 @@ void Engine::run()
         ImGui::End();
         ImGui::Render();
 
+        auto depth_image = graph.create_task_image(
+            ImageResourceDesc{
+                VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
+                VK_FORMAT_D32_SFLOAT,
+                VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+                VK_IMAGE_ASPECT_DEPTH_BIT }
+        );
         auto draw_image = graph.create_task_image(
             ImageResourceDesc{
                 VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
@@ -719,7 +706,7 @@ void Engine::run()
                 }
 
                 VkRenderingAttachmentInfo depth_attachment_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
-                depth_attachment_info.imageView = depth_image.view;
+                depth_attachment_info.imageView = get_image_view(graph, depth_image);
                 depth_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
                 depth_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
                 depth_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -904,7 +891,6 @@ void Engine::run()
     destroy_buffer(allocator, object_buffer);
     destroy_buffer(allocator, material_buffer);
     destroy_buffer(allocator, mesh_buffer);
-    destroy_image(device, allocator, depth_image);
     vkDestroySampler(device, linear_samp, nullptr);
 
     vkDestroyPipeline(device, gbuffer_pass->pipeline, nullptr);
