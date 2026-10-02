@@ -91,16 +91,68 @@ bool BufferResourceDesc::operator==(const BufferResourceDesc& desc) const
 
 uint32_t Rendergraph::create_task_image(ImageResourceDesc desc)
 {
-    uint32_t id = static_cast<uint32_t>(image_descs.size());
-    image_descs.push_back(desc);
+    uint32_t id = static_cast<uint32_t>(image_infos.size());
+
+    auto info = ImageResourceInfo{};
+    info.type = ResourceType::Owned;
+    info.res.desc = desc;
+
+    image_infos.push_back(info);
 
     return id;
 }
 
 uint32_t Rendergraph::create_task_buffer(BufferResourceDesc desc)
 {
-    uint32_t id = static_cast<uint32_t>(buffer_descs.size());
-    buffer_descs.push_back(desc);
+    uint32_t id = static_cast<uint32_t>(buffer_infos.size());
+
+    auto info = BufferResourceInfo{};
+    info.type = ResourceType::Owned;
+    info.res.desc = desc;
+
+    buffer_infos.push_back(info);
+
+    return id;
+}
+
+uint32_t Rendergraph::import_image(Image image, uint32_t descriptor_handle)
+{
+    uint32_t id = static_cast<uint32_t>(image_infos.size());
+
+    auto info = ImageResourceInfo{};
+    info.type = ResourceType::External;
+    info.res.data = ImageResource{ .image = image, .id = descriptor_handle };
+
+    image_infos.push_back(info);
+
+    return id;
+}
+
+uint32_t Rendergraph::import_buffer(Buffer buffer, uint32_t descriptor_handle)
+{
+    uint32_t id = static_cast<uint32_t>(buffer_infos.size());
+
+    auto info = BufferResourceInfo{};
+    info.type = ResourceType::External;
+    info.res.data = BufferResource{ .buffer = buffer, .id = descriptor_handle };
+
+    buffer_infos.push_back(info);
+
+    return id;
+}
+
+uint32_t Rendergraph::import_swapchain(VkImage image, VkImageView view)
+{
+    uint32_t id = static_cast<uint32_t>(image_infos.size());
+
+    auto info = ImageResourceInfo{};
+    info.type = ResourceType::External;
+    info.res.data = ImageResource{ .image = Image{ image, view }, .id = -1u };
+
+    image_infos.push_back(info);
+    swapchain_index = id;
+
+    image_barriers.emplace_back(image_barrier(image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, 0, 0, 0));
 
     return id;
 }
@@ -119,10 +171,9 @@ void Rendergraph::resolve_images()
                 .state = AccessState{} }
         );
 
-        image_barriers.emplace_back(image_barrier(image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, 0, 0, 0, desc.aspect));
         res_list.cursor++;
-        physical_images.push_back(tracked_res);
-
+        image_barriers.emplace_back(image_barrier(image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, 0, 0, 0, desc.aspect));
+        physical_images.emplace_back(PhysicalImage{ .image = image.image, .view = image.view, .handle = tracked_res.handle });
         image_states.emplace_back(FrameLocalAccessState<TrackedImage>{ .state = AccessState{}, .res_list = &res_list, .index = index });
     };
 
@@ -138,9 +189,10 @@ void Rendergraph::resolve_images()
             if (res_list.cursor < res_list.resources.size())
             {
                 auto index = res_list.cursor;
-                const auto& res = res_list.resources[res_list.cursor++];
-                physical_images.push_back(res);
+                const TrackedImage& res = res_list.resources[res_list.cursor++];
+                const Image& image = res.image;
 
+                physical_images.emplace_back(PhysicalImage{ .image = image.image, .view = image.view, .handle = res.handle });
                 image_states.emplace_back(FrameLocalAccessState<TrackedImage>{ .state = res.state, .res_list = &res_list, .index = index });
             }
             // Create new resource
@@ -151,14 +203,41 @@ void Rendergraph::resolve_images()
         }
     };
 
-    for (const auto& desc : image_descs)
+    for (const ImageResourceInfo& info : image_infos)
     {
-        auto [iter, inserted] = image_resource_cache.try_emplace(desc);
-        ResourceList<TrackedImage>& res_list = iter->second;
-        create_or_extract_resource(desc, res_list, inserted);
+        switch (info.type)
+        {
+        case ResourceType::Owned:
+        {
+            const auto& desc = info.res.desc;
+            auto [iter, inserted] = image_resource_cache.try_emplace(desc);
+            ResourceList<TrackedImage>& res_list = iter->second;
+            create_or_extract_resource(desc, res_list, inserted);
+            break;
+        }
+        case ResourceType::External:
+        {
+            const Image& image = info.res.data.image;
+            auto descriptor_handle = info.res.data.id;
+            // TODO: refactor reinterpret cast hack
+            auto [iter, inserted] = persistent_image_cache.try_emplace(reinterpret_cast<uint64_t>(image.image));
+            TrackedImage& tracked_res = iter->second;
+            if (inserted)
+            {
+                tracked_res.image = image;
+                tracked_res.handle = descriptor_handle;
+                tracked_res.unused = 0;
+                tracked_res.state = AccessState{};
+            }
+
+            physical_images.emplace_back(PhysicalImage{ .image = image.image, .view = image.view, .handle = descriptor_handle });
+            image_states.emplace_back(FrameLocalAccessState<TrackedImage>{ .state = tracked_res.state, .imported = true });
+            break;
+        }
+        }
     }
 
-    assert(image_states.size() == image_descs.size());
+    assert(image_states.size() == image_infos.size());
 }
 
 void Rendergraph::resolve_buffers()
@@ -173,8 +252,8 @@ void Rendergraph::resolve_buffers()
                 .unused = 0,
                 .state = AccessState{} }
         );
-        physical_buffers.push_back(tracked_res);
 
+        physical_buffers.emplace_back(PhysicalBuffer{ .buffer = buffer.buffer, .address = buffer.address, .size = buffer.size });
         buffer_states.emplace_back(FrameLocalAccessState<TrackedBuffer>{ .state = AccessState{}, .res_list = &res_list, .index = index });
     };
 
@@ -191,8 +270,9 @@ void Rendergraph::resolve_buffers()
             {
                 auto index = res_list.cursor;
                 const auto& res = res_list.resources[res_list.cursor++];
-                physical_buffers.push_back(res);
+                const auto& buffer = res.buffer;
 
+                physical_buffers.emplace_back(PhysicalBuffer{ .buffer = buffer.buffer, .address = buffer.address, .size = buffer.size });
                 buffer_states.emplace_back(FrameLocalAccessState<TrackedBuffer>{ .state = res.state, .res_list = &res_list, .index = index });
             }
             // Create new resource
@@ -203,20 +283,45 @@ void Rendergraph::resolve_buffers()
         }
     };
 
-    for (const auto& desc : buffer_descs)
+    for (const BufferResourceInfo& info : buffer_infos)
     {
-        auto [iter, inserted] = buffer_resource_cache.try_emplace(desc);
-        ResourceList<TrackedBuffer>& res_list = iter->second;
-        create_or_extract_resource(desc, res_list, inserted);
+        switch (info.type)
+        {
+        case ResourceType::Owned:
+        {
+            const auto& desc = info.res.desc;
+            auto [iter, inserted] = buffer_resource_cache.try_emplace(desc);
+            ResourceList<TrackedBuffer>& res_list = iter->second;
+            create_or_extract_resource(desc, res_list, inserted);
+            break;
+        }
+        case ResourceType::External:
+        {
+            const Buffer& buffer = info.res.data.buffer;
+            // auto descriptor_handle = info.res.data.id;
+            auto [iter, inserted] = persistent_buffer_cache.try_emplace(buffer.address);
+            TrackedBuffer& tracked_res = iter->second;
+            if (inserted)
+            {
+                tracked_res.buffer = buffer;
+                tracked_res.state = AccessState{};
+                tracked_res.unused = 0;
+            }
+
+            physical_buffers.emplace_back(PhysicalBuffer{ .buffer = buffer.buffer, .address = buffer.address, .size = buffer.size });
+            buffer_states.emplace_back(FrameLocalAccessState<TrackedBuffer>{ .state = tracked_res.state, .imported = true });
+            break;
+        }
+        }
     }
 
-    assert(buffer_states.size() == buffer_descs.size());
+    assert(buffer_states.size() == buffer_infos.size());
 }
 
 void Rendergraph::reset()
 {
-    image_descs.clear();
-    buffer_descs.clear();
+    image_infos.clear();
+    buffer_infos.clear();
     physical_images.clear();
     physical_buffers.clear();
     image_barriers.clear();
@@ -243,6 +348,7 @@ void Rendergraph::reset()
 
             if (tracked_res->unused > FRAMES_UNUSED)
             {
+                const auto& image = tracked_res->image;
                 destroy_image(device, allocator, tracked_res->image);
                 image_manager->free_ids.push_back(tracked_res->handle);
 
@@ -372,7 +478,7 @@ void Rendergraph::prepare_barriers()
     {
         VkMemoryBarrier2 barrier{ .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
 
-        for (const auto& write : pass.writes)
+        for (const PassInfo& write : pass.writes)
         {
             auto id = write.handle;
             if (write.is_image)
@@ -387,7 +493,7 @@ void Rendergraph::prepare_barriers()
             }
         }
 
-        for (const auto& read : pass.reads)
+        for (const PassInfo& read : pass.reads)
         {
             auto id = read.handle;
             if (read.is_image)
@@ -422,12 +528,13 @@ void Rendergraph::prepare_barriers()
 void Rendergraph::execute(VkCommandBuffer cmd)
 {
     assert(barriers.size() == executes.size());
+    assert(swapchain_index != -1u && !image_barriers.empty());
 
     auto pipeline_barrier_and_execute = [&](VkMemoryBarrier2& barrier, std::function<void()>& callback, size_t index)
     {
         VkDependencyInfo info{ .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
 
-        if (index == 0 && !image_barriers.empty())
+        if (index == 0)
         {
             info.pImageMemoryBarriers = image_barriers.data();
             info.imageMemoryBarrierCount = static_cast<uint32_t>(image_barriers.size());
@@ -440,11 +547,7 @@ void Rendergraph::execute(VkCommandBuffer cmd)
             info.pMemoryBarriers = &barrier;
         }
 
-        if (info.imageMemoryBarrierCount != 0 || info.memoryBarrierCount != 0)
-        {
-            vkCmdPipelineBarrier2(cmd, &info);
-        }
-
+        vkCmdPipelineBarrier2(cmd, &info);
         callback();
     };
 
@@ -454,18 +557,38 @@ void Rendergraph::execute(VkCommandBuffer cmd)
         auto& callback = executes[i];
         pipeline_barrier_and_execute(barrier, callback, i);
     }
+
+    // swapchain GENERAL -> PRESENT
+    auto& last_barrier = barriers.back();
+    stage_barrier(cmd, physical_images[swapchain_index].image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, last_barrier.dstStageMask, last_barrier.dstAccessMask, 0, 0);
 }
 
 void Rendergraph::update_cached_resource_states()
 {
-    for (const auto& state : image_states)
+    for (const FrameLocalAccessState<TrackedImage>& state : image_states)
     {
-        state.res_list->resources[state.index].state = state.state;
+        if (state.imported)
+        {
+            uint64_t key = reinterpret_cast<uint64_t>(physical_images[state.index].image);
+            persistent_image_cache[key].state = state.state;
+        }
+        else
+        {
+            state.res_list->resources[state.index].state = state.state;
+        }
     }
 
-    for (const auto& state : buffer_states)
+    for (const FrameLocalAccessState<TrackedBuffer>& state : buffer_states)
     {
-        state.res_list->resources[state.index].state = state.state;
+        if (state.imported)
+        {
+            uint64_t key = static_cast<uint64_t>(physical_buffers[state.index].address);
+            persistent_buffer_cache[key].state = state.state;
+        }
+        else
+        {
+            state.res_list->resources[state.index].state = state.state;
+        }
     }
 }
 
@@ -476,25 +599,25 @@ uint32_t get_image_id(const Rendergraph& graph, uint32_t handle)
 
 VkImageView get_image_view(const Rendergraph& graph, uint32_t handle)
 {
-    return graph.physical_images[handle].image.view;
+    return graph.physical_images[handle].view;
 }
 
 VkImage get_image(const Rendergraph& graph, uint32_t handle)
 {
-    return graph.physical_images[handle].image.image;
+    return graph.physical_images[handle].image;
 }
 
 VkDeviceAddress get_buffer_address(const Rendergraph& graph, uint32_t handle)
 {
-    return graph.physical_buffers[handle].buffer.address;
+    return graph.physical_buffers[handle].address;
 }
 
 VkBuffer get_buffer(const Rendergraph& graph, uint32_t handle)
 {
-    return graph.physical_buffers[handle].buffer.buffer;
+    return graph.physical_buffers[handle].buffer;
 }
 
 VkDeviceSize get_buffer_size(const Rendergraph& graph, uint32_t handle)
 {
-    return graph.physical_buffers[handle].buffer.size;
+    return graph.physical_buffers[handle].size;
 }

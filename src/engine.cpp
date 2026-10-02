@@ -42,9 +42,9 @@
 #define MAX_TIMESTAMP_QUERIES 2
 #define MAX_PIPELINE_QUERIES 1
 
-// const char* ASSET_NAME = "Sponza/Sponza.gltf";
+const char* ASSET_NAME = "Sponza/Sponza.gltf";
 
-const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
+// const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
 // TODO: switch via imgui
 uint32_t GBUFFER_DEBUG_ID = 0; // color, normal, metal, roughness
 
@@ -550,6 +550,8 @@ void Engine::run()
         ImGui::End();
         ImGui::Render();
 
+        auto swapchain_id = graph.import_swapchain(swapchain.images[swapchain_image_idx], swapchain.image_views[swapchain_image_idx]);
+
         auto depth_image = graph.create_task_image(
             ImageResourceDesc{
                 VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
@@ -603,18 +605,6 @@ void Engine::run()
 
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 3, &sets[0], 0, nullptr);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 3, &sets[0], 0, nullptr);
-
-        // TODO: incorporate into rendergraph?
-        stage_barrier(
-            cmd,
-            swapchain.images[swapchain_image_idx],
-            VK_IMAGE_LAYOUT_UNDEFINED,
-            VK_IMAGE_LAYOUT_GENERAL,
-            0,
-            0,
-            0,
-            0
-        );
 
         graph.add_pass(
             "Zero buffers",
@@ -802,14 +792,11 @@ void Engine::run()
             [&](Pass& pass)
             {
                 pass.read_image(draw_image, AccessType::TransferRead);
-                // TODO: import swapchain into rendergraph
-                // pass.write_image(swapchain, AccessType::TransferWrite);
+                pass.write_image(swapchain_id, AccessType::TransferWrite);
             },
             [&]()
             {
-                // TODO: refactor
-                copy_image(cmd, get_image(graph, draw_image), swapchain.images[swapchain_image_idx], swapchain.extent, swapchain.extent);
-                giga_barrier(cmd);
+                copy_image(cmd, get_image(graph, draw_image), get_image(graph, swapchain_id), swapchain.extent, swapchain.extent);
             }
         );
 
@@ -817,7 +804,7 @@ void Engine::run()
             "ImGui",
             [&](Pass& pass)
             {
-                // TODO: import swapchain into rendergraph
+                pass.write_image(swapchain_id, AccessType::ColorAttachmentReadWrite);
             },
             [&]()
             {
@@ -844,18 +831,6 @@ void Engine::run()
         // Rendergraph compilation
         graph.compile(cmd);
         graph.execute(cmd);
-
-        // TODO: incorporate into rendergraph?
-        stage_barrier(
-            cmd,
-            swapchain.images[swapchain_image_idx],
-            VK_IMAGE_LAYOUT_GENERAL,
-            VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-            0,
-            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-            0
-        );
 
         vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 1);
         VK_CHECK(vkEndCommandBuffer(cmd));

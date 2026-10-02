@@ -6,7 +6,6 @@
 #include <cstddef>
 #include <functional>
 #include <initializer_list>
-#include <vector>
 
 struct Image
 {

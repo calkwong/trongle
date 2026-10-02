@@ -14,6 +14,12 @@
 
 constexpr uint32_t FRAMES_UNUSED = 4;
 
+enum class ResourceType
+{
+    Owned,
+    External,
+};
+
 struct ImageResourceDesc
 {
     VkExtent3D extent;
@@ -22,6 +28,12 @@ struct ImageResourceDesc
     VkImageAspectFlags aspect;
 
     bool operator==(const ImageResourceDesc& desc) const;
+};
+
+template<>
+struct std::hash<ImageResourceDesc>
+{
+    size_t operator()(const ImageResourceDesc& key) const noexcept;
 };
 
 struct BufferResourceDesc
@@ -33,15 +45,43 @@ struct BufferResourceDesc
 };
 
 template<>
-struct std::hash<ImageResourceDesc>
-{
-    size_t operator()(const ImageResourceDesc& key) const noexcept;
-};
-
-template<>
 struct std::hash<BufferResourceDesc>
 {
     size_t operator()(const BufferResourceDesc& key) const noexcept;
+};
+
+struct ImageResource
+{
+    Image image;
+    uint32_t id;
+};
+
+struct ImageResourceInfo
+{
+    ResourceType type;
+
+    union
+    {
+        ImageResourceDesc desc;
+        ImageResource data;
+    } res;
+};
+
+struct BufferResource
+{
+    Buffer buffer;
+    uint32_t id;
+};
+
+struct BufferResourceInfo
+{
+    ResourceType type;
+
+    union
+    {
+        BufferResourceDesc desc;
+        BufferResource data;
+    } res;
 };
 
 template<typename T>
@@ -62,7 +102,22 @@ struct FrameLocalAccessState
 {
     AccessState state;
     ResourceList<T>* res_list;
-    uint32_t index;
+    uint32_t index; // index into the vector res_list holds
+    bool imported = false;
+};
+
+struct PhysicalImage
+{
+    VkImage image;
+    VkImageView view;
+    uint32_t handle;
+};
+
+struct PhysicalBuffer
+{
+    VkBuffer buffer;
+    VkDeviceAddress address;
+    VkDeviceSize size;
 };
 
 struct TrackedImage
@@ -82,7 +137,6 @@ struct TrackedBuffer
 
 struct ImageManager;
 
-// TODO: rename? these are more like resource infos for a given pass
 struct PassInfo
 {
     uint32_t handle;
@@ -98,26 +152,34 @@ struct Pass
 
     void read_image(uint32_t handle, AccessType access_type);
     void write_image(uint32_t handle, AccessType access_type);
+
     void read_buffer(uint32_t handle, AccessType access_type);
     void write_buffer(uint32_t handle, AccessType access_type);
 };
 
 // Immediate mode
 struct Rendergraph
-
 {
     VkDevice device;
     VmaAllocator allocator;
     ImageManager* image_manager;
+    uint32_t swapchain_index = -1u;
 
     std::vector<Pass> passes;
-    std::vector<ImageResourceDesc> image_descs;
-    std::vector<BufferResourceDesc> buffer_descs;
+    std::vector<ImageResourceInfo> image_infos;
+    std::vector<BufferResourceInfo> buffer_infos;
     std::unordered_map<ImageResourceDesc, ResourceList<TrackedImage>> image_resource_cache;
     std::unordered_map<BufferResourceDesc, ResourceList<TrackedBuffer>> buffer_resource_cache;
+
+    // TODO: handle unused -> remove zombie key/value pair from cache
+    std::unordered_map<uint64_t, TrackedImage> persistent_image_cache;
+    std::unordered_map<uint64_t, TrackedBuffer> persistent_buffer_cache;
     std::vector<VkImageMemoryBarrier2> image_barriers;
-    std::vector<TrackedImage> physical_images;
-    std::vector<TrackedBuffer> physical_buffers;
+
+    // Physical resources are for resolving handles, views, ids when executing Pass callback functions
+    std::vector<PhysicalImage> physical_images;
+    std::vector<PhysicalBuffer> physical_buffers;
+
     std::vector<std::function<void()>> executes;
     std::vector<VkMemoryBarrier2> barriers;
 
@@ -129,6 +191,12 @@ struct Rendergraph
 
     // TODO: implement mapping buffer to descriptor
     uint32_t create_task_buffer(BufferResourceDesc info);
+
+    // TODO: these 2 need testing
+    uint32_t import_image(Image image, uint32_t descriptor_handle);
+    uint32_t import_buffer(Buffer buffer, uint32_t descriptor_handle);
+
+    uint32_t import_swapchain(VkImage image, VkImageView view);
 
     // Grab an existing physical resource, or create one + assign bindless ID
     // Also assigns a slot in image/buffer_states for per pass update of FrameLocalAccessState
