@@ -433,12 +433,16 @@ void Rendergraph::execute(VkCommandBuffer cmd)
     {
         auto& barrier = barriers[i];
 
-        VkDependencyInfo info{ .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
         // TODO: review if this needs to be refactored for non gigabarrier path
-        info.memoryBarrierCount = 1;
-        info.pMemoryBarriers = &barrier;
+        // Check for redundant barriers (AccessType::Nothing)
+        if (barrier.srcStageMask != 0 && barrier.srcAccessMask != 0)
+        {
+            VkDependencyInfo info{ .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+            info.memoryBarrierCount = 1;
+            info.pMemoryBarriers = &barrier;
 
-        vkCmdPipelineBarrier2(cmd, &info);
+            vkCmdPipelineBarrier2(cmd, &info);
+        }
 
         auto& callback = executes[i];
         callback();
