@@ -45,8 +45,7 @@
 // const char* ASSET_NAME = "Sponza/Sponza.gltf";
 
 const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
-// TODO: switch via imgui
-uint32_t GBUFFER_DEBUG_ID = 0; // color, normal, metal, roughness
+int GBUFFER_DEBUG_ID = 0; // color, normal, metal, roughness
 
 namespace
 {
@@ -557,6 +556,9 @@ void Engine::run()
         ImGui::Text("GPU time:    %.3f ms", stats.gpu_time);
         ImGui::Text("Triangles:   %u", static_cast<unsigned int>(triangles));
         ImGui::Text("Triangles:   %.1fM", static_cast<double>(triangles) * 1e-6);
+
+        ImGui::SliderInt("Debug gbuffers", &GBUFFER_DEBUG_ID, 0, 3);
+
         ImGui::End();
         ImGui::Render();
 
