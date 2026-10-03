@@ -64,7 +64,6 @@ Buffer create_buffer(
     size_t alloc_size,
     VmaAllocationCreateFlags allocation_flags,
     VkBufferUsageFlags usage_flags,
-    VkDeviceSize alignment = 0,
     bool staging = false
 );
 

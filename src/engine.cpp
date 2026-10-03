@@ -351,6 +351,18 @@ void Engine::init_query_pool()
 
 void Engine::run()
 {
+    // Init rendergraph
+    graph.device = device;
+    graph.allocator = allocator;
+    graph.image_manager = &image_manager;
+
+    VkPhysicalDeviceProperties2 properties2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+    vkGetPhysicalDeviceProperties2(physical_device, &properties2);
+    assert(properties2.properties.limits.timestampComputeAndGraphics);
+    auto max_push_constant_size = properties2.properties.limits.maxPushConstantsSize;
+    auto timestamp_period = properties2.properties.limits.timestampPeriod;
+
+    // Init camera
     Camera camera{};
     camera.position = glm::vec3(0, 0, 5);
     camera.far = 100.0f;
@@ -358,17 +370,11 @@ void Engine::run()
 
     auto proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
 
-    // Init scene
     AssetLoader asset_loader{ .device = device, .allocator = allocator };
-
     bool loaded = asset_loader.load_gltf(graphics_queue, imm_fence, imm_pool, imm_buf, ASSET_NAME, static_cast<uint32_t>(image_manager.infos.size()));
     if (!loaded)
     {
         assert(0 && "load_gltf failed");
-    }
-    else
-    {
-        fmt::println("Gltf loaded");
     }
 
     for (const auto& node : asset_loader.parent_nodes)
@@ -400,18 +406,7 @@ void Engine::run()
     Buffer material_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.materials.data(), asset_loader.materials.size() * sizeof(MaterialData));
     Buffer mesh_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, meshes.data(), meshes.size() * sizeof(MeshData));
 
-    // Init rendergraph
-    graph.device = device;
-    graph.allocator = allocator;
-    graph.image_manager = &image_manager;
-
-    VkPhysicalDeviceProperties2 properties2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
-    vkGetPhysicalDeviceProperties2(physical_device, &properties2);
-    assert(properties2.properties.limits.timestampComputeAndGraphics);
-    auto max_push_constant_size = properties2.properties.limits.maxPushConstantsSize;
-    auto timestamp_period = properties2.properties.limits.timestampPeriod;
-
-    // Init PSO
+    // Create pipeline layout
     VkPushConstantRange pc_range{ .stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = max_push_constant_size };
     std::array<VkDescriptorSetLayout, 3> desc_set_layouts{ buffer_layout, image_layout, sampler_layout };
     VkPipelineLayoutCreateInfo pipeline_layout_info{ .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
@@ -421,7 +416,7 @@ void Engine::run()
     pipeline_layout_info.setLayoutCount = desc_set_layouts.size();
     VK_CHECK(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &pipeline_layout));
 
-    auto swapchain_format = VK_FORMAT_B8G8R8A8_UNORM;
+    // Init PSO
     auto gbuffer_program = load_shader_program("gbuffer.slang", device);
     auto cull_program = load_shader_program("culling.slang", device);
     auto debug_program = load_shader_program("debug.slang", device);
@@ -429,6 +424,7 @@ void Engine::run()
     auto gbuffer_pass = create_graphics_pipeline(device, &gbuffer_program, { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT }, nullptr, &pipeline_layout, { VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8_UNORM });
     auto cull_pass = create_compute_pipeline(device, &cull_program, nullptr, &pipeline_layout);
     auto debug_pass = create_compute_pipeline(device, &debug_program, nullptr, &pipeline_layout);
+
     vkDestroyShaderModule(device, gbuffer_program.module, nullptr);
     vkDestroyShaderModule(device, cull_program.module, nullptr);
     vkDestroyShaderModule(device, debug_program.module, nullptr);
@@ -512,10 +508,6 @@ void Engine::run()
         VK_CHECK_SWAPCHAIN(acquire_result);
         VK_CHECK(vkResetFences(device, 1, &frame.fence));
 
-        ImGui_ImplVulkan_NewFrame();
-        ImGui_ImplSDL3_NewFrame();
-        ImGui::NewFrame();
-
         // Get query pool results
         auto timestamp_results_size = timestamp_results.size();
         auto pipeline_results_size = pipeline_results.size();
@@ -552,11 +544,14 @@ void Engine::run()
         vkResetQueryPool(device, frame.query_pool_timestamp, 0, MAX_TIMESTAMP_QUERIES);
         vkResetQueryPool(device, frame.query_pool_pipeline, 0, MAX_PIPELINE_QUERIES);
 
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplSDL3_NewFrame();
+        ImGui::NewFrame();
+
         ImGui::Begin("Stats");
         ImGui::Text("GPU time:    %.3f ms", stats.gpu_time);
         ImGui::Text("Triangles:   %u", static_cast<unsigned int>(triangles));
         ImGui::Text("Triangles:   %.1fM", static_cast<double>(triangles) * 1e-6);
-
         ImGui::SliderInt("Debug gbuffers", &GBUFFER_DEBUG_ID, 0, 3);
 
         ImGui::End();
@@ -613,10 +608,10 @@ void Engine::run()
         VK_CHECK(vkBeginCommandBuffer(cmd, &cmd_begin_info));
         vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 0);
 
-        VkDescriptorSet sets[3] = { buffer_set, image_set, sampler_set };
+        std::array<VkDescriptorSet, 3> sets{ buffer_set, image_set, sampler_set };
 
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 3, &sets[0], 0, nullptr);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 3, &sets[0], 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
 
         graph.add_pass(
             "Zero buffers",
@@ -965,20 +960,20 @@ void Engine::init_descriptors()
     desc_pool = create_descriptor_pool(device, pool_sizes.data(), pool_sizes.size(), 4, VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT);
 
     // Set up bindless
-    VkDescriptorSetLayoutBinding image_bindings[2] = {
+    std::array<VkDescriptorSetLayoutBinding, 2> image_bindings{
         VkDescriptorSetLayoutBinding{ .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = image_count, .stageFlags = VK_SHADER_STAGE_ALL },
         VkDescriptorSetLayoutBinding{ .binding = 1, .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .descriptorCount = image_count, .stageFlags = VK_SHADER_STAGE_ALL }
     };
     VkDescriptorSetLayoutBinding buffer_binding{ .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = buffer_count, .stageFlags = VK_SHADER_STAGE_ALL };
     VkDescriptorSetLayoutBinding sampler_binding{ .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER, .descriptorCount = sampler_count, .stageFlags = VK_SHADER_STAGE_ALL };
     VkDescriptorBindingFlags binding_flags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
-    VkDescriptorBindingFlags image_binding_flags[2] = {
+    std::array<VkDescriptorBindingFlags, 2> image_binding_flags{
         VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
         VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT
     };
 
     buffer_layout = create_descriptor_set_layout(device, &buffer_binding, 1, &binding_flags, 1, VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT);
-    image_layout = create_descriptor_set_layout(device, &image_bindings[0], 2, &image_binding_flags[0], 2, VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT);
+    image_layout = create_descriptor_set_layout(device, image_bindings.data(), image_bindings.size(), image_binding_flags.data(), image_binding_flags.size(), VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT);
     sampler_layout = create_descriptor_set_layout(device, &sampler_binding, 1, &binding_flags, 1, VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT);
 
     buffer_set = create_descriptor_set(device, desc_pool, &buffer_layout, &buffer_count);

@@ -18,7 +18,7 @@ struct ShaderProgram
     std::string name;
 };
 
-bool load_shader_module(const char* path, VkDevice device, VkShaderModule* out_shader_module);
+bool load_shader_module(const char* path, VkDevice device, VkShaderModule& out_shader_module);
 ShaderProgram load_shader_program(const char* path, VkDevice device);
 
 using SpecConstants = std::initializer_list<uint32_t>;

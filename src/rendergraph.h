@@ -222,9 +222,8 @@ struct Rendergraph
 
     void compile(VkCommandBuffer cmd);
 
-    // TODO - can we combine readers into bitflags instead of using vector?
     // Automatic barriers - determines dependencies and updates FrameLocalAccessState to build per pass barrier
-    // REVIEW - Assumes RW resources are W only; this may cause correctness issue when implementing pass reordering and/or pass merging
+    // Assumes RW resources are W only; this may cause correctness issue when implementing pass reordering and/or pass merging
     void prepare_barriers();
 
     void execute(VkCommandBuffer cmd);

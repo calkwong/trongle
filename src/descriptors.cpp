@@ -4,6 +4,7 @@
 #include <volk.h>
 
 #include <cstdint>
+#include <array>
 
 VkDescriptorPool create_descriptor_pool(VkDevice device, const VkDescriptorPoolSize* pool_sizes, uint32_t pool_size_count, uint32_t max_sets, VkDescriptorPoolCreateFlags flags /*= 0*/)
 {
@@ -121,9 +122,9 @@ uint32_t ImageManager::register_image(VkDevice device, VkImageView view, VkImage
 {
     uint32_t handle = add(view, layout);
 
-    VkWriteDescriptorSet writes[2] = { write_image_descriptor(set, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, handle, &infos[handle], 0),
-                                       write_image_descriptor(set, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, handle, &infos[handle], 1) };
-    vkUpdateDescriptorSets(device, 2, &writes[0], 0, nullptr);
+    std::array<VkWriteDescriptorSet, 2> writes{ write_image_descriptor(set, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, handle, &infos[handle], 0),
+                                                write_image_descriptor(set, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, handle, &infos[handle], 1) };
+    vkUpdateDescriptorSets(device, writes.size(), writes.data(), 0, nullptr);
     return handle;
 }
 

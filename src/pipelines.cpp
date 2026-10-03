@@ -14,8 +14,7 @@
 #include <array>
 #include <string>
 
-// REVIEW
-bool load_shader_module(const char* path, VkDevice device, VkShaderModule* out_shader_module)
+bool load_shader_module(const char* path, VkDevice device, VkShaderModule& out_shader_module)
 {
     // cursor at the end
     std::ifstream file(path, std::ios::ate | std::ios::binary);
@@ -50,11 +49,8 @@ bool load_shader_module(const char* path, VkDevice device, VkShaderModule* out_s
     create_info.codeSize = buffer.size() * sizeof(uint32_t);
     create_info.pCode = buffer.data();
 
-    // check that the creation goes well.
-    VkShaderModule shader_module{};
-    VK_CHECK(vkCreateShaderModule(device, &create_info, nullptr, &shader_module));
+    VK_CHECK(vkCreateShaderModule(device, &create_info, nullptr, &out_shader_module));
 
-    *out_shader_module = shader_module;
     return true;
 }
 
@@ -66,7 +62,7 @@ ShaderProgram load_shader_program(const char* path, VkDevice device)
     shader_path += path;
     shader_path += ".spv";
 
-    if (!load_shader_module(shader_path.c_str(), device, &module))
+    if (!load_shader_module(shader_path.c_str(), device, module))
     {
         assert(0 && "Load shader failed");
     }

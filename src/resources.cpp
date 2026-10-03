@@ -77,8 +77,7 @@ void giga_barrier(VkCommandBuffer cmd)
     stage_barrier(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, memory_flags, memory_flags);
 }
 
-// REVIEW: alignment
-Buffer create_buffer(VkDevice device, VmaAllocator allocator, size_t alloc_size, VmaAllocationCreateFlags allocation_flags, VkBufferUsageFlags usage_flags, VkDeviceSize alignment /* = 0 */, bool staging /*= false*/)
+Buffer create_buffer(VkDevice device, VmaAllocator allocator, size_t alloc_size, VmaAllocationCreateFlags allocation_flags, VkBufferUsageFlags usage_flags, bool staging /*= false*/)
 {
     VkBufferCreateInfo buffer_info{};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -89,14 +88,9 @@ Buffer create_buffer(VkDevice device, VmaAllocator allocator, size_t alloc_size,
     alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
     alloc_info.flags = allocation_flags;
 
-    Buffer buffer{};
-    buffer.size = alloc_size;
+    Buffer buffer{ .size = alloc_size };
 
-    if (alignment != 0)
-        VK_CHECK(vmaCreateBufferWithAlignment(allocator, &buffer_info, &alloc_info, alignment, &buffer.buffer, &buffer.allocation, &buffer.info));
-    else
-        VK_CHECK(vmaCreateBuffer(allocator, &buffer_info, &alloc_info, &buffer.buffer, &buffer.allocation, &buffer.info));
-
+    VK_CHECK(vmaCreateBuffer(allocator, &buffer_info, &alloc_info, &buffer.buffer, &buffer.allocation, &buffer.info));
     buffer.address = staging ? 0 : get_buffer_address(device, buffer.buffer);
 
     return buffer;
@@ -231,7 +225,6 @@ Buffer create_buffer_with_data(
         data_size,
         VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
         VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT,
-        0,
         true
     );
 
