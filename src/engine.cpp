@@ -135,8 +135,12 @@ void Engine::init_vulkan()
 
     volkLoadInstance(instance);
 
-    // SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland");
+#ifdef USE_RENDERDOC
     SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
+#else
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland");
+#endif
+
     SDL_Init(SDL_INIT_VIDEO);
     auto window_flags = static_cast<SDL_WindowFlags>(SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
     window = SDL_CreateWindow("Untitled vulkan renderer", 1280u, 720u, window_flags);
