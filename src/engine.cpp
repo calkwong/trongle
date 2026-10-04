@@ -420,18 +420,39 @@ void Engine::run()
     pipeline_layout_info.setLayoutCount = desc_set_layouts.size();
     VK_CHECK(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &pipeline_layout));
 
-    // Init PSO
-    auto gbuffer_program = load_shader_program("gbuffer.slang", device);
-    auto cull_program = load_shader_program("culling.slang", device);
-    auto debug_program = load_shader_program("debug.slang", device);
+    VkPipeline cull_pipeline{};
+    VkPipeline gbuffer_pipeline{};
+    VkPipeline debug_pipeline{};
 
-    auto gbuffer_pass = create_graphics_pipeline(device, &gbuffer_program, { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT }, nullptr, &pipeline_layout, { VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8_UNORM });
-    auto cull_pass = create_compute_pipeline(device, &cull_program, nullptr, &pipeline_layout);
-    auto debug_pass = create_compute_pipeline(device, &debug_program, nullptr, &pipeline_layout);
+    std::vector<VkPipeline> pipelines{};
 
-    vkDestroyShaderModule(device, gbuffer_program.module, nullptr);
-    vkDestroyShaderModule(device, cull_program.module, nullptr);
-    vkDestroyShaderModule(device, debug_program.module, nullptr);
+    auto build_pipelines = [&]()
+    {
+        auto cull_program = load_shader_program("culling.slang", device);
+        auto gbuffer_program = load_shader_program("gbuffer.slang", device);
+        auto debug_program = load_shader_program("debug.slang", device);
+
+        pipelines.clear();
+
+        auto replace_pipeline = [&](VkPipeline& old_pipeline, VkPipeline new_pipeline)
+        {
+            assert(new_pipeline);
+
+            if (old_pipeline)
+            {
+                vkDestroyPipeline(device, old_pipeline, nullptr);
+            }
+
+            old_pipeline = new_pipeline;
+            pipelines.push_back(old_pipeline);
+        };
+
+        replace_pipeline(gbuffer_pipeline, create_graphics_pipeline(device, &gbuffer_program, { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT }, nullptr, &pipeline_layout, { VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8_UNORM }));
+        replace_pipeline(cull_pipeline, create_compute_pipeline(device, &cull_program, nullptr, &pipeline_layout));
+        replace_pipeline(debug_pipeline, create_compute_pipeline(device, &debug_program, nullptr, &pipeline_layout));
+    };
+
+    build_pipelines();
 
     std::array<uint64_t, MAX_TIMESTAMP_QUERIES> timestamp_results{};
     std::array<uint64_t, MAX_PIPELINE_QUERIES> pipeline_results{};
@@ -470,6 +491,16 @@ void Engine::run()
                 {
                     relative_mouse_mode = !relative_mouse_mode;
                     SDL_SetWindowRelativeMouseMode(window, relative_mouse_mode);
+                }
+                if (event.key.key == SDLK_Y && event.key.repeat == 0)
+                {
+                    int recompile = std::system("ninja Shaders");
+
+                    if (recompile == 0)
+                    {
+                        vkDeviceWaitIdle(device);
+                        build_pipelines();
+                    }
                 }
                 break;
             default:
@@ -675,7 +706,7 @@ void Engine::run()
                 data.count = renderables.size();
                 data.lod_distance_factor = 2.0f / (data.p11 * swapchain.extent.height);
 
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_pass->pipeline);
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                 vkCmdDispatch(cmd, get_group_count(renderables.size(), 256), 1, 1);
             }
@@ -742,7 +773,7 @@ void Engine::run()
                 scissor.extent.height = swapchain.extent.height;
                 vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gbuffer_pass->pipeline);
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gbuffer_pipeline);
 
                 struct PushData
                 {
@@ -792,7 +823,7 @@ void Engine::run()
                 data.metal_roughness_id = get_image_id(graph, gbuffer_mr);
                 data.draw_id = get_image_id(graph, draw_image);
 
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, debug_pass->pipeline);
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, debug_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                 vkCmdDispatch(cmd, get_group_count(swapchain.extent.width, 8), get_group_count(swapchain.extent.height, 8), 1);
             }
@@ -894,9 +925,10 @@ void Engine::run()
     destroy_buffer(allocator, mesh_buffer);
     vkDestroySampler(device, linear_samp, nullptr);
 
-    vkDestroyPipeline(device, gbuffer_pass->pipeline, nullptr);
-    vkDestroyPipeline(device, cull_pass->pipeline, nullptr);
-    vkDestroyPipeline(device, debug_pass->pipeline, nullptr);
+    for (const auto& pipeline : pipelines)
+    {
+        vkDestroyPipeline(device, pipeline, nullptr);
+    }
 
     asset_loader.cleanup();
     graph.cleanup();

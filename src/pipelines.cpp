@@ -10,7 +10,6 @@
 #include <cstdint>
 #include <cstddef>
 #include <cassert>
-#include <memory>
 #include <array>
 #include <string>
 
@@ -72,7 +71,7 @@ ShaderProgram load_shader_program(const char* path, VkDevice device)
 }
 
 // TODO: implement proper error check for invalid pipeline_layout + p_desc_set_and_binding_mapping_info combination
-std::unique_ptr<ShaderPass> create_graphics_pipeline(
+VkPipeline create_graphics_pipeline(
     VkDevice device,
     const ShaderProgram* program,
     ShaderStages stages,
@@ -83,7 +82,6 @@ std::unique_ptr<ShaderPass> create_graphics_pipeline(
     SpecConstants spec_constants /*= {}*/
 )
 {
-    std::unique_ptr<ShaderPass> result = std::make_unique<ShaderPass>();
     VkPipeline pipeline{};
 
     VkGraphicsPipelineCreateInfo info{ .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
@@ -230,14 +228,13 @@ std::unique_ptr<ShaderPass> create_graphics_pipeline(
     info.layout = pipeline_layout != nullptr ? *pipeline_layout : nullptr;
 
     VK_CHECK(vkCreateGraphicsPipelines(device, 0, 1, &info, nullptr, &pipeline));
+    vkDestroyShaderModule(device, program->module, nullptr);
 
-    result->pipeline = pipeline;
-
-    return result;
+    return pipeline;
 }
 
 // TODO: implement proper error check for invalid pipeline_layout + p_desc_set_and_binding_mapping_info combination
-std::unique_ptr<ShaderPass> create_compute_pipeline(
+VkPipeline create_compute_pipeline(
     VkDevice device,
     const ShaderProgram* program,
     const VkShaderDescriptorSetAndBindingMappingInfoEXT* p_desc_set_and_binding_mapping_info,
@@ -245,7 +242,6 @@ std::unique_ptr<ShaderPass> create_compute_pipeline(
     SpecConstants spec_constants /*= {}*/
 )
 {
-    std::unique_ptr<ShaderPass> result = std::make_unique<ShaderPass>();
     VkPipeline pipeline{};
 
     std::vector<VkSpecializationMapEntry> spec_map_entries{};
@@ -287,8 +283,7 @@ std::unique_ptr<ShaderPass> create_compute_pipeline(
     info.layout = pipeline_layout != nullptr ? *pipeline_layout : nullptr;
 
     VK_CHECK(vkCreateComputePipelines(device, 0, 1, &info, nullptr, &pipeline));
+    vkDestroyShaderModule(device, program->module, nullptr);
 
-    result->pipeline = pipeline;
-
-    return result;
+    return pipeline;
 }

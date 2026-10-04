@@ -2,7 +2,6 @@
 
 #include <volk.h>
 
-#include <memory>
 #include <string>
 #include <initializer_list>
 #include <cstdint>
@@ -25,7 +24,7 @@ using SpecConstants = std::initializer_list<uint32_t>;
 using ShaderStages = std::initializer_list<VkShaderStageFlagBits>;
 using ColorAttachmentFormats = std::initializer_list<VkFormat>;
 
-std::unique_ptr<ShaderPass> create_graphics_pipeline(
+VkPipeline create_graphics_pipeline(
     VkDevice device,
     const ShaderProgram* program,
     ShaderStages stages,
@@ -36,7 +35,7 @@ std::unique_ptr<ShaderPass> create_graphics_pipeline(
     SpecConstants spec_constants = {}
 );
 
-std::unique_ptr<ShaderPass> create_compute_pipeline(
+VkPipeline create_compute_pipeline(
     VkDevice device,
     const ShaderProgram* program,
     const VkShaderDescriptorSetAndBindingMappingInfoEXT* p_desc_set_and_binding_mapping_info,
