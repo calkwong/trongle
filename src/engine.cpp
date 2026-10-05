@@ -89,7 +89,7 @@ void decompose_transform(const glm::mat4& m, glm::vec3& t, glm::vec3& s, glm::ve
 
 uint32_t get_group_count(uint32_t size, uint32_t threads)
 {
-    return (size + threads + 1) / threads;
+    return (size + threads - 1) / threads;
 }
 
 VkBool32 custom_debug_callback(
