@@ -6,11 +6,6 @@
 #include <initializer_list>
 #include <cstdint>
 
-struct ShaderPass
-{
-    VkPipeline pipeline;
-};
-
 struct ShaderProgram
 {
     VkShaderModule module;

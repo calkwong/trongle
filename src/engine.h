@@ -21,7 +21,7 @@ struct FrameData
     VkFence fence;
     VkSemaphore image_acquired_semaphore;
     VkQueryPool query_pool_timestamp;
-    VkQueryPool query_pool_pipeline;
+    VkQueryPool query_pool_mesh_pipeline;
 };
 
 struct ObjectData;

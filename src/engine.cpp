@@ -40,7 +40,7 @@
 #include <cstring>
 
 #define MAX_TIMESTAMP_QUERIES 2
-#define MAX_PIPELINE_QUERIES 1
+#define MAX_MESH_PIPELINE_QUERIES 1
 
 // const char* ASSET_NAME = "Sponza/Sponza.gltf";
 
@@ -284,7 +284,7 @@ void Engine::cleanup()
         vkDestroyFence(device, frame.fence, nullptr);
         vkDestroySemaphore(device, frame.image_acquired_semaphore, nullptr);
         vkDestroyQueryPool(device, frame.query_pool_timestamp, nullptr);
-        vkDestroyQueryPool(device, frame.query_pool_pipeline, nullptr);
+        vkDestroyQueryPool(device, frame.query_pool_mesh_pipeline, nullptr);
     }
 
     vkDestroyCommandPool(device, imm_pool, nullptr);
@@ -357,12 +357,12 @@ void Engine::init_query_pool()
         VK_CHECK(vkCreateQueryPool(device, &query_pool_info, nullptr, &frame.query_pool_timestamp));
 
         query_pool_info.queryType = VK_QUERY_TYPE_PIPELINE_STATISTICS;
-        query_pool_info.queryCount = MAX_PIPELINE_QUERIES;
-        query_pool_info.pipelineStatistics = VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT;
-        VK_CHECK(vkCreateQueryPool(device, &query_pool_info, nullptr, &frame.query_pool_pipeline));
+        query_pool_info.queryCount = MAX_MESH_PIPELINE_QUERIES;
+        query_pool_info.pipelineStatistics = VK_QUERY_PIPELINE_STATISTIC_MESH_SHADER_INVOCATIONS_BIT_EXT;
+        VK_CHECK(vkCreateQueryPool(device, &query_pool_info, nullptr, &frame.query_pool_mesh_pipeline));
 
         vkResetQueryPool(device, frame.query_pool_timestamp, 0, MAX_TIMESTAMP_QUERIES);
-        vkResetQueryPool(device, frame.query_pool_pipeline, 0, MAX_PIPELINE_QUERIES);
+        vkResetQueryPool(device, frame.query_pool_mesh_pipeline, 0, MAX_MESH_PIPELINE_QUERIES);
     }
 }
 
@@ -482,7 +482,7 @@ void Engine::run()
     build_pipelines();
 
     std::array<uint64_t, MAX_TIMESTAMP_QUERIES> timestamp_results{};
-    std::array<uint64_t, MAX_PIPELINE_QUERIES> pipeline_results{};
+    std::array<uint64_t, MAX_MESH_PIPELINE_QUERIES> mesh_pipeline_results{};
 
     auto last_frame = SDL_GetTicks();
     bool quit{ false };
@@ -572,7 +572,7 @@ void Engine::run()
 
         // Get query pool results
         auto timestamp_results_size = timestamp_results.size();
-        auto pipeline_results_size = pipeline_results.size();
+        auto mesh_pipeline_results_size = mesh_pipeline_results.size();
 
         if (frame_number >= FRAMES_IN_FLIGHT)
         {
@@ -587,24 +587,24 @@ void Engine::run()
                 VK_QUERY_RESULT_64_BIT
             ));
 
-            // VK_CHECK(vkGetQueryPoolResults(
-            //     device,
-            //     frame.query_pool_pipeline,
-            //     0,
-            //     pipeline_results_size,
-            //     pipeline_results_size * sizeof(uint64_t),
-            //     pipeline_results.data(),
-            //     sizeof(uint64_t),
-            //     VK_QUERY_RESULT_64_BIT
-            // ));
+            VK_CHECK(vkGetQueryPoolResults(
+                device,
+                frame.query_pool_mesh_pipeline,
+                0,
+                mesh_pipeline_results_size,
+                mesh_pipeline_results_size * sizeof(uint64_t),
+                mesh_pipeline_results.data(),
+                sizeof(uint64_t),
+                VK_QUERY_RESULT_64_BIT
+            ));
         }
 
         double new_gpu_time = static_cast<double>(timestamp_results[1] - timestamp_results[0]) * timestamp_period * 1e-6;
         stats.gpu_time = new_gpu_time + 0.95 * (stats.gpu_time - new_gpu_time);
-        auto triangles = pipeline_results[0];
+        auto triangles = mesh_pipeline_results[0];
 
         vkResetQueryPool(device, frame.query_pool_timestamp, 0, MAX_TIMESTAMP_QUERIES);
-        vkResetQueryPool(device, frame.query_pool_pipeline, 0, MAX_PIPELINE_QUERIES);
+        vkResetQueryPool(device, frame.query_pool_mesh_pipeline, 0, MAX_MESH_PIPELINE_QUERIES);
 
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplSDL3_NewFrame();
@@ -836,7 +836,9 @@ void Engine::run()
                 data.meshlet_indices_buffer = meshlet_indices_buffer.address;
 
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
+                vkCmdBeginQuery(cmd, frame.query_pool_mesh_pipeline, 0, 0);
                 vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), 0, 1, 0);
+                vkCmdEndQuery(cmd, frame.query_pool_mesh_pipeline, 0);
                 vkCmdEndRendering(cmd);
             }
         );
