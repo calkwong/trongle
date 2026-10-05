@@ -550,12 +550,13 @@ void optimize_mesh(
                 }
             }
 
-            // TODO: compress micro indices into uint8_t
-            for (auto i = 0; i < m.triangle_count; i++)
+            // Compress triangles into uint8_t
+            auto index_group = reinterpret_cast<unsigned int*>(meshlet_triangles.data() + m.triangle_offset);
+            auto index_group_count = (m.triangle_count * 3 + 3) / 4;
+
+            for (auto i = 0; i < index_group_count; i++)
             {
-                meshlet_indices.push_back(meshlet_triangles[m.triangle_offset + (i * 3) + 0]);
-                meshlet_indices.push_back(meshlet_triangles[m.triangle_offset + (i * 3) + 1]);
-                meshlet_indices.push_back(meshlet_triangles[m.triangle_offset + (i * 3) + 2]);
+                meshlet_indices.push_back(index_group[i]);
             }
 
             Meshlet new_meshlet{};

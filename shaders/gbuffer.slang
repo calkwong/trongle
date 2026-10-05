@@ -87,9 +87,13 @@ void mesh_main(
 
     for (uint i = t_index; i < triangle_count; i += WG_SIZE_X)
     {
-        uint idx0 = pc.meshlet_indices_buffer[index_offset + i * 3 + 0];
-        uint idx1 = pc.meshlet_indices_buffer[index_offset + i * 3 + 1];
-        uint idx2 = pc.meshlet_indices_buffer[index_offset + i * 3 + 2];
+        // This may not work outside of Slang and SPIRV
+        uint8_t* meshlet_triangles = (uint8_t*)pc.meshlet_indices_buffer;
+        let triangles_offset = index_offset * 4 + i * 3;
+
+        uint idx0 = meshlet_triangles[triangles_offset];
+        uint idx1 = meshlet_triangles[triangles_offset + 1];
+        uint idx2 = meshlet_triangles[triangles_offset + 2];
 
         tris[i] = uint3(idx0, idx1, idx2);
     }
