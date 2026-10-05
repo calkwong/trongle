@@ -38,6 +38,7 @@
 #include <cassert>
 #include <array>
 #include <cstring>
+#include <dlfcn.h>
 
 #define MAX_TIMESTAMP_QUERIES 2
 #define MAX_MESH_PIPELINE_QUERIES 1
@@ -135,15 +136,20 @@ void Engine::init_vulkan()
 
     volkLoadInstance(instance);
 
-#ifdef USE_RENDERDOC
-    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
-#else
-    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland");
+#ifndef _WIN32
+    if (dlopen("librenderdoc.so", RTLD_NOW | RTLD_NOLOAD))
+    {
+        SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
+    }
+    else
+    {
+        SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland");
+    }
 #endif
 
     SDL_Init(SDL_INIT_VIDEO);
     auto window_flags = static_cast<SDL_WindowFlags>(SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
-    window = SDL_CreateWindow("Untitled vulkan renderer", 1280u, 720u, window_flags);
+    window = SDL_CreateWindow("trongle", 1280u, 720u, window_flags);
     bool surface_result = SDL_Vulkan_CreateSurface(window, vkb_inst, nullptr, &surface);
     if (!surface_result)
     {
@@ -259,9 +265,9 @@ void Engine::init_vulkan()
     VK_CHECK(vmaCreateAllocator(&allocator_info, &allocator));
 
 #ifdef NDEBUG
-    fmt::println("Initialized Vulkan - Release mode");
+    fmt::println("Release mode, {}", SDL_GetCurrentVideoDriver());
 #else
-    fmt::println("Initialized Vulkan - Debug mode");
+    fmt::println("Debug mode, {}", SDL_GetCurrentVideoDriver());
 #endif
 }
 
