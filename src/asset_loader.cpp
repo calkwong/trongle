@@ -526,34 +526,28 @@ void optimize_mesh(
                 sizeof(float) * 3
             );
 
-            // TODO: quantize meshlet bounds
-            Meshlet new_meshlet{};
-            new_meshlet.cx = meshopt_quantizeHalf(bounds.center[0]);
-            new_meshlet.cy = meshopt_quantizeHalf(bounds.center[1]);
-            new_meshlet.cz = meshopt_quantizeHalf(bounds.center[2]);
-            new_meshlet.radius = meshopt_quantizeHalf(bounds.radius);
-            new_meshlet.base_vertex = m_vertices.size();
-            new_meshlet.data_offset = data_offset;
-            new_meshlet.vertex_count = m.vertex_count;
-            new_meshlet.triangle_count = m.triangle_count;
-
-            m_meshlets.push_back(new_meshlet);
-
-            data_offset += m.vertex_count + (m.triangle_count * 3);
-
             uint32_t min_vertex = -1u;
             uint32_t max_vertex = 0;
 
-            // TODO: compress vertices into uint16_t
+            // Compress vertices into uint16_t if possible
             for (const auto& v : meshlet_vertices)
             {
                 min_vertex = std::min(v, min_vertex);
                 max_vertex = std::max(v, max_vertex);
             }
 
+            bool pack_vertex = (max_vertex - min_vertex) < (1u << 16);
             for (auto i = 0; i < m.vertex_count; i++)
             {
-                meshlet_indices.push_back(meshlet_vertices[m.vertex_offset + i] - min_vertex);
+                auto v = meshlet_vertices[m.vertex_offset + i] - min_vertex;
+                if (pack_vertex && (i & 1u))
+                {
+                    meshlet_indices.back() |= v << 16;
+                }
+                else
+                {
+                    meshlet_indices.push_back(v);
+                }
             }
 
             // TODO: compress micro indices into uint8_t
@@ -563,6 +557,21 @@ void optimize_mesh(
                 meshlet_indices.push_back(meshlet_triangles[m.triangle_offset + (i * 3) + 1]);
                 meshlet_indices.push_back(meshlet_triangles[m.triangle_offset + (i * 3) + 2]);
             }
+
+            Meshlet new_meshlet{};
+            new_meshlet.cx = meshopt_quantizeHalf(bounds.center[0]);
+            new_meshlet.cy = meshopt_quantizeHalf(bounds.center[1]);
+            new_meshlet.cz = meshopt_quantizeHalf(bounds.center[2]);
+            new_meshlet.radius = meshopt_quantizeHalf(bounds.radius);
+            new_meshlet.base_vertex = m_vertices.size();
+            new_meshlet.data_offset = data_offset;
+            new_meshlet.pack_vertex = pack_vertex;
+            new_meshlet.vertex_count = m.vertex_count;
+            new_meshlet.triangle_count = m.triangle_count;
+
+            m_meshlets.push_back(new_meshlet);
+
+            data_offset = static_cast<uint32_t>(meshlet_indices.size());
         }
 
         MeshLod lod{

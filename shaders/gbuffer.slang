@@ -50,15 +50,22 @@ void mesh_main(
 
     SetMeshOutputCounts(vertex_count, triangle_count);
 
-    uint meshlet_data_offset = meshlet.data_offset;
-    uint triangle_offset = meshlet_data_offset + vertex_count;
+    bool pack_vertex = meshlet.pack_vertex == 1;
+    uint vertex_offset = meshlet.data_offset;
+    uint index_offset = vertex_offset + (pack_vertex ? (vertex_count + 1) / 2 : vertex_count);
 
     ObjectData o = pc.object_buffer[instance_id];
     uint base_vertex = meshlet.base_vertex;
 
-    for (uint i = t_index; i < vertex_count; i += WG_SIZE_X)
+    for (uint i = t_index; i < vertex_count;)
     {
-        uint vertex_index = pc.meshlet_indices_buffer[meshlet_data_offset + i];
+        uint vertex_index = pc.meshlet_indices_buffer[vertex_offset + (pack_vertex ? (i / 2) : i)];
+
+        if (pack_vertex)
+        {
+            vertex_index = (i & 1u) != 0 ? vertex_index >> 16 : vertex_index & (0xFFFF);
+        }
+
         Vertex v = pc.vertex_buffer[base_vertex + vertex_index];
 
         float3 pos = float3(v.px, v.py, v.pz);
@@ -74,13 +81,15 @@ void mesh_main(
         verts[i].uv = float2(v.uv_x, v.uv_y);
         verts[i].material_id = o.material_id;
         verts[i].meshlet_id = meshlet_id;
+
+        break;
     }
 
     for (uint i = t_index; i < triangle_count; i += WG_SIZE_X)
     {
-        uint idx0 = pc.meshlet_indices_buffer[triangle_offset + i * 3 + 0];
-        uint idx1 = pc.meshlet_indices_buffer[triangle_offset + i * 3 + 1];
-        uint idx2 = pc.meshlet_indices_buffer[triangle_offset + i * 3 + 2];
+        uint idx0 = pc.meshlet_indices_buffer[index_offset + i * 3 + 0];
+        uint idx1 = pc.meshlet_indices_buffer[index_offset + i * 3 + 1];
+        uint idx2 = pc.meshlet_indices_buffer[index_offset + i * 3 + 2];
 
         tris[i] = uint3(idx0, idx1, idx2);
     }

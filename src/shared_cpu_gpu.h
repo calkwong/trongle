@@ -112,7 +112,7 @@ PUBLIC_ACCESS struct Meshlet
     uint32_t base_vertex;
     uint32_t data_offset;
 
+    uint16_t pack_vertex;
     uint8_t vertex_count;
     uint8_t triangle_count;
-    uint16_t padding;
 };
