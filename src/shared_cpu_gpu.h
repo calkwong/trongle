@@ -71,6 +71,9 @@ PUBLIC_ACCESS struct MeshLod
     uint32_t first_index;
     uint32_t index_count;
     float error;
+
+    uint32_t meshlet_offset; // Offset into meshlet buffer
+    uint32_t meshlet_count;
 };
 
 PUBLIC_ACCESS struct MeshData
@@ -79,18 +82,14 @@ PUBLIC_ACCESS struct MeshData
     float radius;
 
     uint32_t lod_count;
-    uint32_t vertex_offset;
 
     MeshLod mesh_lods[8];
 };
 
 PUBLIC_ACCESS struct DrawIndirect
 {
-    uint32_t index_count;
-    uint32_t instance_count;
-    uint32_t first_index;
-    int vertex_offset;
-    uint32_t first_instance;
+    uint32_t meshlet_id;
+    uint32_t instance_id;
 };
 
 PUBLIC_ACCESS struct Dispatch
@@ -98,4 +97,22 @@ PUBLIC_ACCESS struct Dispatch
     uint32_t x;
     uint32_t y;
     uint32_t z;
+};
+
+PUBLIC_ACCESS struct Meshlet
+{
+#ifdef __cplusplus
+    uint16_t cx, cy, cz;
+    uint16_t radius;
+#else
+    float16_t cx, cy, cz;
+    float16_t radius;
+#endif
+
+    uint32_t base_vertex;
+    uint32_t data_offset;
+
+    uint8_t vertex_count;
+    uint8_t triangle_count;
+    uint16_t padding;
 };

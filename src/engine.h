@@ -24,11 +24,11 @@ struct FrameData
     VkQueryPool query_pool_pipeline;
 };
 
-struct ShaderPass;
 struct ObjectData;
 struct Node;
 struct MeshData;
 struct GltfMesh;
+struct Meshlet;
 
 struct EngineStats
 {

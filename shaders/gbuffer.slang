@@ -9,6 +9,7 @@ struct Interp
     float4 tangent;
     float2 uv;
     nointerpolation uint material_id;
+    nointerpolation uint meshlet_id;
 }
 
 struct PushConstants
@@ -17,34 +18,72 @@ struct PushConstants
     Vertex* vertex_buffer;
     ObjectData* object_buffer;
     MaterialData* material_buffer;
+    Meshlet* meshlet_buffer;
+    DrawIndirect* draw_indirect_buffer;
+    uint32_t* meshlet_indices_buffer;
 }
 
 [[vk::push_constant]]
 PushConstants pc;
 
-[shader("vertex")]
-Interp vs_main(uint instance_id: SV_VulkanInstanceID, uint vertex_id: SV_VulkanVertexID)
+#define WG_SIZE_X 64
+
+[shader("mesh")]
+[numthreads(WG_SIZE_X, 1, 1)]
+[outputtopology("triangle")]
+void mesh_main(
+    uint3 wg_id: SV_GroupID,
+    uint t_index: SV_GroupIndex,
+    out vertices Interp verts[64],
+    out indices uint3 tris[126],
+)
 {
-    Interp interp;
+    DrawIndirect draw = pc.draw_indirect_buffer[wg_id.x];
 
-    Vertex v = pc.vertex_buffer[vertex_id];
+    uint meshlet_id = draw.meshlet_id;
+    uint instance_id = draw.instance_id;
+
+    Meshlet meshlet = pc.meshlet_buffer[meshlet_id];
+
+    uint vertex_count = meshlet.vertex_count;
+    uint triangle_count = meshlet.triangle_count;
+
+    SetMeshOutputCounts(vertex_count, triangle_count);
+
+    uint meshlet_data_offset = meshlet.data_offset;
+    uint triangle_offset = meshlet_data_offset + vertex_count;
+
     ObjectData o = pc.object_buffer[instance_id];
+    uint base_vertex = meshlet.base_vertex;
 
-    float3 pos = float3(v.px, v.py, v.pz);
-    float4 world_pos = float4(rotate_quat(pos, o.orientation) * o.scale + o.translation, 1.0);
-    interp.position = mul(pc.view_proj, world_pos);
+    for (uint i = t_index; i < vertex_count; i += WG_SIZE_X)
+    {
+        uint vertex_index = pc.meshlet_indices_buffer[meshlet_data_offset + i];
+        Vertex v = pc.vertex_buffer[base_vertex + vertex_index];
 
-    float3 normal;
-    float4 tangent;
-    unpack_tbn(v.normal, uint(v.tangent), normal, tangent);
+        float3 pos = float3(v.px, v.py, v.pz);
+        float4 world_pos = float4(rotate_quat(pos, o.orientation) * o.scale + o.translation, 1.0);
 
-    interp.normal = rotate_quat(normal, o.orientation);
-    interp.tangent = float4(rotate_quat(tangent.xyz, o.orientation), tangent.w);
+        float3 normal;
+        float4 tangent;
+        unpack_tbn(v.normal, uint(v.tangent), normal, tangent);
 
-    interp.uv = float2(v.uv_x, v.uv_y);
-    interp.material_id = o.material_id;
+        verts[i].position = mul(pc.view_proj, world_pos);
+        verts[i].normal = rotate_quat(normal, o.orientation);
+        verts[i].tangent = float4(rotate_quat(tangent.xyz, o.orientation), tangent.w);
+        verts[i].uv = float2(v.uv_x, v.uv_y);
+        verts[i].material_id = o.material_id;
+        verts[i].meshlet_id = meshlet_id;
+    }
 
-    return interp;
+    for (uint i = t_index; i < triangle_count; i += WG_SIZE_X)
+    {
+        uint idx0 = pc.meshlet_indices_buffer[triangle_offset + i * 3 + 0];
+        uint idx1 = pc.meshlet_indices_buffer[triangle_offset + i * 3 + 1];
+        uint idx2 = pc.meshlet_indices_buffer[triangle_offset + i * 3 + 2];
+
+        tris[i] = uint3(idx0, idx1, idx2);
+    }
 }
 
 [shader("pixel")]
@@ -52,7 +91,8 @@ void ps_main(
     Interp in,
     out float4 out_color: SV_Target0,
     out float4 out_normal: SV_Target1,
-    out float2 out_mr: SV_Target2
+    out float2 out_mr: SV_Target2,
+    out uint out_debug: SV_Target3
 )
 {
     MaterialData m = pc.material_buffer[in.material_id];
@@ -87,5 +127,6 @@ void ps_main(
     out_color = albedo;
     out_normal = float4(N, 1.0);
     out_mr = float2(metal_roughness);
+    out_debug = in.meshlet_id;
 }
 

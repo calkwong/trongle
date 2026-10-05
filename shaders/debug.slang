@@ -1,5 +1,6 @@
 import types;
 import bindings;
+import util;
 
 struct PushConstants
 {
@@ -9,6 +10,7 @@ struct PushConstants
     uint normal_id;
     uint metal_roughness_id;
     uint output_id;
+    uint debug_tex_id;
 }
 
 [[vk::push_constant]]
@@ -28,28 +30,40 @@ void main(uint3 global_id: SV_DispatchThreadID)
     {
     case 0:
     {
-        Texture2D tex = get_nonuniform_sampled_image<Texture2D>(pc.color_id);
+        Texture2D tex = get_sampled_image<Texture2D>(pc.color_id);
         out_color = tex.Load(int3(tex_coord, 0));
         break;
     }
     case 1:
     {
-        Texture2D tex = get_nonuniform_sampled_image<Texture2D>(pc.normal_id);
+        Texture2D tex = get_sampled_image<Texture2D>(pc.normal_id);
         out_color.xyz = tex.Load(int3(tex_coord, 0)).xyz;
         break;
     }
     case 2:
     {
-        Texture2D<float2> tex = get_nonuniform_sampled_image<Texture2D<float2>>(pc.metal_roughness_id);
+        Texture2D<float2> tex = get_sampled_image<Texture2D<float2>>(pc.metal_roughness_id);
         float metallic = tex.Load(int3(tex_coord, 0)).r;
         out_color = float4(float3(metallic), 1.0);
         break;
     }
     case 3:
     {
-        Texture2D<float2> tex = get_nonuniform_sampled_image<Texture2D<float2>>(pc.metal_roughness_id);
+        Texture2D<float2> tex = get_sampled_image<Texture2D<float2>>(pc.metal_roughness_id);
         float roughness = tex.Load(int3(tex_coord, 0)).g;
         out_color = float4(float3(roughness), 1.0);
+        break;
+    }
+    case 4:
+    {
+        Texture2D<uint> tex = get_sampled_image<Texture2D<uint>>(pc.debug_tex_id);
+        uint id = tex.Load(int3(tex_coord, 0)).r;
+
+        if (id == 0)
+            break;
+
+        uint mhash = hash(id);
+        out_color = float4(float3(float(mhash & 255), float((mhash >> 8) & 255), float((mhash >> 16) & 255)) / 255.0, 1.0);
         break;
     }
     default:

@@ -403,7 +403,9 @@ void optimize_mesh(
     std::vector<uint32_t>& indices,
     GltfPrimitive& mesh,
     std::vector<Vertex>& m_vertices,
-    std::vector<uint32_t>& m_indices
+    std::vector<uint32_t>& m_indices,
+    std::vector<Meshlet>& m_meshlets,
+    std::vector<uint32_t>& meshlet_indices
 )
 {
     // Index filtering
@@ -469,6 +471,10 @@ void optimize_mesh(
     float next_error{};
     float simplify_threshold = 0.6f;
 
+    constexpr size_t max_vertices = 64;
+    constexpr size_t max_triangles = 126;
+    constexpr float cone_weight = 0.f; // 0 if not cone culling; 0.25 otherwise for a good default
+
     while (mesh.lod_count < max_lod)
     {
         uint32_t first_index = static_cast<uint32_t>(m_indices.size());
@@ -476,15 +482,100 @@ void optimize_mesh(
 
         m_indices.insert(m_indices.end(), indices.begin(), indices.end());
 
+        size_t target_index_count = (static_cast<size_t>(indices.size() * simplify_threshold) / 3) * 3;
+
+        auto max_meshlets = meshopt_buildMeshletsBound(indices.size(), max_vertices, max_triangles);
+        std::vector<meshopt_Meshlet> meshlets(max_meshlets);
+        std::vector<unsigned int> meshlet_vertices(indices.size());
+        std::vector<unsigned char> meshlet_triangles(indices.size());
+
+        size_t meshlet_count = meshopt_buildMeshlets(
+            meshlets.data(),
+            meshlet_vertices.data(),
+            meshlet_triangles.data(),
+            indices.data(),
+            indices.size(),
+            &positions[0].x,
+            vertices.size(),
+            sizeof(float) * 3,
+            max_vertices,
+            max_triangles,
+            cone_weight
+        );
+
+        const meshopt_Meshlet& last = meshlets[meshlet_count - 1];
+
+        meshlet_vertices.resize(last.vertex_offset + last.vertex_count);
+        meshlet_triangles.resize(last.triangle_offset + last.triangle_count * 3);
+        meshlets.resize(meshlet_count);
+
+        auto data_offset = static_cast<uint32_t>(meshlet_indices.size());
+        auto meshlets_offset = static_cast<uint32_t>(m_meshlets.size());
+
+        for (auto& m : meshlets)
+        {
+            // Further optimizing each meshlet in isolation for better triangle and vertex locality
+            meshopt_optimizeMeshlet(&meshlet_vertices[m.vertex_offset], &meshlet_triangles[m.triangle_offset], m.triangle_count, m.vertex_count);
+
+            meshopt_Bounds bounds = meshopt_computeMeshletBounds(
+                &meshlet_vertices[m.vertex_offset],
+                &meshlet_triangles[m.triangle_offset],
+                m.triangle_count,
+                &positions[0].x,
+                vertices.size(),
+                sizeof(float) * 3
+            );
+
+            // TODO: quantize meshlet bounds
+            Meshlet new_meshlet{};
+            new_meshlet.cx = meshopt_quantizeHalf(bounds.center[0]);
+            new_meshlet.cy = meshopt_quantizeHalf(bounds.center[1]);
+            new_meshlet.cz = meshopt_quantizeHalf(bounds.center[2]);
+            new_meshlet.radius = meshopt_quantizeHalf(bounds.radius);
+            new_meshlet.base_vertex = m_vertices.size();
+            new_meshlet.data_offset = data_offset;
+            new_meshlet.vertex_count = m.vertex_count;
+            new_meshlet.triangle_count = m.triangle_count;
+
+            m_meshlets.push_back(new_meshlet);
+
+            data_offset += m.vertex_count + (m.triangle_count * 3);
+
+            uint32_t min_vertex = -1u;
+            uint32_t max_vertex = 0;
+
+            // TODO: compress vertices into uint16_t
+            for (const auto& v : meshlet_vertices)
+            {
+                min_vertex = std::min(v, min_vertex);
+                max_vertex = std::max(v, max_vertex);
+            }
+
+            for (auto i = 0; i < m.vertex_count; i++)
+            {
+                meshlet_indices.push_back(meshlet_vertices[m.vertex_offset + i] - min_vertex);
+            }
+
+            // TODO: compress micro indices into uint8_t
+            for (auto i = 0; i < m.triangle_count; i++)
+            {
+                meshlet_indices.push_back(meshlet_triangles[m.triangle_offset + (i * 3) + 0]);
+                meshlet_indices.push_back(meshlet_triangles[m.triangle_offset + (i * 3) + 1]);
+                meshlet_indices.push_back(meshlet_triangles[m.triangle_offset + (i * 3) + 2]);
+            }
+        }
+
         MeshLod lod{
             .first_index = first_index,
             .index_count = index_count,
-            .error = lod_error * lod_error_scale
+            .error = lod_error * lod_error_scale,
+            .meshlet_offset = meshlets_offset,
+            .meshlet_count = static_cast<uint32_t>(meshlet_count),
         };
 
-        size_t target_index_count = (static_cast<size_t>(indices.size() * simplify_threshold) / 3) * 3;
-
         mesh.mesh_lods[mesh.lod_count++] = lod;
+
+        meshlets_offset += static_cast<uint32_t>(m_meshlets.size());
 
         unsigned int options = meshopt_SimplifyErrorClamped;
 
@@ -827,9 +918,7 @@ bool AssetLoader::load_gltf(
                 assert(0);
             }
 
-            mesh_data.vertex_offset = static_cast<uint32_t>(m_vertices.size());
-
-            optimize_mesh(vertices, indices, mesh_data, m_vertices, m_indices);
+            optimize_mesh(vertices, indices, mesh_data, m_vertices, m_indices, m_meshlets, meshlet_indices);
             new_mesh.mesh.push_back(mesh_data);
         }
 

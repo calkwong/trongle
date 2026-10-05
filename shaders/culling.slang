@@ -63,18 +63,19 @@ void main(uint3 global_id: SV_DispatchThreadID)
             lod_index = e >= mesh.mesh_lods[i].error ? i : lod_index;
         }
 
+        MeshLod lod = mesh.mesh_lods[lod_index];
+        uint meshlet_count = lod.meshlet_count;
+
         uint count;
-        InterlockedAdd(pc.dispatch_buffer.x, 1, count);
+        InterlockedAdd(pc.dispatch_buffer.x, meshlet_count, count);
         pc.dispatch_buffer.y = 1;
         pc.dispatch_buffer.z = 1;
 
-        pc.draw_indirect_buffer[count].index_count = mesh.mesh_lods[lod_index].index_count;
-        pc.draw_indirect_buffer[count].instance_count = 1;
-        pc.draw_indirect_buffer[count].first_index = mesh.mesh_lods[lod_index].first_index;
-        pc.draw_indirect_buffer[count].vertex_offset = mesh.vertex_offset;
-        pc.draw_indirect_buffer[count].first_instance = index;
+        for (uint i = 0; i < meshlet_count; i++)
+        {
+            pc.draw_indirect_buffer[count + i].meshlet_id = lod.meshlet_offset + i;
+            pc.draw_indirect_buffer[count + i].instance_id = index;
+        }
     }
-
-    scale *= 1.0;
 }
 

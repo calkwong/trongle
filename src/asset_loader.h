@@ -19,8 +19,6 @@ struct GltfPrimitive
     float radius;
 
     uint32_t lod_count;
-    uint32_t vertex_offset;
-
     uint32_t material_id;
 };
 
@@ -51,6 +49,9 @@ struct AssetLoader
     std::vector<Vertex> m_vertices;
     std::vector<uint32_t> m_indices;
     std::vector<MaterialData> materials;
+
+    std::vector<Meshlet> m_meshlets;
+    std::vector<uint32_t> meshlet_indices;
 
     std::vector<Node> parent_nodes;
     std::vector<Node> children_nodes;

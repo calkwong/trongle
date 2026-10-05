@@ -45,7 +45,7 @@
 // const char* ASSET_NAME = "Sponza/Sponza.gltf";
 
 const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
-int GBUFFER_DEBUG_ID = 0; // color, normal, metal, roughness
+int GBUFFER_DEBUG_ID = 4; // color, normal, metal, roughness, debug
 
 namespace
 {
@@ -174,6 +174,7 @@ void Engine::init_vulkan()
     features_12.shaderStorageImageArrayNonUniformIndexing = true;
     features_12.drawIndirectCount = true;
     features_12.hostQueryReset = true;
+    features_12.shaderInt8 = true;
 
     VkPhysicalDeviceVulkan11Features features_11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
 
@@ -207,6 +208,18 @@ void Engine::init_vulkan()
         unified_layouts_features.unifiedImageLayouts = true;
         unified_layouts_supported = phys_ret->enable_extension_features_if_present(unified_layouts_features);
     }
+
+    bool mesh_shader_supported = phys_ret->enable_extension_if_present(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+    if (mesh_shader_supported)
+    {
+        VkPhysicalDeviceMeshShaderFeaturesEXT mesh_shader_features{};
+        mesh_shader_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
+        mesh_shader_features.meshShader = true;
+        mesh_shader_features.meshShaderQueries = true;
+        mesh_shader_supported &= phys_ret->enable_extension_features_if_present(mesh_shader_features);
+    }
+
+    assert(mesh_shader_supported);
 
     vkb::DeviceBuilder device_builder{ phys_ret.value() };
     auto dev_ret = device_builder.build();
@@ -381,6 +394,8 @@ void Engine::run()
         assert(0 && "load_gltf failed");
     }
 
+    // TODO: handle meshlets
+
     for (const auto& node : asset_loader.parent_nodes)
     {
         register_object(node, glm::mat4(1.0), asset_loader.children_nodes, asset_loader.meshes);
@@ -409,6 +424,8 @@ void Engine::run()
     Buffer object_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, renderables.data(), renderables.size() * sizeof(ObjectData));
     Buffer material_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.materials.data(), asset_loader.materials.size() * sizeof(MaterialData));
     Buffer mesh_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, meshes.data(), meshes.size() * sizeof(MeshData));
+    Buffer meshlet_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.m_meshlets.data(), asset_loader.m_meshlets.size() * sizeof(Meshlet));
+    Buffer meshlet_indices_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.meshlet_indices.data(), asset_loader.meshlet_indices.size() * sizeof(uint32_t));
 
     // Create pipeline layout
     VkPushConstantRange pc_range{ .stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = max_push_constant_size };
@@ -447,7 +464,17 @@ void Engine::run()
             pipelines.push_back(old_pipeline);
         };
 
-        replace_pipeline(gbuffer_pipeline, create_graphics_pipeline(device, &gbuffer_program, { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT }, nullptr, &pipeline_layout, { VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8_UNORM }));
+        replace_pipeline(
+            gbuffer_pipeline,
+            create_graphics_pipeline(
+                device,
+                &gbuffer_program,
+                { VK_SHADER_STAGE_MESH_BIT_EXT, VK_SHADER_STAGE_FRAGMENT_BIT },
+                nullptr,
+                &pipeline_layout,
+                { VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8_UNORM, VK_FORMAT_R32_UINT }
+            )
+        );
         replace_pipeline(cull_pipeline, create_compute_pipeline(device, &cull_program, nullptr, &pipeline_layout));
         replace_pipeline(debug_pipeline, create_compute_pipeline(device, &debug_program, nullptr, &pipeline_layout));
     };
@@ -560,16 +587,16 @@ void Engine::run()
                 VK_QUERY_RESULT_64_BIT
             ));
 
-            VK_CHECK(vkGetQueryPoolResults(
-                device,
-                frame.query_pool_pipeline,
-                0,
-                pipeline_results_size,
-                pipeline_results_size * sizeof(uint64_t),
-                pipeline_results.data(),
-                sizeof(uint64_t),
-                VK_QUERY_RESULT_64_BIT
-            ));
+            // VK_CHECK(vkGetQueryPoolResults(
+            //     device,
+            //     frame.query_pool_pipeline,
+            //     0,
+            //     pipeline_results_size,
+            //     pipeline_results_size * sizeof(uint64_t),
+            //     pipeline_results.data(),
+            //     sizeof(uint64_t),
+            //     VK_QUERY_RESULT_64_BIT
+            // ));
         }
 
         double new_gpu_time = static_cast<double>(timestamp_results[1] - timestamp_results[0]) * timestamp_period * 1e-6;
@@ -587,7 +614,7 @@ void Engine::run()
         ImGui::Text("GPU time:    %.3f ms", stats.gpu_time);
         ImGui::Text("Triangles:   %u", static_cast<unsigned int>(triangles));
         ImGui::Text("Triangles:   %.1fM", static_cast<double>(triangles) * 1e-6);
-        ImGui::SliderInt("Debug gbuffers", &GBUFFER_DEBUG_ID, 0, 3);
+        ImGui::SliderInt("Debug gbuffers", &GBUFFER_DEBUG_ID, 0, 4);
 
         ImGui::End();
         ImGui::Render();
@@ -629,8 +656,15 @@ void Engine::run()
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
                 VK_IMAGE_ASPECT_COLOR_BIT }
         );
+        auto gbuffer_debug = graph.create_task_image(
+            ImageResourceDesc{
+                VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
+                VK_FORMAT_R32_UINT,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT }
+        );
 
-        auto draw_indirect_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = renderables.size() * sizeof(VkDrawIndexedIndirectCommand), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT });
+        auto draw_indirect_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = asset_loader.m_meshlets.size() * sizeof(DrawIndirect), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT });
         auto dispatch_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(Dispatch), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
 
         // Record command buffer
@@ -721,14 +755,20 @@ void Engine::run()
                 pass.write_image(gbuffer_color, AccessType::ColorAttachmentWrite);
                 pass.write_image(gbuffer_normal, AccessType::ColorAttachmentWrite);
                 pass.write_image(gbuffer_mr, AccessType::ColorAttachmentWrite);
+                pass.write_image(gbuffer_debug, AccessType::ColorAttachmentWrite);
             },
             [&]()
             {
                 VkClearColorValue clear_color_value = { 1.f, 0.f, 0.f, 1.f };
                 VkClearValue clear_value{ .color = clear_color_value };
 
-                std::array<VkRenderingAttachmentInfo, 3> rendering_attachment_infos{};
-                std::array<VkImageView, 3> gbuffer_views{ get_image_view(graph, gbuffer_color), get_image_view(graph, gbuffer_normal), get_image_view(graph, gbuffer_mr) };
+                std::array<VkRenderingAttachmentInfo, 4> rendering_attachment_infos{};
+                std::array<VkImageView, 4> gbuffer_views{
+                    get_image_view(graph, gbuffer_color),
+                    get_image_view(graph, gbuffer_normal),
+                    get_image_view(graph, gbuffer_mr),
+                    get_image_view(graph, gbuffer_debug)
+                };
 
                 for (auto i = 0; i < rendering_attachment_infos.size(); i++)
                 {
@@ -778,18 +818,25 @@ void Engine::run()
                 struct PushData
                 {
                     glm::mat4 view_proj;
-                    VkDeviceAddress vb;
-                    VkDeviceAddress ob;
-                    VkDeviceAddress mb;
+                    VkDeviceAddress vertex_buffer;
+                    VkDeviceAddress object_buffer;
+                    VkDeviceAddress material_buffer;
+                    VkDeviceAddress meshlet_buffer;
+                    VkDeviceAddress draw_indirect_buffer;
+                    VkDeviceAddress meshlet_indices_buffer;
                 };
 
-                PushData data{ view_proj, vertex_buffer.address, object_buffer.address, material_buffer.address };
+                PushData data{};
+                data.view_proj = view_proj;
+                data.vertex_buffer = vertex_buffer.address;
+                data.object_buffer = object_buffer.address;
+                data.material_buffer = material_buffer.address;
+                data.meshlet_buffer = meshlet_buffer.address;
+                data.draw_indirect_buffer = get_buffer_address(graph, draw_indirect_buffer);
+                data.meshlet_indices_buffer = meshlet_indices_buffer.address;
+
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
-                vkCmdBindIndexBuffer2(cmd, index_buffer.buffer, 0, index_buffer.size, VK_INDEX_TYPE_UINT32);
-                // We don't use queried max draw indirect count as validation layer wants buffer size to be able to store maxDrawCount, which is a waste of memory
-                vkCmdBeginQuery(cmd, frame.query_pool_pipeline, 0, 0);
-                vkCmdDrawIndexedIndirectCount(cmd, get_buffer(graph, draw_indirect_buffer), 0, get_buffer(graph, dispatch_buffer), 0, renderables.size(), sizeof(VkDrawIndexedIndirectCommand));
-                vkCmdEndQuery(cmd, frame.query_pool_pipeline, 0);
+                vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), 0, 1, 0);
                 vkCmdEndRendering(cmd);
             }
         );
@@ -801,6 +848,7 @@ void Engine::run()
                 pass.read_image(gbuffer_color, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
                 pass.read_image(gbuffer_normal, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
                 pass.read_image(gbuffer_mr, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
+                pass.read_image(gbuffer_debug, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
                 pass.write_image(draw_image, AccessType::ComputeShaderWrite);
             },
             [&]()
@@ -813,6 +861,7 @@ void Engine::run()
                     uint32_t normal_id;
                     uint32_t metal_roughness_id;
                     uint32_t draw_id;
+                    uint32_t debug_tex_id;
                 };
 
                 PushData data{};
@@ -822,6 +871,7 @@ void Engine::run()
                 data.normal_id = get_image_id(graph, gbuffer_normal);
                 data.metal_roughness_id = get_image_id(graph, gbuffer_mr);
                 data.draw_id = get_image_id(graph, draw_image);
+                data.debug_tex_id = get_image_id(graph, gbuffer_debug);
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, debug_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
@@ -923,6 +973,8 @@ void Engine::run()
     destroy_buffer(allocator, object_buffer);
     destroy_buffer(allocator, material_buffer);
     destroy_buffer(allocator, mesh_buffer);
+    destroy_buffer(allocator, meshlet_buffer);
+    destroy_buffer(allocator, meshlet_indices_buffer);
     vkDestroySampler(device, linear_samp, nullptr);
 
     for (const auto& pipeline : pipelines)
@@ -965,8 +1017,7 @@ void Engine::register_object(const Node& node, const glm::mat4& top_matrix, cons
                 MeshData{
                     .center = mesh.center,
                     .radius = mesh.radius,
-                    .lod_count = mesh.lod_count,
-                    .vertex_offset = mesh.vertex_offset }
+                    .lod_count = mesh.lod_count }
             );
 
             memcpy(&m.mesh_lods, &mesh.mesh_lods, sizeof(mesh.mesh_lods));
