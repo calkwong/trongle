@@ -475,6 +475,10 @@ void optimize_mesh(
     constexpr size_t max_triangles = 126;
     constexpr float cone_weight = 0.f; // 0 if not cone culling; 0.25 otherwise for a good default
 
+    auto base_vertex = static_cast<uint32_t>(m_vertices.size());
+    auto data_offset = static_cast<uint32_t>(meshlet_indices.size());
+    auto meshlets_offset = static_cast<uint32_t>(m_meshlets.size());
+
     while (mesh.lod_count < max_lod)
     {
         uint32_t first_index = static_cast<uint32_t>(m_indices.size());
@@ -509,9 +513,6 @@ void optimize_mesh(
         meshlet_triangles.resize(last.triangle_offset + last.triangle_count * 3);
         meshlets.resize(meshlet_count);
 
-        auto data_offset = static_cast<uint32_t>(meshlet_indices.size());
-        auto meshlets_offset = static_cast<uint32_t>(m_meshlets.size());
-
         for (auto& m : meshlets)
         {
             // Further optimizing each meshlet in isolation for better triangle and vertex locality
@@ -530,10 +531,11 @@ void optimize_mesh(
             uint32_t max_vertex = 0;
 
             // Compress vertices into uint16_t if possible
-            for (const auto& v : meshlet_vertices)
+            for (auto i = 0; i < m.vertex_count; i++)
             {
-                min_vertex = std::min(v, min_vertex);
-                max_vertex = std::max(v, max_vertex);
+                auto idx = m.vertex_offset + i;
+                min_vertex = std::min(meshlet_vertices[idx], min_vertex);
+                max_vertex = std::max(meshlet_vertices[idx], max_vertex);
             }
 
             bool pack_vertex = (max_vertex - min_vertex) < (1u << 16);
@@ -564,12 +566,11 @@ void optimize_mesh(
             new_meshlet.cy = meshopt_quantizeHalf(bounds.center[1]);
             new_meshlet.cz = meshopt_quantizeHalf(bounds.center[2]);
             new_meshlet.radius = meshopt_quantizeHalf(bounds.radius);
-            new_meshlet.base_vertex = m_vertices.size();
+            new_meshlet.base_vertex = base_vertex + min_vertex;
             new_meshlet.data_offset = data_offset;
             new_meshlet.pack_vertex = pack_vertex;
             new_meshlet.vertex_count = m.vertex_count;
             new_meshlet.triangle_count = m.triangle_count;
-
             m_meshlets.push_back(new_meshlet);
 
             data_offset = static_cast<uint32_t>(meshlet_indices.size());
@@ -585,7 +586,7 @@ void optimize_mesh(
 
         mesh.mesh_lods[mesh.lod_count++] = lod;
 
-        meshlets_offset += static_cast<uint32_t>(m_meshlets.size());
+        meshlets_offset = static_cast<uint32_t>(m_meshlets.size());
 
         unsigned int options = meshopt_SimplifyErrorClamped;
 

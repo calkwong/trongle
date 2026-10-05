@@ -43,10 +43,10 @@
 #define MAX_TIMESTAMP_QUERIES 2
 #define MAX_MESH_PIPELINE_QUERIES 1
 
-// const char* ASSET_NAME = "Sponza/Sponza.gltf";
-
-const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
-int GBUFFER_DEBUG_ID = 4; // color, normal, metal, roughness, debug
+const char* ASSET_NAME = "Sponza/Sponza.gltf";
+// const char* ASSET_NAME = "chinesedragon.gltf";
+// const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
+int GBUFFER_DEBUG_ID = 0; // color, normal, metal, roughness, debug
 
 namespace
 {
@@ -181,12 +181,14 @@ void Engine::init_vulkan()
     features_12.drawIndirectCount = true;
     features_12.hostQueryReset = true;
     features_12.shaderInt8 = true;
+    features_12.shaderBufferInt64Atomics = true;
 
     VkPhysicalDeviceVulkan11Features features_11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
 
     VkPhysicalDeviceFeatures features_10{};
     features_10.shaderInt16 = true;
     features_10.pipelineStatisticsQuery = true;
+    features_10.shaderInt64 = true;
 
     vkb::PhysicalDeviceSelector selector{ vkb_inst };
     auto phys_ret = selector.set_surface(surface)
@@ -400,8 +402,6 @@ void Engine::run()
         assert(0 && "load_gltf failed");
     }
 
-    // TODO: handle meshlets
-
     for (const auto& node : asset_loader.parent_nodes)
     {
         register_object(node, glm::mat4(1.0), asset_loader.children_nodes, asset_loader.meshes);
@@ -443,17 +443,21 @@ void Engine::run()
     pipeline_layout_info.setLayoutCount = desc_set_layouts.size();
     VK_CHECK(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &pipeline_layout));
 
-    VkPipeline cull_pipeline{};
+    VkPipeline cull_mesh_pipeline{};
     VkPipeline gbuffer_pipeline{};
     VkPipeline debug_pipeline{};
+    VkPipeline cull_meshlet_pipeline{};
+    VkPipeline compact_dispatch_pipeline{};
 
     std::vector<VkPipeline> pipelines{};
 
     auto build_pipelines = [&]()
     {
-        auto cull_program = load_shader_program("culling.slang", device);
+        auto cull_program = load_shader_program("cull_mesh.slang", device);
+        auto cull_meshlets_program = load_shader_program("cull_meshlet.slang", device);
         auto gbuffer_program = load_shader_program("gbuffer.slang", device);
         auto debug_program = load_shader_program("debug.slang", device);
+        auto compact_dispatch_program = load_shader_program("compact_dispatch.slang", device);
 
         pipelines.clear();
 
@@ -481,8 +485,10 @@ void Engine::run()
                 { VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8_UNORM, VK_FORMAT_R32_UINT }
             )
         );
-        replace_pipeline(cull_pipeline, create_compute_pipeline(device, &cull_program, nullptr, &pipeline_layout));
+        replace_pipeline(cull_mesh_pipeline, create_compute_pipeline(device, &cull_program, nullptr, &pipeline_layout));
         replace_pipeline(debug_pipeline, create_compute_pipeline(device, &debug_program, nullptr, &pipeline_layout));
+        replace_pipeline(cull_meshlet_pipeline, create_compute_pipeline(device, &cull_meshlets_program, nullptr, &pipeline_layout));
+        replace_pipeline(compact_dispatch_pipeline, create_compute_pipeline(device, &compact_dispatch_program, nullptr, &pipeline_layout));
     };
 
     build_pipelines();
@@ -670,8 +676,9 @@ void Engine::run()
                 VK_IMAGE_ASPECT_COLOR_BIT }
         );
 
-        auto draw_indirect_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = asset_loader.m_meshlets.size() * sizeof(DrawIndirect), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT });
-        auto dispatch_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(Dispatch), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
+        auto dispatch_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(Dispatch) * 2, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
+        auto prefix_sum_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(PrefixSum), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
+        auto meshlet_draw_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(uint32_t) * asset_loader.m_meshlets.size(), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
 
         // Record command buffer
         VkCommandBuffer cmd = frame.command_buffer;
@@ -693,19 +700,20 @@ void Engine::run()
             [&](Pass& pass)
             {
                 pass.write_buffer(dispatch_buffer, AccessType::TransferWrite);
+                pass.write_buffer(prefix_sum_buffer, AccessType::TransferWrite);
             },
             [&]()
             {
-                vkCmdFillBuffer(cmd, get_buffer(graph, dispatch_buffer), 0, get_buffer_size(graph, dispatch_buffer), 0);
+                vkCmdFillBuffer(cmd, get_buffer(graph, dispatch_buffer), 0, VK_WHOLE_SIZE, 0);
+                vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, VK_WHOLE_SIZE, 0);
             }
         );
 
         graph.add_pass(
-            "Compute cull",
+            "Compute cull mesh",
             [&](Pass& pass)
             {
-                pass.write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite);
-                pass.write_buffer(draw_indirect_buffer, AccessType::ComputeShaderWrite);
+                pass.write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite);
             },
             [&]()
             {
@@ -714,8 +722,8 @@ void Engine::run()
                     glm::mat4 view;
                     VkDeviceAddress mesh_buffer;
                     VkDeviceAddress object_buffer;
-                    VkDeviceAddress draw_indirect_buffer;
                     VkDeviceAddress dispatch_buffer;
+                    VkDeviceAddress prefix_sum_buffer;
                     glm::vec4 planes;
                     float p00;
                     float p11;
@@ -736,8 +744,8 @@ void Engine::run()
                 data.view = view;
                 data.mesh_buffer = mesh_buffer.address;
                 data.object_buffer = object_buffer.address;
-                data.draw_indirect_buffer = get_buffer_address(graph, draw_indirect_buffer);
                 data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
+                data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
                 data.p00 = proj[0][0];
                 data.p11 = proj[1][1];
@@ -746,9 +754,85 @@ void Engine::run()
                 data.count = renderables.size();
                 data.lod_distance_factor = 2.0f / (data.p11 * swapchain.extent.height);
 
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_pipeline);
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_mesh_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                 vkCmdDispatch(cmd, get_group_count(renderables.size(), 256), 1, 1);
+            }
+        );
+
+        graph.add_pass(
+            "Compact dispatch",
+            [&](Pass& pass)
+            {
+                pass.read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther);
+                pass.write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite);
+            },
+            [&]()
+            {
+                struct PushData
+                {
+                    VkDeviceAddress prefix_sum_buffer;
+                    VkDeviceAddress dispatch_buffer;
+                };
+
+                PushData data{};
+                data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
+                data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
+
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compact_dispatch_pipeline);
+                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                vkCmdDispatch(cmd, 1, 1, 1);
+            }
+        );
+
+        graph.add_pass(
+            "Compute cull meshlets",
+            [&](Pass& pass)
+            {
+                pass.read_buffer(dispatch_buffer, AccessType::IndirectBuffer);
+                pass.read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther);
+                pass.write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite);
+            },
+            [&]()
+            {
+                struct PushData
+                {
+                    glm::mat4 view;
+                    VkDeviceAddress meshlet_buffer;
+                    VkDeviceAddress object_buffer;
+                    VkDeviceAddress prefix_sum_buffer;
+                    VkDeviceAddress meshlet_draw_buffer;
+                    VkDeviceAddress dispatch_buffer;
+                    glm::vec4 planes;
+                    float p00;
+                    float p11;
+                    float near;
+                    float far;
+                };
+
+                auto proj_t = glm::transpose(proj);
+                auto m0 = proj_t[0];
+                auto m1 = proj_t[1];
+                auto m3 = proj_t[3];
+                auto left_plane = glm::normalize(glm::vec3(m3 + m0));
+                auto bottom_plane = glm::normalize(glm::vec3(m3 + m1));
+
+                PushData data{};
+                data.view = view;
+                data.meshlet_buffer = meshlet_buffer.address;
+                data.object_buffer = object_buffer.address;
+                data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
+                data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
+                data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
+                data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
+                data.p00 = proj[0][0];
+                data.p11 = proj[1][1];
+                data.near = camera.near;
+                data.far = camera.far;
+
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_meshlet_pipeline);
+                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                vkCmdDispatchIndirect(cmd, get_buffer(graph, dispatch_buffer), 0);
             }
         );
 
@@ -757,7 +841,7 @@ void Engine::run()
             [&](Pass& pass)
             {
                 pass.read_buffer(dispatch_buffer, AccessType::IndirectBuffer);
-                pass.read_buffer(draw_indirect_buffer, AccessType::IndirectBuffer);
+                pass.read_buffer(prefix_sum_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer);
                 pass.write_image(gbuffer_color, AccessType::ColorAttachmentWrite);
                 pass.write_image(gbuffer_normal, AccessType::ColorAttachmentWrite);
                 pass.write_image(gbuffer_mr, AccessType::ColorAttachmentWrite);
@@ -828,8 +912,9 @@ void Engine::run()
                     VkDeviceAddress object_buffer;
                     VkDeviceAddress material_buffer;
                     VkDeviceAddress meshlet_buffer;
-                    VkDeviceAddress draw_indirect_buffer;
                     VkDeviceAddress meshlet_indices_buffer;
+                    VkDeviceAddress prefix_sum_buffer;
+                    VkDeviceAddress meshlet_draw_buffer;
                 };
 
                 PushData data{};
@@ -838,12 +923,13 @@ void Engine::run()
                 data.object_buffer = object_buffer.address;
                 data.material_buffer = material_buffer.address;
                 data.meshlet_buffer = meshlet_buffer.address;
-                data.draw_indirect_buffer = get_buffer_address(graph, draw_indirect_buffer);
                 data.meshlet_indices_buffer = meshlet_indices_buffer.address;
+                data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
+                data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
 
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
                 vkCmdBeginQuery(cmd, frame.query_pool_mesh_pipeline, 0, 0);
-                vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), 0, 1, 0);
+                vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch), 1, 0);
                 vkCmdEndQuery(cmd, frame.query_pool_mesh_pipeline, 0);
                 vkCmdEndRendering(cmd);
             }

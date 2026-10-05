@@ -59,6 +59,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
         Texture2D<uint> tex = get_sampled_image<Texture2D<uint>>(pc.debug_tex_id);
         uint id = tex.Load(int3(tex_coord, 0)).r;
 
+        // TODO: remove hack
         if (id == 0)
             break;
 

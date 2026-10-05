@@ -86,12 +86,6 @@ PUBLIC_ACCESS struct MeshData
     MeshLod mesh_lods[8];
 };
 
-PUBLIC_ACCESS struct DrawIndirect
-{
-    uint32_t meshlet_id;
-    uint32_t instance_id;
-};
-
 PUBLIC_ACCESS struct Dispatch
 {
     uint32_t x;
@@ -115,4 +109,19 @@ PUBLIC_ACCESS struct Meshlet
     uint16_t pack_vertex;
     uint8_t vertex_count;
     uint8_t triangle_count;
+};
+
+PUBLIC_ACCESS struct PrefixSumData
+{
+    uint32_t sum;
+    uint32_t meshlet_offset;
+    uint32_t meshlet_count;
+    uint32_t instance_id;
+};
+
+// TODO: set a limit
+PUBLIC_ACCESS struct PrefixSum
+{
+    uint64_t counter;
+    PrefixSumData data[1000];
 };

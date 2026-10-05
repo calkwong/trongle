@@ -1,6 +1,7 @@
 import types;
 import util;
 import bindings;
+import prefix_sum;
 
 struct Interp
 {
@@ -19,8 +20,9 @@ struct PushConstants
     ObjectData* object_buffer;
     MaterialData* material_buffer;
     Meshlet* meshlet_buffer;
-    DrawIndirect* draw_indirect_buffer;
     uint32_t* meshlet_indices_buffer;
+    PrefixSum* prefix_sum_buffer;
+    uint32_t* meshlet_draw_buffer;
 }
 
 [[vk::push_constant]]
@@ -38,12 +40,18 @@ void mesh_main(
     out indices uint3 tris[126],
 )
 {
-    DrawIndirect draw = pc.draw_indirect_buffer[wg_id.x];
+    uint index = pc.meshlet_draw_buffer[wg_id.x];
 
-    uint meshlet_id = draw.meshlet_id;
-    uint instance_id = draw.instance_id;
+    uint prefix_sum_idx = prefix_sum_binary_search(pc.prefix_sum_buffer, index);
+    PrefixSumData prefix_sum_data = pc.prefix_sum_buffer.data[prefix_sum_idx];
+    uint meshlet_offset = prefix_sum_data.meshlet_offset;
+    uint meshlet_count = prefix_sum_data.meshlet_count;
+    uint instance_id = prefix_sum_data.instance_id;
+    uint sum = prefix_sum_data.sum;
 
-    Meshlet meshlet = pc.meshlet_buffer[meshlet_id];
+    uint local_meshlet_id = index - (sum - meshlet_count);
+    uint global_meshlet_id = local_meshlet_id + meshlet_offset;
+    Meshlet meshlet = pc.meshlet_buffer[global_meshlet_id];
 
     uint vertex_count = meshlet.vertex_count;
     uint triangle_count = meshlet.triangle_count;
@@ -80,7 +88,7 @@ void mesh_main(
         verts[i].tangent = float4(rotate_quat(tangent.xyz, o.orientation), tangent.w);
         verts[i].uv = float2(v.uv_x, v.uv_y);
         verts[i].material_id = o.material_id;
-        verts[i].meshlet_id = meshlet_id;
+        verts[i].meshlet_id = global_meshlet_id;
 
         break;
     }

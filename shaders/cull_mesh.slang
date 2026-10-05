@@ -1,13 +1,14 @@
 import types;
 import util;
+import prefix_sum;
 
 struct PushConstants
 {
     float4x4 view;
     MeshData* mesh_buffer;
     ObjectData* object_buffer;
-    DrawIndirect* draw_indirect_buffer;
     Dispatch* dispatch_buffer;
+    PrefixSum* prefix_sum_buffer;
     float4 planes;
     float p00;
     float p11;
@@ -36,10 +37,9 @@ bool frustum_culled(float3 center, float radius)
 [numthreads(256, 1, 1)]
 void main(uint3 global_id: SV_DispatchThreadID)
 {
-    if (global_id.x >= pc.count)
-        return;
-
     uint index = global_id.x;
+    if (index >= pc.count)
+        return;
 
     ObjectData o = pc.object_buffer[index];
     uint mesh_id = o.mesh_id;
@@ -55,7 +55,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
     if (!frustum_culled(center.xyz, radius))
     {
         uint lod_index = 0;
-        float d = max(0.0, length(center) - radius);
+        float d = max(0.0, length(center.xyz) - radius);
         float e = d * pc.lod_distance_factor / scale;
 
         for (uint i = 0; i < mesh.lod_count; i++)
@@ -65,17 +65,9 @@ void main(uint3 global_id: SV_DispatchThreadID)
 
         MeshLod lod = mesh.mesh_lods[lod_index];
         uint meshlet_count = lod.meshlet_count;
+        uint meshlet_offset = lod.meshlet_offset;
 
-        uint count;
-        InterlockedAdd(pc.dispatch_buffer.x, meshlet_count, count);
-        pc.dispatch_buffer.y = 1;
-        pc.dispatch_buffer.z = 1;
-
-        for (uint i = 0; i < meshlet_count; i++)
-        {
-            pc.draw_indirect_buffer[count + i].meshlet_id = lod.meshlet_offset + i;
-            pc.draw_indirect_buffer[count + i].instance_id = index;
-        }
+        prefix_sum_inclusive_append(pc.prefix_sum_buffer, index, meshlet_count, meshlet_offset);
     }
 }
 
