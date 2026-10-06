@@ -712,12 +712,9 @@ void Engine::run()
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
 
         graph.add_pass(
-            "Zero buffers",
-            [&](Pass& pass)
-            {
-                pass.write_buffer(dispatch_buffer, AccessType::TransferWrite);
-                pass.write_buffer(prefix_sum_buffer, AccessType::TransferWrite);
-            },
+            Pass("Zero buffers")
+                .write_buffer(dispatch_buffer, AccessType::TransferWrite)
+                .write_buffer(prefix_sum_buffer, AccessType::TransferWrite),
             [&]()
             {
                 vkCmdFillBuffer(cmd, get_buffer(graph, dispatch_buffer), 0, VK_WHOLE_SIZE, 0);
@@ -726,11 +723,8 @@ void Engine::run()
         );
 
         graph.add_pass(
-            "Compute cull mesh",
-            [&](Pass& pass)
-            {
-                pass.write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite);
-            },
+            Pass("Compute cull mesh")
+                .write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite),
             [&]()
             {
                 struct PushData
@@ -775,12 +769,9 @@ void Engine::run()
         );
 
         graph.add_pass(
-            "Compact dispatch",
-            [&](Pass& pass)
-            {
-                pass.read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther);
-                pass.write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite);
-            },
+            Pass("Compact dispatch")
+                .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
+                .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite),
             [&]()
             {
                 struct PushData
@@ -800,14 +791,11 @@ void Engine::run()
         );
 
         graph.add_pass(
-            "Compute cull meshlets",
-            [&](Pass& pass)
-            {
-                pass.read_buffer(dispatch_buffer, AccessType::IndirectBuffer);
-                pass.read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther);
-                pass.write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite);
-                pass.write_buffer(meshlet_draw_buffer, AccessType::ComputeShaderWrite);
-            },
+            Pass("Compute cull meshlets")
+                .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
+                .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
+                .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite)
+                .write_buffer(meshlet_draw_buffer, AccessType::ComputeShaderWrite),
             [&]()
             {
                 struct PushData
@@ -852,17 +840,14 @@ void Engine::run()
         );
 
         graph.add_pass(
-            "Gbuffers",
-            [&](Pass& pass)
-            {
-                pass.read_buffer(dispatch_buffer, AccessType::IndirectBuffer);
-                pass.read_buffer(prefix_sum_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer);
-                pass.read_buffer(meshlet_draw_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer);
-                pass.write_image(gbuffer_color, AccessType::ColorAttachmentWrite);
-                pass.write_image(gbuffer_normal, AccessType::ColorAttachmentWrite);
-                pass.write_image(gbuffer_mr, AccessType::ColorAttachmentWrite);
-                pass.write_image(gbuffer_debug, AccessType::ColorAttachmentWrite);
-            },
+            Pass("Gbuffers")
+                .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
+                .read_buffer(prefix_sum_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
+                .read_buffer(meshlet_draw_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
+                .write_image(gbuffer_color, AccessType::ColorAttachmentWrite)
+                .write_image(gbuffer_normal, AccessType::ColorAttachmentWrite)
+                .write_image(gbuffer_mr, AccessType::ColorAttachmentWrite)
+                .write_image(gbuffer_debug, AccessType::ColorAttachmentWrite),
             [&]()
             {
                 VkClearColorValue clear_color_value = { 1.f, 0.f, 0.f, 1.f };
@@ -952,15 +937,12 @@ void Engine::run()
         );
 
         graph.add_pass(
-            "Debug gbuffers",
-            [&](Pass& pass)
-            {
-                pass.read_image(gbuffer_color, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
-                pass.read_image(gbuffer_normal, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
-                pass.read_image(gbuffer_mr, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
-                pass.read_image(gbuffer_debug, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
-                pass.write_image(draw_image, AccessType::ComputeShaderWrite);
-            },
+            Pass("Debug gbuffers")
+                .read_image(gbuffer_color, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                .read_image(gbuffer_normal, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                .read_image(gbuffer_mr, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                .read_image(gbuffer_debug, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                .write_image(draw_image, AccessType::ComputeShaderWrite),
             [&]()
             {
                 struct PushData
@@ -990,12 +972,9 @@ void Engine::run()
         );
 
         graph.add_pass(
-            "Copy to swapchain",
-            [&](Pass& pass)
-            {
-                pass.read_image(draw_image, AccessType::TransferRead);
-                pass.write_image(swapchain_image, AccessType::TransferWrite);
-            },
+            Pass("Copy to swapchain")
+                .read_image(draw_image, AccessType::TransferRead)
+                .write_image(swapchain_image, AccessType::TransferWrite),
             [&]()
             {
                 copy_image(cmd, get_image(graph, draw_image), get_image(graph, swapchain_image), swapchain.extent, swapchain.extent);
@@ -1003,11 +982,8 @@ void Engine::run()
         );
 
         graph.add_pass(
-            "ImGui",
-            [&](Pass& pass)
-            {
-                pass.write_image(swapchain_image, AccessType::ColorAttachmentReadWrite);
-            },
+            Pass("ImGui")
+                .write_image(swapchain_image, AccessType::ColorAttachmentReadWrite),
             [&]()
             {
                 VkRenderingAttachmentInfo color_attachment{};

@@ -11,6 +11,7 @@
 #include <functional>
 #include <cstddef>
 #include <string>
+#include <utility>
 
 constexpr uint32_t FRAMES_UNUSED = 4;
 
@@ -164,11 +165,16 @@ struct Pass
     std::vector<PassInfo> reads;
     std::vector<PassInfo> writes;
 
-    void read_image(uint32_t handle, AccessType access_type);
-    void write_image(uint32_t handle, AccessType access_type);
+    // Required prior to C++20
+    explicit Pass(std::string name)
+        : name(std::move(name))
+    {
+    }
 
-    void read_buffer(uint32_t handle, AccessType access_type);
-    void write_buffer(uint32_t handle, AccessType access_type);
+    Pass& read_image(uint32_t handle, AccessType access_type);
+    Pass& write_image(uint32_t handle, AccessType access_type);
+    Pass& read_buffer(uint32_t handle, AccessType access_type);
+    Pass& write_buffer(uint32_t handle, AccessType access_type);
 };
 
 // Immediate mode
@@ -216,7 +222,7 @@ struct Rendergraph
     void resolve_images();
     void resolve_buffers();
 
-    void add_pass(const std::string& name, std::function<void(Pass& pass)> setup, std::function<void()> execute);
+    void add_pass(const Pass& pass, std::function<void()> execute);
 
     void update_cached_resource_states();
 

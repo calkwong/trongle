@@ -8,7 +8,6 @@
 
 #include <cstdint>
 #include <cassert>
-#include <string>
 #include <functional>
 #include <utility>
 #include <cstddef>
@@ -68,24 +67,28 @@ size_t VkImageHash::operator()(VkImage handle) const noexcept
 #endif
 }
 
-void Pass::read_image(uint32_t handle, AccessType access_type)
+Pass& Pass::read_image(uint32_t handle, AccessType access_type)
 {
     reads.push_back(PassInfo{ handle, access_type, true });
+    return *this;
 }
 
-void Pass::write_image(uint32_t handle, AccessType access_type)
+Pass& Pass::write_image(uint32_t handle, AccessType access_type)
 {
     writes.push_back(PassInfo{ handle, access_type, true });
+    return *this;
 }
 
-void Pass::read_buffer(uint32_t handle, AccessType access_type)
+Pass& Pass::read_buffer(uint32_t handle, AccessType access_type)
 {
     reads.push_back(PassInfo{ handle, access_type, false });
+    return *this;
 }
 
-void Pass::write_buffer(uint32_t handle, AccessType access_type)
+Pass& Pass::write_buffer(uint32_t handle, AccessType access_type)
 {
     writes.push_back(PassInfo{ handle, access_type, false });
+    return *this;
 }
 
 bool ImageResourceDesc::operator==(const ImageResourceDesc& desc) const
@@ -407,12 +410,9 @@ void Rendergraph::reset()
     }
 }
 
-void Rendergraph::add_pass(const std::string& name, std::function<void(Pass& pass)> setup, std::function<void()> execute)
+void Rendergraph::add_pass(const Pass& pass, std::function<void()> execute)
 {
-    auto& pass = passes.emplace_back(Pass{ .name = name });
-
-    setup(pass);
-
+    passes.push_back(std::move(pass));
     executes.push_back(std::move(execute));
 }
 
