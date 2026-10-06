@@ -1,7 +1,13 @@
 #pragma once
 
+// This is included in a slang module, and slang files that import modules cannot see preprocessor macros defined in the imported file,
+// so we need to include config.h separately if a slang shader needs it.
+// See Import Declarations: https://github.com/shader-slang/slang/blob/master/docs/language-guide.md
+#include "config.h"
+
 // clang-format off
 #ifdef __cplusplus
+
     #include <glm/ext/vector_float4.hpp>
     #include <glm/ext/quaternion_float.hpp>
     #include <glm/ext/vector_float3.hpp>
@@ -11,6 +17,7 @@
     using float3 = glm::vec3;
     using float4 = glm::vec4;
 #else // Slang
+
     #define PUBLIC_ACCESS public
 #endif
 // clang-format on
@@ -83,7 +90,7 @@ PUBLIC_ACCESS struct MeshData
 
     uint32_t lod_count;
 
-    MeshLod mesh_lods[8];
+    MeshLod mesh_lods[MAX_LOD];
 };
 
 PUBLIC_ACCESS struct Dispatch

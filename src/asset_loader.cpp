@@ -462,7 +462,6 @@ void optimize_mesh(
     mesh.radius = radius;
 
     // Simplification
-    constexpr uint32_t max_lod = 8;
     float lod_error_scale = meshopt_simplifyScale(&positions[0].x, vertices.size(), sizeof(glm::vec3));
     float target_error = 1e-1f;
     float lod_error = 0.f;
@@ -479,7 +478,7 @@ void optimize_mesh(
     auto data_offset = static_cast<uint32_t>(meshlet_indices.size());
     auto meshlets_offset = static_cast<uint32_t>(m_meshlets.size());
 
-    while (mesh.lod_count < max_lod)
+    while (mesh.lod_count < MAX_LOD)
     {
         uint32_t first_index = static_cast<uint32_t>(m_indices.size());
         uint32_t index_count = static_cast<uint32_t>(indices.size());
@@ -590,7 +589,7 @@ void optimize_mesh(
 
         unsigned int options = meshopt_SimplifyErrorClamped;
 
-        if (mesh.lod_count < max_lod)
+        if (mesh.lod_count < MAX_LOD)
         {
             size_t new_size = meshopt_simplifyWithAttributes(
                 indices.data(),

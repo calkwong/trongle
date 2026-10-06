@@ -3,6 +3,7 @@
 #include "swapchain.h"
 #include "descriptors.h"
 #include "rendergraph.h"
+#include "config.h"
 
 #include <volk.h>
 #include <vk_mem_alloc.h>
@@ -11,8 +12,6 @@
 #include <cstdint>
 #include <array>
 #include <vector>
-
-constexpr uint32_t FRAMES_IN_FLIGHT = 2;
 
 struct FrameData
 {

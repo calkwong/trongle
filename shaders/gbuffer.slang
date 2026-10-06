@@ -3,6 +3,8 @@ import util;
 import bindings;
 import prefix_sum;
 
+#include "../src/config.h"
+
 struct Interp
 {
     float4 position : SV_Position;
@@ -36,8 +38,8 @@ PushConstants pc;
 void mesh_main(
     uint3 wg_id: SV_GroupID,
     uint t_index: SV_GroupIndex,
-    out vertices Interp verts[64],
-    out indices uint3 tris[126],
+    out vertices Interp verts[MAX_MESH_VERTS],
+    out indices uint3 tris[MAX_MESH_TRIS],
 )
 {
     uint index = pc.meshlet_draw_buffer[wg_id.x];

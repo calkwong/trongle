@@ -2,6 +2,7 @@
 
 #include "resources.h"
 #include "shared_cpu_gpu.h"
+#include "config.h"
 
 #include <glm/ext/vector_float3.hpp>
 #include <glm/ext/matrix_float4x4.hpp>
@@ -13,7 +14,7 @@
 
 struct GltfPrimitive
 {
-    MeshLod mesh_lods[8];
+    MeshLod mesh_lods[MAX_LOD];
 
     glm::vec3 center;
     float radius;
