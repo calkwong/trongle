@@ -722,7 +722,6 @@ void Engine::run()
                     glm::mat4 view;
                     VkDeviceAddress mesh_buffer;
                     VkDeviceAddress object_buffer;
-                    VkDeviceAddress dispatch_buffer;
                     VkDeviceAddress prefix_sum_buffer;
                     glm::vec4 planes;
                     float p00;
@@ -744,7 +743,6 @@ void Engine::run()
                 data.view = view;
                 data.mesh_buffer = mesh_buffer.address;
                 data.object_buffer = object_buffer.address;
-                data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
                 data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
                 data.p00 = proj[0][0];
@@ -792,6 +790,7 @@ void Engine::run()
                 pass.read_buffer(dispatch_buffer, AccessType::IndirectBuffer);
                 pass.read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther);
                 pass.write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite);
+                pass.write_buffer(meshlet_draw_buffer, AccessType::ComputeShaderWrite);
             },
             [&]()
             {
@@ -842,6 +841,7 @@ void Engine::run()
             {
                 pass.read_buffer(dispatch_buffer, AccessType::IndirectBuffer);
                 pass.read_buffer(prefix_sum_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer);
+                pass.read_buffer(meshlet_draw_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer);
                 pass.write_image(gbuffer_color, AccessType::ColorAttachmentWrite);
                 pass.write_image(gbuffer_normal, AccessType::ColorAttachmentWrite);
                 pass.write_image(gbuffer_mr, AccessType::ColorAttachmentWrite);

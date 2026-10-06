@@ -7,7 +7,6 @@ struct PushConstants
     float4x4 view;
     MeshData* mesh_buffer;
     ObjectData* object_buffer;
-    Dispatch* dispatch_buffer;
     PrefixSum* prefix_sum_buffer;
     float4 planes;
     float p00;
