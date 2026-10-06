@@ -43,8 +43,8 @@
 #define MAX_TIMESTAMP_QUERIES 2
 #define MAX_MESH_PIPELINE_QUERIES 1
 
-const char* ASSET_NAME = "Sponza/Sponza.gltf";
-// const char* ASSET_NAME = "chinesedragon.gltf";
+// const char* ASSET_NAME = "Sponza/Sponza.gltf";
+const char* ASSET_NAME = "chinesedragon.gltf";
 // const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
 int GBUFFER_DEBUG_ID = 0; // color, normal, metal, roughness, debug
 
@@ -393,7 +393,8 @@ void Engine::run()
     camera.far = 100.0f;
     camera.near = 0.01f;
 
-    auto proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
+    frame_context.proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
+    frame_context.debug_proj = frame_context.proj;
 
     AssetLoader asset_loader{ .device = device, .allocator = allocator };
     bool loaded = asset_loader.load_gltf(graphics_queue, imm_fence, imm_pool, imm_buf, ASSET_NAME, static_cast<uint32_t>(image_manager.infos.size()));
@@ -522,7 +523,8 @@ void Engine::run()
                         invalidate_imported_image(graph, image);
                     }
                     update_swapchain(swapchain, window, physical_device, device, surface);
-                    proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
+                    frame_context.proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
+                    frame_context.debug_proj = frame_context.proj;
                 }
                 break;
             case SDL_EVENT_KEY_DOWN:
@@ -541,6 +543,10 @@ void Engine::run()
                         build_pipelines();
                     }
                 }
+                if (event.key.key == SDLK_F && event.key.repeat == 0)
+                {
+                    freeze_matrices = !freeze_matrices;
+                }
                 break;
             default:
                 break;
@@ -558,13 +564,22 @@ void Engine::run()
             }
             update_swapchain(swapchain, window, physical_device, device, surface);
             swapchain_dirty = false;
-            proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
+            frame_context.proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
+            frame_context.debug_proj = frame_context.proj;
         }
 
         // Update camera
         camera.update(delta_time);
-        auto view = camera.get_view_matrix();
-        auto view_proj = proj * view;
+        if (!freeze_matrices)
+        {
+            frame_context.view = camera.get_view_matrix();
+            frame_context.view_proj = frame_context.proj * frame_context.view;
+        }
+        else
+        {
+            frame_context.debug_view = camera.get_view_matrix();
+            frame_context.debug_view_proj = frame_context.debug_proj * frame_context.debug_view;
+        }
 
         // Wait on fence
         auto frame = get_current_frame();
@@ -626,6 +641,7 @@ void Engine::run()
         ImGui::Text("GPU time:    %.3f ms", stats.gpu_time);
         ImGui::Text("Triangles:   %u", static_cast<unsigned int>(triangles));
         ImGui::Text("Triangles:   %.1fM", static_cast<double>(triangles) * 1e-6);
+        ImGui::Checkbox("Freeze camera", &freeze_matrices);
         ImGui::SliderInt("Debug gbuffers", &GBUFFER_DEBUG_ID, 0, 4);
 
         ImGui::End();
@@ -732,7 +748,7 @@ void Engine::run()
                     float lod_distance_factor;
                 };
 
-                auto proj_t = glm::transpose(proj);
+                auto proj_t = glm::transpose(frame_context.proj);
                 auto m0 = proj_t[0];
                 auto m1 = proj_t[1];
                 auto m3 = proj_t[3];
@@ -740,13 +756,13 @@ void Engine::run()
                 auto bottom_plane = glm::normalize(glm::vec3(m3 + m1));
 
                 PushData data{};
-                data.view = view;
+                data.view = frame_context.view;
                 data.mesh_buffer = mesh_buffer.address;
                 data.object_buffer = object_buffer.address;
                 data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
-                data.p00 = proj[0][0];
-                data.p11 = proj[1][1];
+                data.p00 = frame_context.proj[0][0];
+                data.p11 = frame_context.proj[1][1];
                 data.near = camera.near;
                 data.far = camera.far;
                 data.count = renderables.size();
@@ -809,7 +825,7 @@ void Engine::run()
                     float far;
                 };
 
-                auto proj_t = glm::transpose(proj);
+                auto proj_t = glm::transpose(frame_context.proj);
                 auto m0 = proj_t[0];
                 auto m1 = proj_t[1];
                 auto m3 = proj_t[3];
@@ -817,15 +833,15 @@ void Engine::run()
                 auto bottom_plane = glm::normalize(glm::vec3(m3 + m1));
 
                 PushData data{};
-                data.view = view;
+                data.view = frame_context.view;
                 data.meshlet_buffer = meshlet_buffer.address;
                 data.object_buffer = object_buffer.address;
                 data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
                 data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
                 data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
-                data.p00 = proj[0][0];
-                data.p11 = proj[1][1];
+                data.p00 = frame_context.proj[0][0];
+                data.p11 = frame_context.proj[1][1];
                 data.near = camera.near;
                 data.far = camera.far;
 
@@ -918,7 +934,7 @@ void Engine::run()
                 };
 
                 PushData data{};
-                data.view_proj = view_proj;
+                data.view_proj = !freeze_matrices ? frame_context.view_proj : frame_context.debug_view_proj;
                 data.vertex_buffer = vertex_buffer.address;
                 data.object_buffer = object_buffer.address;
                 data.material_buffer = material_buffer.address;

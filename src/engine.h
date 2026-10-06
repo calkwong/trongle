@@ -23,6 +23,18 @@ struct FrameData
     VkQueryPool query_pool_mesh_pipeline;
 };
 
+struct FrameContext
+{
+    // These will be frozen when freeze_matrices is true
+    glm::mat4 view;
+    glm::mat4 proj;
+    glm::mat4 view_proj;
+
+    glm::mat4 debug_view;
+    glm::mat4 debug_proj;
+    glm::mat4 debug_view_proj;
+};
+
 struct ObjectData;
 struct Node;
 struct MeshData;
@@ -59,6 +71,9 @@ public:
 
     uint32_t frame_number;
     std::array<FrameData, FRAMES_IN_FLIGHT> frames;
+
+    bool freeze_matrices;
+    FrameContext frame_context;
 
     EngineStats stats;
 
