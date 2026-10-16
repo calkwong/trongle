@@ -164,6 +164,7 @@ void Engine::init_vulkan()
 
     // SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
 
+    SDL_SetHint(SDL_HINT_APP_ID, "trongle-engine");
     SDL_Init(SDL_INIT_VIDEO);
     auto window_flags = static_cast<SDL_WindowFlags>(SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
     window = SDL_CreateWindow("trongle", 1280u, 720u, window_flags);
@@ -520,9 +521,6 @@ void Engine::run()
         }
         for (auto i = count; i < 11; i++)
         {
-            subresource_range.baseMipLevel = count - 1;
-            img_view_info.subresourceRange = subresource_range;
-
             image_manager.register_image(device, views[count - 1], VK_IMAGE_LAYOUT_GENERAL);
         }
     };
