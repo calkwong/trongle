@@ -130,5 +130,5 @@ PUBLIC_ACCESS struct PrefixSumData
 PUBLIC_ACCESS struct PrefixSum
 {
     uint64_t counter;
-    PrefixSumData data[1000];
+    PrefixSumData data[1000000];
 };

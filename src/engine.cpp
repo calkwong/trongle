@@ -382,7 +382,7 @@ void Engine::init_query_pool()
         query_pool_info.queryCount = MAX_TIMESTAMP_QUERIES;
         VK_CHECK(vkCreateQueryPool(device, &query_pool_info, nullptr, &frame.query_pool_timestamp));
 
-        query_pool_info.queryType = VK_QUERY_TYPE_PIPELINE_STATISTICS;
+        query_pool_info.queryType = VK_QUERY_TYPE_MESH_PRIMITIVES_GENERATED_EXT;
         query_pool_info.queryCount = MAX_MESH_PIPELINE_QUERIES;
         query_pool_info.pipelineStatistics = VK_QUERY_PIPELINE_STATISTIC_MESH_SHADER_INVOCATIONS_BIT_EXT;
         VK_CHECK(vkCreateQueryPool(device, &query_pool_info, nullptr, &frame.query_pool_mesh_pipeline));
@@ -1054,6 +1054,7 @@ void Engine::run()
                 rendering_info.pDepthAttachment = &depth_attachment_info;
 
                 vkCmdBeginRendering(cmd, &rendering_info);
+                vkCmdBeginQuery(cmd, frame.query_pool_mesh_pipeline, 0, 0);
 
                 VkViewport viewport{};
                 viewport.x = 0;
@@ -1096,7 +1097,6 @@ void Engine::run()
                 data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
 
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
-                vkCmdBeginQuery(cmd, frame.query_pool_mesh_pipeline, 0, 0);
                 vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch), 1, 0);
                 vkCmdEndQuery(cmd, frame.query_pool_mesh_pipeline, 0);
                 vkCmdEndRendering(cmd);

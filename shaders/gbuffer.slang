@@ -67,7 +67,7 @@ void mesh_main(
     ObjectData o = pc.object_buffer[instance_id];
     uint base_vertex = meshlet.base_vertex;
 
-    for (uint i = t_index; i < vertex_count;)
+    for (uint i = t_index; i < vertex_count; i += WG_SIZE_X)
     {
         uint vertex_index = pc.meshlet_indices_buffer[vertex_offset + (pack_vertex ? (i / 2) : i)];
 
@@ -91,8 +91,6 @@ void mesh_main(
         verts[i].uv = float2(v.uv_x, v.uv_y);
         verts[i].material_id = o.material_id;
         verts[i].meshlet_id = global_meshlet_id;
-
-        break;
     }
 
     for (uint i = t_index; i < triangle_count; i += WG_SIZE_X)

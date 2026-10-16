@@ -11,6 +11,8 @@ public void prefix_sum_inclusive_append(PrefixSum* buf, uint index, uint value, 
     InterlockedAdd(buf.counter, upper_bits_one | uint64_t(value), sum_and_counter);
     uint instance_index = uint(sum_and_counter >> 32);
 
+    // printf("Instance count: %d", instance_index);
+
     buf.data[instance_index].instance_id = index;
     buf.data[instance_index].sum = uint(sum_and_counter) + value; // inclusive
     // buf.data[instance_index].sum = uint(sum_and_counter); // exclusive
@@ -40,4 +42,3 @@ public uint64_t get_prefix_sum_counter(PrefixSum* buf)
 {
     return buf.counter;
 }
-
