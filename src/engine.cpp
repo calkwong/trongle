@@ -556,7 +556,7 @@ void Engine::run()
             img_view_info.subresourceRange = subresource_range;
 
             VK_CHECK(vkCreateImageView(device, &img_view_info, nullptr, &views[i]));
-            image_manager.update(device, depth_pyramid_first_mip, views[i], VK_IMAGE_LAYOUT_GENERAL);
+            image_manager.update(device, depth_pyramid_first_mip + i, views[i], VK_IMAGE_LAYOUT_GENERAL);
         }
     };
 

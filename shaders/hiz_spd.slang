@@ -1,26 +1,24 @@
-// Lightly modified version of https://github.com/GPUOpen-Effects/FidelityFX-SPD/blob/master/ffx-spd/ffx_spd.h
+// Lightly modified version of https://github.com/GPUOpen-Effects/FidelityFX-SPD/blob/master/ffx-spd/ffx_spd.h, for HiZ only
 //
 // Limitations:
 // - Strictly PoT only
 // - No texture array/cubemap support
-// - Base mip must be PoT or rounded to next PoT
-// - Customized for hiz, will need adjustment for general use
+// - Base mip is nearest PoT of depth texture
 
 import bindings;
 
-// TODO: globallycoherent variant of get_storage_image
-[vk::binding(0, 1)]
+[[vk::binding(0, 1)]]
 [vk::image_format("r32f")]
 globallycoherent RWTexture2D<float> images_r32f_coherent[];
 
 struct PushConstants
 {
     uint* spd_counter_buffer;
-    float2 rcp_resolution; // resolution of src image mapped to next PoT
+    float2 rcp_resolution; // resolution of depth texture, currently set to next PoT
     uint mips;
     uint num_wgs;
-    uint src_id; // depth texture to sample
-    uint dst_id; // mip level 0 of hi-z we write to, offset accordingly!
+    uint src_id; // depth texture
+    uint dst_id; // first mip we write to, offset accordingly!
 };
 
 [[vk::push_constant]]
