@@ -69,4 +69,3 @@ void main(uint3 global_id: SV_DispatchThreadID)
         prefix_sum_inclusive_append(pc.prefix_sum_buffer, index, meshlet_count, meshlet_offset);
     }
 }
-

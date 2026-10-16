@@ -16,6 +16,7 @@ struct ImageManager
     uint32_t add(VkImageView view, VkImageLayout layout);
     uint32_t register_image(VkDevice device, VkImageView view, VkImageLayout layout);
     uint32_t register_sampled_image(VkDevice device, VkImageView view, VkImageLayout layout);
+    void update(VkDevice device, uint32_t handle, VkImageView view, VkImageLayout layout);
 };
 
 // Traditional

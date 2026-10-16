@@ -143,3 +143,13 @@ uint32_t ImageManager::register_sampled_image(VkDevice device, VkImageView view,
     vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
     return handle;
 }
+
+void ImageManager::update(VkDevice device, uint32_t handle, VkImageView view, VkImageLayout layout)
+{
+    infos[handle] = VkDescriptorImageInfo{ .imageView = view, .imageLayout = layout };
+
+    std::array<VkWriteDescriptorSet, 2> writes{ write_image_descriptor(set, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, handle, &infos[handle], 0),
+                                                write_image_descriptor(set, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, handle, &infos[handle], 1) };
+
+    vkUpdateDescriptorSets(device, writes.size(), writes.data(), 0, nullptr);
+}

@@ -152,4 +152,3 @@ void ps_main(
     out_mr = float2(metal_roughness);
     out_debug = in.meshlet_id;
 }
-

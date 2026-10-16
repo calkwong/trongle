@@ -122,6 +122,7 @@ Image create_image(
     img_info.tiling = VK_IMAGE_TILING_OPTIMAL;
     img_info.usage = usage;
 
+    // TODO: remove usage?
     if (mipmapped)
     {
         auto larger_extent = extent.width >= extent.height ? extent.width : extent.height;
@@ -293,6 +294,28 @@ VkSampler create_sampler(VkDevice device, VkFilter filter, VkSamplerMipmapMode m
     info.addressModeU = address;
     info.addressModeV = address;
     info.addressModeW = address;
+    info.maxLod = VK_LOD_CLAMP_NONE;
+
+    VkSampler sampler{};
+
+    VK_CHECK(vkCreateSampler(device, &info, nullptr, &sampler));
+
+    return sampler;
+}
+
+VkSampler create_depth_reduce_sampler(VkDevice device)
+{
+    VkSamplerReductionModeCreateInfo reduction_info{ .sType = VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO };
+    reduction_info.reductionMode = VK_SAMPLER_REDUCTION_MODE_MIN;
+
+    VkSamplerCreateInfo info{ .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+    info.pNext = &reduction_info;
+    info.magFilter = VK_FILTER_LINEAR;
+    info.minFilter = VK_FILTER_LINEAR;
+    info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     info.maxLod = VK_LOD_CLAMP_NONE;
 
     VkSampler sampler{};

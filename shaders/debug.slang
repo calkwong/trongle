@@ -74,4 +74,3 @@ void main(uint3 global_id: SV_DispatchThreadID)
     RWTexture2D out = get_storage_image<RWTexture2D>(pc.output_id);
     out.Store(tex_coord, out_color);
 }
-

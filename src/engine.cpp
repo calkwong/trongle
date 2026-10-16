@@ -9,6 +9,7 @@
 #include "descriptors.h"
 #include "rendergraph.h"
 #include "sync.h"
+#include "config.h"
 
 #include <volk.h>
 #include <vk_mem_alloc.h>
@@ -28,6 +29,7 @@
 #include <glm/matrix.hpp>
 #include <glm/trigonometric.hpp>
 #include <glm/ext/vector_uint2.hpp>
+#include <glm/ext/vector_float2.hpp>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
@@ -40,12 +42,13 @@
 #include <cstring>
 #include <dlfcn.h>
 
-#define MAX_TIMESTAMP_QUERIES 2
+#define MAX_TIMESTAMP_QUERIES 4
 #define MAX_MESH_PIPELINE_QUERIES 1
 
 // const char* ASSET_NAME = "Sponza/Sponza.gltf";
-const char* ASSET_NAME = "chinesedragon.gltf";
-// const char* ASSET_NAME = "DamagedHelmet/DamagedHelmet.gltf";
+// const char* ASSET_NAME = "chinesedragon.gltf";
+// const char* ASSET_NAME = "CS2-assets-ktx2/de_dust2_d.gltf";
+const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
 int GBUFFER_DEBUG_ID = 0; // color, normal, metal, roughness, debug
 
 namespace
@@ -91,6 +94,18 @@ void decompose_transform(const glm::mat4& m, glm::vec3& t, glm::vec3& s, glm::ve
 uint32_t get_group_count(uint32_t size, uint32_t threads)
 {
     return (size + threads - 1) / threads;
+}
+
+// TODO: if extent is alr pow2?
+uint32_t nearest_pow2(uint32_t extent)
+{
+    return 1 << static_cast<uint32_t>(glm::floor(glm::log2(static_cast<float>(extent))));
+}
+
+// TODO: if extent is alr pow2?
+uint32_t next_pow2(uint32_t extent)
+{
+    return nearest_pow2(extent) << 1;
 }
 
 VkBool32 custom_debug_callback(
@@ -147,6 +162,8 @@ void Engine::init_vulkan()
     }
 #endif
 
+    // SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
+
     SDL_Init(SDL_INIT_VIDEO);
     auto window_flags = static_cast<SDL_WindowFlags>(SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
     window = SDL_CreateWindow("trongle", 1280u, 720u, window_flags);
@@ -182,6 +199,7 @@ void Engine::init_vulkan()
     features_12.hostQueryReset = true;
     features_12.shaderInt8 = true;
     features_12.shaderBufferInt64Atomics = true;
+    features_12.samplerFilterMinmax = true;
 
     VkPhysicalDeviceVulkan11Features features_11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
 
@@ -418,8 +436,17 @@ void Engine::run()
     std::vector<VkWriteDescriptorSet> writes{};
     std::vector<VkDescriptorImageInfo> desc_info{};
     VkSampler linear_samp = create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT);
+    VkSampler depth_reduce_samp = create_depth_reduce_sampler(device);
+    VkSampler nearest_samp = create_sampler(device, VK_FILTER_NEAREST, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
     desc_info.emplace_back(VkDescriptorImageInfo{ .sampler = linear_samp });
-    writes.emplace_back(write_sampler_descriptor(sampler_set, 0, &desc_info[0]));
+    desc_info.emplace_back(VkDescriptorImageInfo{ .sampler = depth_reduce_samp });
+    desc_info.emplace_back(VkDescriptorImageInfo{ .sampler = nearest_samp });
+
+    for (auto i = 0; i < desc_info.size(); i++)
+    {
+        writes.emplace_back(write_sampler_descriptor(sampler_set, i, &desc_info[i]));
+    }
+
     vkUpdateDescriptorSets(device, writes.size(), writes.data(), 0, nullptr);
 
     writes.clear();
@@ -433,6 +460,111 @@ void Engine::run()
     Buffer mesh_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, meshes.data(), meshes.size() * sizeof(MeshData));
     Buffer meshlet_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.m_meshlets.data(), asset_loader.m_meshlets.size() * sizeof(Meshlet));
     Buffer meshlet_indices_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.meshlet_indices.data(), asset_loader.meshlet_indices.size() * sizeof(uint32_t));
+    Buffer spd_counter_buffer = create_buffer(device, allocator, sizeof(uint32_t), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT_KHR);
+
+    VkExtent3D depth_pyramid_extent{};
+    depth_pyramid_extent.width = nearest_pow2(swapchain.extent.width);
+    depth_pyramid_extent.height = nearest_pow2(swapchain.extent.height);
+    depth_pyramid_extent.depth = 1;
+    Image depth_pyramid_image = create_image(device, allocator, depth_pyramid_extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 0, true);
+
+    immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
+                     {
+                         vkCmdFillBuffer(cmd, spd_counter_buffer.buffer, 0, VK_WHOLE_SIZE, 0);
+                         stage_barrier(cmd, depth_pyramid_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, 0, 0, 0);
+                     });
+
+    const auto depth_pyramid_descriptor_handle = image_manager.register_image(device, depth_pyramid_image.view, VK_IMAGE_LAYOUT_GENERAL);
+
+    // Returns depth pyramid mip levels for next PoT
+    auto get_depth_pyramid_image_count = [&](const Image& image) -> uint32_t
+    {
+        const auto& depth_pyramid_extent = image.extent;
+        return static_cast<uint32_t>(glm::floor(glm::log2(static_cast<float>(glm::max(depth_pyramid_extent.width, depth_pyramid_extent.height))))) + 1;
+    };
+
+    // Reserves 11 descriptor handles to support up to 2048x2048
+    auto create_depth_pyramid_image_views = [&](const Image& image, std::vector<VkImageView>& views)
+    {
+        if (!views.empty())
+        {
+            for (const auto& view : views)
+            {
+                vkDestroyImageView(device, view, nullptr);
+            }
+
+            views.clear();
+        }
+
+        VkImageViewCreateInfo img_view_info{};
+        img_view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        img_view_info.image = image.image;
+        img_view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        img_view_info.format = VK_FORMAT_R32_SFLOAT;
+        VkImageSubresourceRange subresource_range{};
+        subresource_range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        subresource_range.levelCount = 1;
+        subresource_range.baseArrayLayer = 0;
+        subresource_range.layerCount = VK_REMAINING_ARRAY_LAYERS;
+
+        auto count = get_depth_pyramid_image_count(image);
+
+        views.resize(count);
+        for (auto i = 0; i < count; i++)
+        {
+            subresource_range.baseMipLevel = i;
+            img_view_info.subresourceRange = subresource_range;
+
+            VK_CHECK(vkCreateImageView(device, &img_view_info, nullptr, &views[i]));
+            image_manager.register_image(device, views[i], VK_IMAGE_LAYOUT_GENERAL);
+        }
+        for (auto i = count; i < 11; i++)
+        {
+            subresource_range.baseMipLevel = count - 1;
+            img_view_info.subresourceRange = subresource_range;
+
+            image_manager.register_image(device, views[count - 1], VK_IMAGE_LAYOUT_GENERAL);
+        }
+    };
+
+    auto update_depth_pyramid = [&](const Image& image, std::vector<VkImageView>& views, uint32_t depth_pyramid_first_mip)
+    {
+        assert(!views.empty());
+
+        for (const auto& view : views)
+        {
+            vkDestroyImageView(device, view, nullptr);
+        }
+
+        views.clear();
+
+        VkImageViewCreateInfo img_view_info{};
+        img_view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        img_view_info.image = image.image;
+        img_view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        img_view_info.format = VK_FORMAT_R32_SFLOAT;
+        VkImageSubresourceRange subresource_range{};
+        subresource_range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        subresource_range.levelCount = 1;
+        subresource_range.baseArrayLayer = 0;
+        subresource_range.layerCount = VK_REMAINING_ARRAY_LAYERS;
+
+        auto count = get_depth_pyramid_image_count(image);
+
+        views.resize(count);
+        for (auto i = 0; i < count; i++)
+        {
+            subresource_range.baseMipLevel = i;
+            img_view_info.subresourceRange = subresource_range;
+
+            VK_CHECK(vkCreateImageView(device, &img_view_info, nullptr, &views[i]));
+            image_manager.update(device, depth_pyramid_first_mip, views[i], VK_IMAGE_LAYOUT_GENERAL);
+        }
+    };
+
+    const auto depth_pyramid_first_mip = static_cast<uint32_t>(image_manager.infos.size());
+    std::vector<VkImageView> depth_pyramid_image_views{};
+    create_depth_pyramid_image_views(depth_pyramid_image, depth_pyramid_image_views);
 
     // Create pipeline layout
     VkPushConstantRange pc_range{ .stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = max_push_constant_size };
@@ -449,6 +581,7 @@ void Engine::run()
     VkPipeline debug_pipeline{};
     VkPipeline cull_meshlet_pipeline{};
     VkPipeline compact_dispatch_pipeline{};
+    VkPipeline hiz_pipeline{};
 
     std::vector<VkPipeline> pipelines{};
 
@@ -459,6 +592,7 @@ void Engine::run()
         auto gbuffer_program = load_shader_program("gbuffer.slang", device);
         auto debug_program = load_shader_program("debug.slang", device);
         auto compact_dispatch_program = load_shader_program("compact_dispatch.slang", device);
+        auto hiz_program = load_shader_program("hiz_spd.slang", device);
 
         pipelines.clear();
 
@@ -490,6 +624,7 @@ void Engine::run()
         replace_pipeline(debug_pipeline, create_compute_pipeline(device, &debug_program, nullptr, &pipeline_layout));
         replace_pipeline(cull_meshlet_pipeline, create_compute_pipeline(device, &cull_meshlets_program, nullptr, &pipeline_layout));
         replace_pipeline(compact_dispatch_pipeline, create_compute_pipeline(device, &compact_dispatch_program, nullptr, &pipeline_layout));
+        replace_pipeline(hiz_pipeline, create_compute_pipeline(device, &hiz_program, nullptr, &pipeline_layout));
     };
 
     build_pipelines();
@@ -518,11 +653,25 @@ void Engine::run()
             case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
                 if (event.window.data1 > 0 && event.window.data2 > 0)
                 {
+                    fmt::println("swapchain resize - SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED {} {}", event.window.data1, event.window.data2);
+
                     for (const auto& image : swapchain.images)
                     {
                         invalidate_imported_image(graph, image);
                     }
                     update_swapchain(swapchain, window, physical_device, device, surface);
+
+                    destroy_image(device, allocator, depth_pyramid_image);
+                    depth_pyramid_extent.width = nearest_pow2(swapchain.extent.width);
+                    depth_pyramid_extent.height = nearest_pow2(swapchain.extent.height);
+                    depth_pyramid_image = create_image(device, allocator, depth_pyramid_extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 0, true);
+                    image_manager.update(device, depth_pyramid_descriptor_handle, depth_pyramid_image.view, VK_IMAGE_LAYOUT_GENERAL);
+                    update_depth_pyramid(depth_pyramid_image, depth_pyramid_image_views, depth_pyramid_first_mip);
+                    immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
+                                     {
+                                         stage_barrier(cmd, depth_pyramid_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, 0, 0, 0);
+                                     });
+
                     frame_context.proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
                     frame_context.debug_proj = frame_context.proj;
                 }
@@ -564,6 +713,18 @@ void Engine::run()
             }
             update_swapchain(swapchain, window, physical_device, device, surface);
             swapchain_dirty = false;
+
+            destroy_image(device, allocator, depth_pyramid_image);
+            depth_pyramid_extent.width = nearest_pow2(swapchain.extent.width);
+            depth_pyramid_extent.height = nearest_pow2(swapchain.extent.height);
+            depth_pyramid_image = create_image(device, allocator, depth_pyramid_extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 0, true);
+            image_manager.update(device, depth_pyramid_descriptor_handle, depth_pyramid_image.view, VK_IMAGE_LAYOUT_GENERAL);
+            update_depth_pyramid(depth_pyramid_image, depth_pyramid_image_views, depth_pyramid_first_mip);
+            immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
+                             {
+                                 stage_barrier(cmd, depth_pyramid_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, 0, 0, 0);
+                             });
+
             frame_context.proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
             frame_context.debug_proj = frame_context.proj;
         }
@@ -628,6 +789,7 @@ void Engine::run()
 
         double new_gpu_time = static_cast<double>(timestamp_results[1] - timestamp_results[0]) * timestamp_period * 1e-6;
         stats.gpu_time = new_gpu_time + 0.95 * (stats.gpu_time - new_gpu_time);
+        auto gbuffer_time = static_cast<double>(timestamp_results[3] - timestamp_results[2]) * timestamp_period * 1e-6;
         auto triangles = mesh_pipeline_results[0];
 
         vkResetQueryPool(device, frame.query_pool_timestamp, 0, MAX_TIMESTAMP_QUERIES);
@@ -639,6 +801,7 @@ void Engine::run()
 
         ImGui::Begin("Stats");
         ImGui::Text("GPU time:    %.3f ms", stats.gpu_time);
+        ImGui::Text("Gbuffers:    %.3f ms", gbuffer_time);
         ImGui::Text("Triangles:   %u", static_cast<unsigned int>(triangles));
         ImGui::Text("Triangles:   %.1fM", static_cast<double>(triangles) * 1e-6);
         ImGui::Checkbox("Freeze camera", &freeze_matrices);
@@ -695,6 +858,9 @@ void Engine::run()
         auto dispatch_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(Dispatch) * 2, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
         auto prefix_sum_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(PrefixSum), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
         auto meshlet_draw_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(uint32_t) * asset_loader.m_meshlets.size(), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
+
+        auto depth_pyramid = graph.import_image(depth_pyramid_image, depth_pyramid_descriptor_handle);
+        auto spd_counter = graph.import_buffer(spd_counter_buffer, -1);
 
         // Record command buffer
         VkCommandBuffer cmd = frame.command_buffer;
@@ -850,6 +1016,7 @@ void Engine::run()
                 .write_image(gbuffer_debug, AccessType::ColorAttachmentWrite),
             [&]()
             {
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 2);
                 VkClearColorValue clear_color_value = { 1.f, 0.f, 0.f, 1.f };
                 VkClearValue clear_value{ .color = clear_color_value };
 
@@ -933,6 +1100,7 @@ void Engine::run()
                 vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch), 1, 0);
                 vkCmdEndQuery(cmd, frame.query_pool_mesh_pipeline, 0);
                 vkCmdEndRendering(cmd);
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 3);
             }
         );
 
@@ -968,6 +1136,42 @@ void Engine::run()
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, debug_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                 vkCmdDispatch(cmd, get_group_count(swapchain.extent.width, 8), get_group_count(swapchain.extent.height, 8), 1);
+            }
+        );
+
+        graph.add_pass(
+            Pass("Hiz")
+                .read_image(depth_image, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                .write_image(depth_pyramid, AccessType::ComputeShaderWrite)
+                .write_buffer(spd_counter, AccessType::ComputeShaderWrite),
+            [&]()
+            {
+                struct PushData
+                {
+                    VkDeviceAddress spd_counter_buffer;
+                    glm::vec2 rcp_resolution; // resolution of src image mapped to next PoT
+                    uint32_t mips;
+                    uint32_t num_wgs;
+                    uint32_t src_id; // depth texture to sample
+                    uint32_t dst_id; // mip level 0 of hi-z we write to, offset accordingly!
+                };
+
+                auto width = next_pow2(swapchain.extent.width);
+                auto height = next_pow2(swapchain.extent.height);
+                auto group_count_x = get_group_count(width, 64);
+                auto group_count_y = get_group_count(height, 64);
+
+                PushData data{};
+                data.spd_counter_buffer = spd_counter_buffer.address;
+                data.rcp_resolution = glm::vec2(1.0) / glm::vec2(width, height);
+                data.mips = get_depth_pyramid_image_count(depth_pyramid_image);
+                data.num_wgs = group_count_x * group_count_y;
+                data.src_id = get_image_id(graph, depth_image);
+                data.dst_id = depth_pyramid_first_mip;
+
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hiz_pipeline);
+                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                vkCmdDispatch(cmd, group_count_x, group_count_y, 1);
             }
         );
 
@@ -1061,7 +1265,15 @@ void Engine::run()
     destroy_buffer(allocator, mesh_buffer);
     destroy_buffer(allocator, meshlet_buffer);
     destroy_buffer(allocator, meshlet_indices_buffer);
+    destroy_buffer(allocator, spd_counter_buffer);
+    destroy_image(device, allocator, depth_pyramid_image);
     vkDestroySampler(device, linear_samp, nullptr);
+    vkDestroySampler(device, depth_reduce_samp, nullptr);
+    vkDestroySampler(device, nearest_samp, nullptr);
+    for (const auto& view : depth_pyramid_image_views)
+    {
+        vkDestroyImageView(device, view, nullptr);
+    }
 
     for (const auto& pipeline : pipelines)
     {
@@ -1120,7 +1332,7 @@ void Engine::register_object(const Node& node, const glm::mat4& top_matrix, cons
 void Engine::init_descriptors()
 {
     uint32_t buffer_count = 10;
-    uint32_t image_count = 300;
+    uint32_t image_count = MAX_DESCRIPTORS_IMAGE_COUNT;
     uint32_t sampler_count = 5;
 
     std::array<VkDescriptorPoolSize, 4> pool_sizes{

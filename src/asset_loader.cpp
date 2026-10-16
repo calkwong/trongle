@@ -1,6 +1,7 @@
 #include "asset_loader.h"
 #include "resources.h"
 #include "shared_cpu_gpu.h"
+#include "config.h"
 
 #include <volk.h>
 #include <fastgltf/math.hpp>
@@ -921,7 +922,12 @@ bool AssetLoader::load_gltf(
             GltfPrimitive mesh_data{};
             if (p.materialIndex.has_value())
             {
-                mesh_data.material_id = static_cast<uint32_t>(p.materialIndex.value());
+                auto material_id = static_cast<uint32_t>(p.materialIndex.value());
+                // if (material_id == 0 || material_id == 1)
+                // {
+                    // continue;
+                // }
+                mesh_data.material_id = material_id;
             }
             else
             {

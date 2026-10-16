@@ -71,4 +71,3 @@ void main(uint3 global_id: SV_DispatchThreadID)
         pc.meshlet_draw_buffer[count] = index;
     }
 }
-
