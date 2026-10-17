@@ -1,6 +1,7 @@
 import types;
 import util;
 import prefix_sum;
+import culling;
 
 struct PushConstants
 {
@@ -20,17 +21,11 @@ struct PushConstants
 [[vk::push_constant]]
 PushConstants pc;
 
-// Symmetrical sphere-plane distance test
-bool frustum_culled(float3 center, float radius)
-{
-    bool visible = true;
-
-    visible = visible && (center.z * pc.planes.y - abs(center.x) * pc.planes.x) >= -radius;
-    visible = visible && (center.z * pc.planes.w - abs(center.y) * pc.planes.z) >= -radius;
-    visible = visible && (center.z - radius <= -pc.near) && (center.z + radius >= -pc.far);
-
-    return !visible;
-}
+// (LATE) look up bitfield for early return
+// (EARLY ONLY) frustum test
+// LOD test
+// HZB test
+// (EARLY) write bitfield if rejected from HZB
 
 [shader("compute")]
 [numthreads(256, 1, 1)]
@@ -51,7 +46,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
     float scale = o.scale;
     float radius = scale * mesh.radius;
 
-    if (!frustum_culled(center.xyz, radius))
+    if (!frustum_culled(center.xyz, radius, pc.planes, pc.near, pc.far))
     {
         uint lod_index = 0;
         float d = max(0.0, length(center.xyz) - radius);

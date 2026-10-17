@@ -45,10 +45,10 @@
 #define MAX_TIMESTAMP_QUERIES 4
 #define MAX_MESH_PIPELINE_QUERIES 1
 
-// const char* ASSET_NAME = "Sponza/Sponza.gltf";
+const char* ASSET_NAME = "Sponza/Sponza.gltf";
 // const char* ASSET_NAME = "chinesedragon.gltf";
 // const char* ASSET_NAME = "CS2-assets-ktx2/de_dust2_d.gltf";
-const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
+// const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
 int GBUFFER_DEBUG_ID = 0; // color, normal, metal, roughness, debug
 
 namespace
