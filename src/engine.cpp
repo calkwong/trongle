@@ -959,8 +959,9 @@ void Engine::run()
 
         graph.add_pass(
             Pass("Compute cull mesh early")
-                .read_image(depth_pyramid, AccessType::ComputeShaderWrite)
-                .write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite),
+                .read_image(depth_pyramid, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                .write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite)
+                .write_buffer(late_pass_candidates, AccessType::ComputeShaderWrite),
             [&]()
             {
                 vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 2);
@@ -1047,7 +1048,7 @@ void Engine::run()
             Pass("Compute cull meshlets early")
                 .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
                 .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
-                .read_image(depth_pyramid, AccessType::ComputeShaderWrite)
+                .read_image(depth_pyramid, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                 .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite)
                 .write_buffer(meshlet_draw_buffer, AccessType::ComputeShaderWrite)
                 .write_buffer(late_pass_candidates, AccessType::ComputeShaderWrite),
@@ -1118,7 +1119,8 @@ void Engine::run()
                 .write_image(gbuffer_color, AccessType::ColorAttachmentWrite)
                 .write_image(gbuffer_normal, AccessType::ColorAttachmentWrite)
                 .write_image(gbuffer_mr, AccessType::ColorAttachmentWrite)
-                .write_image(gbuffer_debug, AccessType::ColorAttachmentWrite),
+                .write_image(gbuffer_debug, AccessType::ColorAttachmentWrite)
+                .write_image(depth_image, AccessType::DepthStencilAttachmentWrite),
             [&]()
             {
                 vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 6);
@@ -1262,8 +1264,9 @@ void Engine::run()
 
         graph.add_pass(
             Pass("Compute cull mesh late")
-                .read_image(depth_pyramid, AccessType::ComputeShaderWrite)
+                .read_image(depth_pyramid, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                 .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
+                .read_buffer(late_pass_candidates, AccessType::ComputeShaderReadOther)
                 .write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite),
             [&]()
             {
@@ -1351,7 +1354,7 @@ void Engine::run()
                 .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
                 .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
                 .read_buffer(late_pass_candidates, AccessType::ComputeShaderReadOther)
-                .read_image(depth_pyramid, AccessType::ComputeShaderWrite)
+                .read_image(depth_pyramid, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                 .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite)
                 .write_buffer(meshlet_draw_buffer, AccessType::ComputeShaderWrite),
             [&]()
@@ -1414,15 +1417,17 @@ void Engine::run()
             }
         );
 
+        // TODO: should we declare read_image for attachments?
         graph.add_pass(
             Pass("Gbuffers late")
                 .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
                 .read_buffer(prefix_sum_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
                 .read_buffer(meshlet_draw_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
-                .write_image(gbuffer_color, AccessType::ColorAttachmentWrite)
-                .write_image(gbuffer_normal, AccessType::ColorAttachmentWrite)
-                .write_image(gbuffer_mr, AccessType::ColorAttachmentWrite)
-                .write_image(gbuffer_debug, AccessType::ColorAttachmentWrite),
+                .write_image(gbuffer_color, AccessType::ColorAttachmentReadWrite)
+                .write_image(gbuffer_normal, AccessType::ColorAttachmentReadWrite)
+                .write_image(gbuffer_mr, AccessType::ColorAttachmentReadWrite)
+                .write_image(gbuffer_debug, AccessType::ColorAttachmentReadWrite)
+                .write_image(depth_image, AccessType::DepthStencilAttachmentReadWrite),
             [&]()
             {
                 vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 14);
