@@ -4,8 +4,8 @@ module culling;
 // https://zeux.io/2023/01/12/approximate-projected-bounds/
 public bool project_sphere(float3 c, float r, float near, float p00, float p11, inout float4 aabb)
 {
-	if (c.z < r + near)
-		return false;
+    if (c.z < r + near)
+        return false;
 
     float3 cr = c * r;
     float czr2 = c.z * c.z - r * r;
@@ -28,11 +28,21 @@ public bool project_sphere(float3 c, float r, float near, float p00, float p11, 
 // symmetrical sphere-plane distance test
 public bool frustum_culled(float3 center, float radius, float4 plane, float near, float far)
 {
-	bool visible = true;
+    bool visible = true;
 
-	visible = visible && (center.z * plane.y - abs(center.x) * plane.x) >= -radius;
-	visible = visible && (center.z * plane.w - abs(center.y) * plane.z) >= -radius;
-	visible = visible && (center.z - radius <= -near) && (center.z + radius >= -far);
+    visible = visible && (center.z * plane.y - abs(center.x) * plane.x) >= -radius;
+    visible = visible && (center.z * plane.w - abs(center.y) * plane.z) >= -radius;
+    visible = visible && (center.z - radius <= -near) && (center.z + radius >= -far);
 
-	return !visible;
+    return !visible;
+}
+
+public float get_occlusion_mip(float4 aabb, float2 extent, float texture_lod)
+{
+    float2 pixel_size = (aabb.zw - aabb.xy) * extent;
+    float max_dim = max(pixel_size.x, pixel_size.y);
+    float mip = ceil(log2(max_dim));
+    mip = min(mip, texture_lod);
+
+    return mip;
 }

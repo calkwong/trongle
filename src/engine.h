@@ -30,6 +30,9 @@ struct FrameContext
     glm::mat4 proj;
     glm::mat4 view_proj;
 
+    glm::mat4 prev_view;
+    glm::mat4 prev_view_proj;
+
     glm::mat4 debug_view;
     glm::mat4 debug_proj;
     glm::mat4 debug_view_proj;

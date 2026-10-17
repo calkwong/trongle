@@ -1,4 +1,5 @@
 import types;
+import bindings;
 import util;
 import prefix_sum;
 import culling;
@@ -6,26 +7,30 @@ import culling;
 struct PushConstants
 {
     float4x4 view;
+    float4x4 prev_view;
     MeshData* mesh_buffer;
     ObjectData* object_buffer;
     PrefixSum* prefix_sum_buffer;
     float4 planes;
+    float2 depth_pyramid_extent;
     float p00;
     float p11;
     float near;
     float far;
     uint count;
     float lod_distance_factor;
+    uint late;
+    float depth_pyramid_lod;
+    uint depth_pyramid_id;
+    uint skip_occlusion;
 }
 
 [[vk::push_constant]]
 PushConstants pc;
 
-// (LATE) look up bitfield for early return
-// (EARLY ONLY) frustum test
+// frustum test
 // LOD test
 // HZB test
-// (EARLY) write bitfield if rejected from HZB
 
 [shader("compute")]
 [numthreads(256, 1, 1)]
@@ -40,13 +45,36 @@ void main(uint3 global_id: SV_DispatchThreadID)
 
     MeshData mesh = pc.mesh_buffer[mesh_id];
 
-    float4 center = float4(rotate_quat(mesh.center, o.orientation) * o.scale + o.translation, 1.0);
-    center = mul(pc.view, center);
+    bool late = pc.late == 1;
+
+    float4 world_center = float4(rotate_quat(mesh.center, o.orientation) * o.scale + o.translation, 1.0);
+    float4 center = mul(pc.view, world_center);
+    float4 occlusion_center = center;
+    if (!late)
+        occlusion_center = mul(pc.prev_view, world_center);
 
     float scale = o.scale;
     float radius = scale * mesh.radius;
 
-    if (!frustum_culled(center.xyz, radius, pc.planes, pc.near, pc.far))
+    bool visible = !frustum_culled(center.xyz, radius, pc.planes, pc.near, pc.far);
+
+    if (!visible)
+        return;
+
+    float4 aabb;
+    // TODO: do we need this conditional check?
+    if (pc.skip_occlusion == 0 && project_sphere(float3(occlusion_center.x, occlusion_center.y, -occlusion_center.z), radius, pc.near, pc.p00, pc.p11, aabb))
+    {
+        float mip = get_occlusion_mip(aabb, pc.depth_pyramid_extent, pc.depth_pyramid_lod);
+        SamplerState samp = get_sampler<SamplerState>(DEPTH_REDUCE);
+        float depth = get_sampled_image<Texture2D>(pc.depth_pyramid_id).SampleLevel(samp, (aabb.zw + aabb.xy) * 0.5, mip).r;
+
+        float depth_sphere = pc.near / (-occlusion_center.z - radius);
+
+        visible &= depth_sphere > depth; // reverse depth
+    }
+
+    if (visible)
     {
         uint lod_index = 0;
         float d = max(0.0, length(center.xyz) - radius);

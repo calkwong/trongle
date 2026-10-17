@@ -13,11 +13,11 @@ public void prefix_sum_inclusive_append(PrefixSum* buf, uint index, uint value, 
 
     // printf("Instance count: %d", instance_index);
 
-    buf.data[instance_index].instance_id = index;
     buf.data[instance_index].sum = uint(sum_and_counter) + value; // inclusive
     // buf.data[instance_index].sum = uint(sum_and_counter); // exclusive
     buf.data[instance_index].meshlet_offset = offset;
     buf.data[instance_index].meshlet_count = value;
+    buf.data[instance_index].instance_id = index;
 }
 
 public uint prefix_sum_binary_search(PrefixSum* buf, uint target)

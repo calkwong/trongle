@@ -54,6 +54,7 @@ PUBLIC_ACCESS struct ObjectData
 
     uint32_t mesh_id;
     uint32_t material_id;
+    uint32_t meshlet_bit_offset;
 };
 
 PUBLIC_ACCESS struct MaterialData

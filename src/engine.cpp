@@ -41,12 +41,13 @@
 #include <array>
 #include <cstring>
 #include <dlfcn.h>
+#include <random>
 
-#define MAX_TIMESTAMP_QUERIES 4
-#define MAX_MESH_PIPELINE_QUERIES 1
+#define MAX_TIMESTAMP_QUERIES 18
+#define MAX_MESH_PIPELINE_QUERIES 2
 
-const char* ASSET_NAME = "Sponza/Sponza.gltf";
-// const char* ASSET_NAME = "chinesedragon.gltf";
+// const char* ASSET_NAME = "Sponza/Sponza.gltf";
+const char* ASSET_NAME = "chinesedragon.gltf";
 // const char* ASSET_NAME = "CS2-assets-ktx2/de_dust2_d.gltf";
 // const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
 int GBUFFER_DEBUG_ID = 0; // color, normal, metal, roughness, debug
@@ -409,7 +410,7 @@ void Engine::run()
     // Init camera
     Camera camera{};
     camera.position = glm::vec3(0, 0, 5);
-    camera.far = 100.0f;
+    camera.far = 1000.0f;
     camera.near = 0.01f;
 
     frame_context.proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
@@ -422,10 +423,59 @@ void Engine::run()
         assert(0 && "load_gltf failed");
     }
 
+#if 0
     for (const auto& node : asset_loader.parent_nodes)
     {
         register_object(node, glm::mat4(1.0), asset_loader.children_nodes, asset_loader.meshes);
     }
+#else
+    for (const auto& node : asset_loader.parent_nodes)
+    {
+        register_object(node, glm::translate(glm::mat4(1.0f), glm::vec3(0, 0, 2)), asset_loader.children_nodes, asset_loader.meshes);
+    }
+
+    std::mt19937 mt(42);
+    auto draw_radius = 400.0f;
+    auto draw_count = 500'000;
+
+    std::vector<glm::mat4> transforms(draw_count);
+    for (size_t i = 0; i < draw_count; i++)
+    {
+        const float x = static_cast<float>(mt()) / static_cast<float>(mt.max()) * draw_radius - draw_radius * 0.5f;
+        const float y = static_cast<float>(mt()) / static_cast<float>(mt.max()) * draw_radius - draw_radius * 0.5f;
+        const float z = static_cast<float>(mt()) / static_cast<float>(mt.max()) * -draw_radius;
+
+        glm::mat4 t = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, z));
+        glm::vec3 axis = glm::normalize(
+            glm::vec3(
+                static_cast<float>(mt()) / static_cast<float>(mt.max()),
+                static_cast<float>(mt()) / static_cast<float>(mt.max()),
+                static_cast<float>(mt()) / static_cast<float>(mt.max())
+            )
+        );
+        glm::mat4 r = glm::rotate(glm::mat4(1.0f), glm::radians(static_cast<float>(mt()) / static_cast<float>(mt.max()) * 360.0f), axis);
+        glm::mat4 s = glm::scale(glm::mat4(1.0f), glm::vec3(static_cast<float>(mt()) / static_cast<float>(mt.max())) + 1.0f);
+        transforms[i] = t * r * s;
+    }
+
+    for (auto& transform : transforms)
+    {
+        for (const auto& node : asset_loader.parent_nodes)
+        {
+            register_object(node, transform, asset_loader.children_nodes, asset_loader.meshes);
+        }
+    }
+#endif
+
+    // Set meshlet bits offset, needed for 2 pass culling
+    auto meshlet_bit_offset = 0;
+    assert(!renderables.empty());
+    for (auto& renderable : renderables)
+    {
+        renderable.meshlet_bit_offset = meshlet_bit_offset;
+        meshlet_bit_offset += meshes[renderable.mesh_id].mesh_lods[0].meshlet_count;
+    }
+    fmt::println("bitfield size: {}mb", get_group_count(meshlet_bit_offset, 32) * sizeof(uint32_t) * 1e-6);
 
     // Update descriptors
     for (const auto& image : asset_loader.images)
@@ -462,6 +512,7 @@ void Engine::run()
     Buffer meshlet_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.m_meshlets.data(), asset_loader.m_meshlets.size() * sizeof(Meshlet));
     Buffer meshlet_indices_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.meshlet_indices.data(), asset_loader.meshlet_indices.size() * sizeof(uint32_t));
     Buffer spd_counter_buffer = create_buffer(device, allocator, sizeof(uint32_t), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT_KHR);
+    Buffer meshlets_late_pass_buffer = create_buffer(device, allocator, get_group_count(meshlet_bit_offset, 32) * sizeof(uint32_t), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT_KHR);
 
     VkExtent3D depth_pyramid_extent{};
     depth_pyramid_extent.width = nearest_pow2(swapchain.extent.width);
@@ -630,6 +681,8 @@ void Engine::run()
     std::array<uint64_t, MAX_TIMESTAMP_QUERIES> timestamp_results{};
     std::array<uint64_t, MAX_MESH_PIPELINE_QUERIES> mesh_pipeline_results{};
 
+    bool skip_occlusion = true;
+
     auto last_frame = SDL_GetTicks();
     bool quit{ false };
 
@@ -665,6 +718,7 @@ void Engine::run()
                     depth_pyramid_image = create_image(device, allocator, depth_pyramid_extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 0, true);
                     image_manager.update(device, depth_pyramid_descriptor_handle, depth_pyramid_image.view, VK_IMAGE_LAYOUT_GENERAL);
                     update_depth_pyramid(depth_pyramid_image, depth_pyramid_image_views, depth_pyramid_first_mip);
+                    skip_occlusion = true;
                     immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
                                      {
                                          stage_barrier(cmd, depth_pyramid_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, 0, 0, 0);
@@ -718,6 +772,7 @@ void Engine::run()
             depth_pyramid_image = create_image(device, allocator, depth_pyramid_extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 0, true);
             image_manager.update(device, depth_pyramid_descriptor_handle, depth_pyramid_image.view, VK_IMAGE_LAYOUT_GENERAL);
             update_depth_pyramid(depth_pyramid_image, depth_pyramid_image_views, depth_pyramid_first_mip);
+            skip_occlusion = true;
             immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
                              {
                                  stage_barrier(cmd, depth_pyramid_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, 0, 0, 0);
@@ -731,6 +786,8 @@ void Engine::run()
         camera.update(delta_time);
         if (!freeze_matrices)
         {
+            frame_context.prev_view = frame_context.view;
+            frame_context.prev_view_proj = frame_context.view_proj;
             frame_context.view = camera.get_view_matrix();
             frame_context.view_proj = frame_context.proj * frame_context.view;
         }
@@ -787,8 +844,10 @@ void Engine::run()
 
         double new_gpu_time = static_cast<double>(timestamp_results[1] - timestamp_results[0]) * timestamp_period * 1e-6;
         stats.gpu_time = new_gpu_time + 0.95 * (stats.gpu_time - new_gpu_time);
-        auto gbuffer_time = static_cast<double>(timestamp_results[3] - timestamp_results[2]) * timestamp_period * 1e-6;
-        auto triangles = mesh_pipeline_results[0];
+        auto gbuffer_time_early = static_cast<double>(timestamp_results[3] - timestamp_results[2]) * timestamp_period * 1e-6;
+        auto gbuffer_time_late = static_cast<double>(timestamp_results[5] - timestamp_results[3]) * timestamp_period * 1e-6;
+        auto triangles_early = mesh_pipeline_results[0];
+        auto triangles_late = mesh_pipeline_results[1];
 
         vkResetQueryPool(device, frame.query_pool_timestamp, 0, MAX_TIMESTAMP_QUERIES);
         vkResetQueryPool(device, frame.query_pool_mesh_pipeline, 0, MAX_MESH_PIPELINE_QUERIES);
@@ -798,10 +857,19 @@ void Engine::run()
         ImGui::NewFrame();
 
         ImGui::Begin("Stats");
-        ImGui::Text("GPU time:    %.3f ms", stats.gpu_time);
-        ImGui::Text("Gbuffers:    %.3f ms", gbuffer_time);
-        ImGui::Text("Triangles:   %u", static_cast<unsigned int>(triangles));
-        ImGui::Text("Triangles:   %.1fM", static_cast<double>(triangles) * 1e-6);
+        ImGui::Text("GPU time:           %.3f ms", stats.gpu_time);
+        ImGui::Text("Cull mesh early:    %.3f ms", static_cast<double>(timestamp_results[3] - timestamp_results[2]) * timestamp_period * 1e-6);
+        ImGui::Text("Cull meshlet early: %.3f ms", static_cast<double>(timestamp_results[5] - timestamp_results[4]) * timestamp_period * 1e-6);
+        ImGui::Text("Gbuffers early:     %.3f ms", static_cast<double>(timestamp_results[7] - timestamp_results[6]) * timestamp_period * 1e-6);
+        ImGui::Text("Hiz:                %.3f ms", static_cast<double>(timestamp_results[9] - timestamp_results[8]) * timestamp_period * 1e-6);
+        ImGui::Text("Cull mesh late:     %.3f ms", static_cast<double>(timestamp_results[11] - timestamp_results[10]) * timestamp_period * 1e-6);
+        ImGui::Text("Cull meshlet late:  %.3f ms", static_cast<double>(timestamp_results[13] - timestamp_results[12]) * timestamp_period * 1e-6);
+        ImGui::Text("Gbuffers late:      %.3f ms", static_cast<double>(timestamp_results[15] - timestamp_results[14]) * timestamp_period * 1e-6);
+        ImGui::Text("Hiz temporal:       %.3f ms", static_cast<double>(timestamp_results[17] - timestamp_results[16]) * timestamp_period * 1e-6);
+
+        ImGui::Text("Triangles early:   %u", static_cast<unsigned int>(triangles_early));
+        ImGui::Text("Triangles late:    %u", static_cast<unsigned int>(triangles_late));
+        // ImGui::Text("Triangles:   %.1fM", static_cast<double>(triangles) * 1e-6);
         ImGui::Checkbox("Freeze camera", &freeze_matrices);
         ImGui::SliderInt("Debug gbuffers", &GBUFFER_DEBUG_ID, 0, 4);
 
@@ -859,6 +927,7 @@ void Engine::run()
 
         auto depth_pyramid = graph.import_image(depth_pyramid_image, depth_pyramid_descriptor_handle);
         auto spd_counter = graph.import_buffer(spd_counter_buffer, -1);
+        auto meshlets_late_pass = graph.import_buffer(meshlets_late_pass_buffer, -1);
 
         // Record command buffer
         VkCommandBuffer cmd = frame.command_buffer;
@@ -876,34 +945,45 @@ void Engine::run()
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
 
         graph.add_pass(
-            Pass("Zero buffers")
+            Pass("Zero buffers early")
                 .write_buffer(dispatch_buffer, AccessType::TransferWrite)
-                .write_buffer(prefix_sum_buffer, AccessType::TransferWrite),
+                .write_buffer(prefix_sum_buffer, AccessType::TransferWrite)
+                .write_buffer(meshlets_late_pass, AccessType::TransferWrite),
             [&]()
             {
                 vkCmdFillBuffer(cmd, get_buffer(graph, dispatch_buffer), 0, VK_WHOLE_SIZE, 0);
                 vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, VK_WHOLE_SIZE, 0);
+                vkCmdFillBuffer(cmd, get_buffer(graph, meshlets_late_pass), 0, VK_WHOLE_SIZE, 0);
             }
         );
 
         graph.add_pass(
-            Pass("Compute cull mesh")
+            Pass("Compute cull mesh early")
+                .read_image(depth_pyramid, AccessType::ComputeShaderWrite)
                 .write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite),
             [&]()
             {
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 2);
+
                 struct PushData
                 {
                     glm::mat4 view;
+                    glm::mat4 prev_view;
                     VkDeviceAddress mesh_buffer;
                     VkDeviceAddress object_buffer;
                     VkDeviceAddress prefix_sum_buffer;
                     glm::vec4 planes;
+                    glm::vec2 depth_pyramid_extent;
                     float p00;
                     float p11;
                     float near;
                     float far;
                     uint32_t count;
                     float lod_distance_factor;
+                    uint32_t late;
+                    float depth_pyramid_lod;
+                    uint32_t depth_pyramid_id;
+                    uint32_t skip_occlusion;
                 };
 
                 auto proj_t = glm::transpose(frame_context.proj);
@@ -915,25 +995,32 @@ void Engine::run()
 
                 PushData data{};
                 data.view = frame_context.view;
+                data.prev_view = frame_context.prev_view;
                 data.mesh_buffer = mesh_buffer.address;
                 data.object_buffer = object_buffer.address;
                 data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
+                data.depth_pyramid_extent = glm::vec2(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height);
                 data.p00 = frame_context.proj[0][0];
                 data.p11 = frame_context.proj[1][1];
                 data.near = camera.near;
                 data.far = camera.far;
                 data.count = renderables.size();
                 data.lod_distance_factor = 2.0f / (data.p11 * swapchain.extent.height);
+                data.late = 0;
+                data.depth_pyramid_lod = static_cast<float>(glm::floor(glm::log2(static_cast<float>(glm::max(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height)))) + 1);
+                data.depth_pyramid_id = depth_pyramid_descriptor_handle;
+                data.skip_occlusion = skip_occlusion ? 1 : 0;
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_mesh_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                 vkCmdDispatch(cmd, get_group_count(renderables.size(), 256), 1, 1);
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 3);
             }
         );
 
         graph.add_pass(
-            Pass("Compact dispatch")
+            Pass("Compact dispatch early")
                 .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
                 .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite),
             [&]()
@@ -955,26 +1042,36 @@ void Engine::run()
         );
 
         graph.add_pass(
-            Pass("Compute cull meshlets")
+            Pass("Compute cull meshlets early")
                 .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
                 .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
+                .read_image(depth_pyramid, AccessType::ComputeShaderWrite)
                 .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite)
-                .write_buffer(meshlet_draw_buffer, AccessType::ComputeShaderWrite),
+                .write_buffer(meshlet_draw_buffer, AccessType::ComputeShaderWrite)
+                .write_buffer(meshlets_late_pass, AccessType::ComputeShaderWrite),
             [&]()
             {
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 4);
                 struct PushData
                 {
                     glm::mat4 view;
+                    glm::mat4 prev_view;
                     VkDeviceAddress meshlet_buffer;
                     VkDeviceAddress object_buffer;
                     VkDeviceAddress prefix_sum_buffer;
                     VkDeviceAddress meshlet_draw_buffer;
                     VkDeviceAddress dispatch_buffer;
+                    VkDeviceAddress meshlets_late_pass_buffer;
                     glm::vec4 planes;
+                    glm::vec2 depth_pyramid_extent;
                     float p00;
                     float p11;
                     float near;
                     float far;
+                    uint32_t late;
+                    float depth_pyramid_lod;
+                    uint32_t depth_pyramid_id;
+                    uint32_t skip_occlusion;
                 };
 
                 auto proj_t = glm::transpose(frame_context.proj);
@@ -986,25 +1083,33 @@ void Engine::run()
 
                 PushData data{};
                 data.view = frame_context.view;
+                data.prev_view = frame_context.prev_view;
                 data.meshlet_buffer = meshlet_buffer.address;
                 data.object_buffer = object_buffer.address;
                 data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
                 data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
                 data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
+                data.meshlets_late_pass_buffer = meshlets_late_pass_buffer.address;
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
+                data.depth_pyramid_extent = glm::vec2(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height);
                 data.p00 = frame_context.proj[0][0];
                 data.p11 = frame_context.proj[1][1];
                 data.near = camera.near;
                 data.far = camera.far;
+                data.late = 0;
+                data.depth_pyramid_lod = static_cast<float>(glm::floor(glm::log2(static_cast<float>(glm::max(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height)))) + 1);
+                data.depth_pyramid_id = depth_pyramid_descriptor_handle;
+                data.skip_occlusion = skip_occlusion ? 1 : 0;
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_meshlet_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                 vkCmdDispatchIndirect(cmd, get_buffer(graph, dispatch_buffer), 0);
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 5);
             }
         );
 
         graph.add_pass(
-            Pass("Gbuffers")
+            Pass("Gbuffers early")
                 .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
                 .read_buffer(prefix_sum_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
                 .read_buffer(meshlet_draw_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
@@ -1014,7 +1119,9 @@ void Engine::run()
                 .write_image(gbuffer_debug, AccessType::ColorAttachmentWrite),
             [&]()
             {
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 2);
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 6);
+
+                // TODO: unused, fix
                 VkClearColorValue clear_color_value = { 1.f, 0.f, 0.f, 1.f };
                 VkClearValue clear_value{ .color = clear_color_value };
 
@@ -1098,7 +1205,310 @@ void Engine::run()
                 vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch), 1, 0);
                 vkCmdEndQuery(cmd, frame.query_pool_mesh_pipeline, 0);
                 vkCmdEndRendering(cmd);
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 3);
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 7);
+            }
+        );
+
+        graph.add_pass(
+            Pass("Hiz")
+                .read_image(depth_image, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                .write_image(depth_pyramid, AccessType::ComputeShaderWrite)
+                .write_buffer(spd_counter, AccessType::ComputeShaderWrite),
+            [&]()
+            {
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 8);
+                struct PushData
+                {
+                    VkDeviceAddress spd_counter_buffer;
+                    glm::vec2 rcp_resolution; // resolution of src image mapped to next PoT
+                    uint32_t mips;
+                    uint32_t num_wgs;
+                    uint32_t src_id; // depth texture to sample
+                    uint32_t dst_id; // mip level 0 of hi-z we write to, offset accordingly!
+                };
+
+                auto width = next_pow2(swapchain.extent.width);
+                auto height = next_pow2(swapchain.extent.height);
+                auto group_count_x = get_group_count(width, 64);
+                auto group_count_y = get_group_count(height, 64);
+
+                PushData data{};
+                data.spd_counter_buffer = spd_counter_buffer.address;
+                data.rcp_resolution = glm::vec2(1.0) / glm::vec2(width, height);
+                data.mips = get_depth_pyramid_image_count(depth_pyramid_image);
+                data.num_wgs = group_count_x * group_count_y;
+                data.src_id = get_image_id(graph, depth_image);
+                data.dst_id = depth_pyramid_first_mip;
+
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hiz_pipeline);
+                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                vkCmdDispatch(cmd, group_count_x, group_count_y, 1);
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 9);
+            }
+        );
+
+        skip_occlusion = false;
+
+        graph.add_pass(
+            Pass("Zero buffers late")
+                .write_buffer(dispatch_buffer, AccessType::TransferWrite)
+                .write_buffer(prefix_sum_buffer, AccessType::TransferWrite),
+            [&]()
+            {
+                vkCmdFillBuffer(cmd, get_buffer(graph, dispatch_buffer), 0, VK_WHOLE_SIZE, 0);
+                vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, VK_WHOLE_SIZE, 0);
+            }
+        );
+
+        graph.add_pass(
+            Pass("Compute cull mesh late")
+                .read_image(depth_pyramid, AccessType::ComputeShaderWrite)
+                .write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite),
+            [&]()
+            {
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 10);
+                struct PushData
+                {
+                    glm::mat4 view;
+                    glm::mat4 prev_view;
+                    VkDeviceAddress mesh_buffer;
+                    VkDeviceAddress object_buffer;
+                    VkDeviceAddress prefix_sum_buffer;
+                    glm::vec4 planes;
+                    glm::vec2 depth_pyramid_extent;
+                    float p00;
+                    float p11;
+                    float near;
+                    float far;
+                    uint32_t count;
+                    float lod_distance_factor;
+                    uint32_t late;
+                    float depth_pyramid_lod;
+                    uint32_t depth_pyramid_id;
+                    uint32_t skip_occlusion;
+                };
+
+                auto proj_t = glm::transpose(frame_context.proj);
+                auto m0 = proj_t[0];
+                auto m1 = proj_t[1];
+                auto m3 = proj_t[3];
+                auto left_plane = glm::normalize(glm::vec3(m3 + m0));
+                auto bottom_plane = glm::normalize(glm::vec3(m3 + m1));
+
+                PushData data{};
+                data.view = frame_context.view;
+                data.prev_view = frame_context.prev_view;
+                data.mesh_buffer = mesh_buffer.address;
+                data.object_buffer = object_buffer.address;
+                data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
+                data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
+                data.depth_pyramid_extent = glm::vec2(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height);
+                data.p00 = frame_context.proj[0][0];
+                data.p11 = frame_context.proj[1][1];
+                data.near = camera.near;
+                data.far = camera.far;
+                data.count = renderables.size();
+                data.lod_distance_factor = 2.0f / (data.p11 * swapchain.extent.height);
+                data.late = 1;
+                data.depth_pyramid_lod = static_cast<float>(glm::floor(glm::log2(static_cast<float>(glm::max(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height)))) + 1);
+                data.depth_pyramid_id = depth_pyramid_descriptor_handle;
+                data.skip_occlusion = skip_occlusion ? 1 : 0;
+
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_mesh_pipeline);
+                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                vkCmdDispatch(cmd, get_group_count(renderables.size(), 256), 1, 1);
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 11);
+            }
+        );
+
+        graph.add_pass(
+            Pass("Compact dispatch late")
+                .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
+                .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite),
+            [&]()
+            {
+                struct PushData
+                {
+                    VkDeviceAddress prefix_sum_buffer;
+                    VkDeviceAddress dispatch_buffer;
+                };
+
+                PushData data{};
+                data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
+                data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
+
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compact_dispatch_pipeline);
+                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                vkCmdDispatch(cmd, 1, 1, 1);
+            }
+        );
+
+        graph.add_pass(
+            Pass("Compute cull meshlets late")
+                .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
+                .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
+                .read_buffer(meshlets_late_pass, AccessType::ComputeShaderReadOther)
+                .read_image(depth_pyramid, AccessType::ComputeShaderWrite)
+                .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite)
+                .write_buffer(meshlet_draw_buffer, AccessType::ComputeShaderWrite),
+            [&]()
+            {
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 12);
+
+                struct PushData
+                {
+                    glm::mat4 view;
+                    glm::mat4 prev_view;
+                    VkDeviceAddress meshlet_buffer;
+                    VkDeviceAddress object_buffer;
+                    VkDeviceAddress prefix_sum_buffer;
+                    VkDeviceAddress meshlet_draw_buffer;
+                    VkDeviceAddress dispatch_buffer;
+                    VkDeviceAddress meshlets_late_pass_buffer;
+                    glm::vec4 planes;
+                    glm::vec2 depth_pyramid_extent;
+                    float p00;
+                    float p11;
+                    float near;
+                    float far;
+                    uint32_t late;
+                    float depth_pyramid_lod;
+                    uint32_t depth_pyramid_id;
+                    uint32_t skip_occlusion;
+                };
+
+                auto proj_t = glm::transpose(frame_context.proj);
+                auto m0 = proj_t[0];
+                auto m1 = proj_t[1];
+                auto m3 = proj_t[3];
+                auto left_plane = glm::normalize(glm::vec3(m3 + m0));
+                auto bottom_plane = glm::normalize(glm::vec3(m3 + m1));
+
+                PushData data{};
+                data.view = frame_context.view;
+                data.prev_view = frame_context.prev_view;
+                data.meshlet_buffer = meshlet_buffer.address;
+                data.object_buffer = object_buffer.address;
+                data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
+                data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
+                data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
+                data.meshlets_late_pass_buffer = meshlets_late_pass_buffer.address;
+                data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
+                data.depth_pyramid_extent = glm::vec2(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height);
+                data.p00 = frame_context.proj[0][0];
+                data.p11 = frame_context.proj[1][1];
+                data.near = camera.near;
+                data.far = camera.far;
+                data.late = 1;
+                data.depth_pyramid_lod = static_cast<float>(glm::floor(glm::log2(static_cast<float>(glm::max(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height)))) + 1);
+                data.depth_pyramid_id = depth_pyramid_descriptor_handle;
+                data.skip_occlusion = skip_occlusion ? 1 : 0;
+
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_meshlet_pipeline);
+                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                vkCmdDispatchIndirect(cmd, get_buffer(graph, dispatch_buffer), 0);
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 13);
+            }
+        );
+
+        graph.add_pass(
+            Pass("Gbuffers late")
+                .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
+                .read_buffer(prefix_sum_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
+                .read_buffer(meshlet_draw_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
+                .write_image(gbuffer_color, AccessType::ColorAttachmentWrite)
+                .write_image(gbuffer_normal, AccessType::ColorAttachmentWrite)
+                .write_image(gbuffer_mr, AccessType::ColorAttachmentWrite)
+                .write_image(gbuffer_debug, AccessType::ColorAttachmentWrite),
+            [&]()
+            {
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 14);
+
+                // TODO: unused, fix
+                VkClearColorValue clear_color_value = { 1.f, 0.f, 0.f, 1.f };
+                VkClearValue clear_value{ .color = clear_color_value };
+
+                std::array<VkRenderingAttachmentInfo, 4> rendering_attachment_infos{};
+                std::array<VkImageView, 4> gbuffer_views{
+                    get_image_view(graph, gbuffer_color),
+                    get_image_view(graph, gbuffer_normal),
+                    get_image_view(graph, gbuffer_mr),
+                    get_image_view(graph, gbuffer_debug)
+                };
+
+                for (auto i = 0; i < rendering_attachment_infos.size(); i++)
+                {
+                    rendering_attachment_infos[i] =
+                        VkRenderingAttachmentInfo{
+                            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                            .imageView = gbuffer_views[i],
+                            .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+                            .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+                            .storeOp = VK_ATTACHMENT_STORE_OP_STORE
+                        };
+                }
+
+                VkRenderingAttachmentInfo depth_attachment_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+                depth_attachment_info.imageView = get_image_view(graph, depth_image);
+                depth_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+                depth_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+                depth_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+                VkRenderingInfo rendering_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_INFO };
+                rendering_info.renderArea = VkRect2D{ VkOffset2D{ 0, 0 }, swapchain.extent };
+                rendering_info.layerCount = 1;
+                rendering_info.colorAttachmentCount = static_cast<uint32_t>(rendering_attachment_infos.size());
+                rendering_info.pColorAttachments = rendering_attachment_infos.data();
+                rendering_info.pDepthAttachment = &depth_attachment_info;
+
+                vkCmdBeginRendering(cmd, &rendering_info);
+                vkCmdBeginQuery(cmd, frame.query_pool_mesh_pipeline, 1, 0);
+
+                VkViewport viewport{};
+                viewport.x = 0;
+                viewport.y = static_cast<float>(swapchain.extent.height);
+                viewport.width = static_cast<float>(swapchain.extent.width);
+                viewport.height = -static_cast<float>(swapchain.extent.height);
+                viewport.minDepth = 0.0f;
+                viewport.maxDepth = 1.0f;
+                vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+                VkRect2D scissor{};
+                scissor.offset.x = 0;
+                scissor.offset.y = 0;
+                scissor.extent.width = swapchain.extent.width;
+                scissor.extent.height = swapchain.extent.height;
+                vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gbuffer_pipeline);
+
+                struct PushData
+                {
+                    glm::mat4 view_proj;
+                    VkDeviceAddress vertex_buffer;
+                    VkDeviceAddress object_buffer;
+                    VkDeviceAddress material_buffer;
+                    VkDeviceAddress meshlet_buffer;
+                    VkDeviceAddress meshlet_indices_buffer;
+                    VkDeviceAddress prefix_sum_buffer;
+                    VkDeviceAddress meshlet_draw_buffer;
+                };
+
+                PushData data{};
+                data.view_proj = !freeze_matrices ? frame_context.view_proj : frame_context.debug_view_proj;
+                data.vertex_buffer = vertex_buffer.address;
+                data.object_buffer = object_buffer.address;
+                data.material_buffer = material_buffer.address;
+                data.meshlet_buffer = meshlet_buffer.address;
+                data.meshlet_indices_buffer = meshlet_indices_buffer.address;
+                data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
+                data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
+
+                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
+                vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch), 1, 0);
+                vkCmdEndQuery(cmd, frame.query_pool_mesh_pipeline, 1);
+                vkCmdEndRendering(cmd);
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 15);
             }
         );
 
@@ -1138,12 +1548,13 @@ void Engine::run()
         );
 
         graph.add_pass(
-            Pass("Hiz")
+            Pass("Hiz temporal")
                 .read_image(depth_image, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                 .write_image(depth_pyramid, AccessType::ComputeShaderWrite)
                 .write_buffer(spd_counter, AccessType::ComputeShaderWrite),
             [&]()
             {
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 16);
                 struct PushData
                 {
                     VkDeviceAddress spd_counter_buffer;
@@ -1170,6 +1581,7 @@ void Engine::run()
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hiz_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                 vkCmdDispatch(cmd, group_count_x, group_count_y, 1);
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 17);
             }
         );
 
@@ -1264,6 +1676,7 @@ void Engine::run()
     destroy_buffer(allocator, meshlet_buffer);
     destroy_buffer(allocator, meshlet_indices_buffer);
     destroy_buffer(allocator, spd_counter_buffer);
+    destroy_buffer(allocator, meshlets_late_pass_buffer);
     destroy_image(device, allocator, depth_pyramid_image);
     vkDestroySampler(device, linear_samp, nullptr);
     vkDestroySampler(device, depth_reduce_samp, nullptr);
