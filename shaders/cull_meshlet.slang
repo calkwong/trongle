@@ -13,7 +13,7 @@ struct PushConstants
     PrefixSum* prefix_sum_buffer;
     uint* meshlet_draw_buffer;
     Dispatch* dispatch_buffer;
-    uint* meshlets_late_pass_buffer;
+    uint* late_pass_candidates_buffer;
     float4 planes;
     float2 depth_pyramid_extent;
     float p00;
@@ -30,9 +30,9 @@ struct PushConstants
 PushConstants pc;
 
 // (LATE) look up bitfield for early return
-// (EARLY ONLY) frustum test
+// frustum test
 // HZB test
-// (EARLY) write bitfield if not culled from HZB
+// (EARLY) set bitfield if culled from HZB
 
 [shader("compute")]
 [numthreads(256, 1, 1)]
@@ -56,13 +56,12 @@ void main(uint3 global_id: SV_DispatchThreadID)
 
     uint local_meshlet_id = index - (sum - meshlet_count);
     ObjectData o = pc.object_buffer[instance_id];
-    uint offset = o.meshlet_bit_offset + local_meshlet_id;
 
     bool late = pc.late == 1;
     if (late)
     {
-        uint word = pc.meshlets_late_pass_buffer[offset >> 5];
-        uint bit_set = (word >> (offset & 31u)) & 1u;
+        uint word = pc.late_pass_candidates_buffer[index >> 5];
+        uint bit_set = (word >> (index & 31u)) & 1u;
         if (bit_set == 1u)
             return;
     }
@@ -106,7 +105,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
 
         if (!late)
         {
-            InterlockedOr(pc.meshlets_late_pass_buffer[offset >> 5], 1u << (offset & 31u));
+            InterlockedOr(pc.late_pass_candidates_buffer[index >> 5], 1u << (index & 31u));
         }
     }
 }

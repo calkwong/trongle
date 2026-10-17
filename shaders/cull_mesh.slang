@@ -11,6 +11,7 @@ struct PushConstants
     MeshData* mesh_buffer;
     ObjectData* object_buffer;
     PrefixSum* prefix_sum_buffer;
+    uint* late_pass_candidates_buffer;
     float4 planes;
     float2 depth_pyramid_extent;
     float p00;
@@ -28,9 +29,11 @@ struct PushConstants
 [[vk::push_constant]]
 PushConstants pc;
 
-// frustum test
+// (LATE) look up bitfield for early return
+// (EARLY ONLY) frustum test
 // LOD test
 // HZB test
+// (EARLY) set bitfield if culled from HZB
 
 [shader("compute")]
 [numthreads(256, 1, 1)]
@@ -40,23 +43,33 @@ void main(uint3 global_id: SV_DispatchThreadID)
     if (index >= pc.count)
         return;
 
+    bool late = pc.late == 1;
+    if (late)
+    {
+        uint word = pc.late_pass_candidates_buffer[index >> 5];
+        uint bit_set = (word >> (index & 31u)) & 1u;
+        if (bit_set != 1u)
+            return;
+    }
+
     ObjectData o = pc.object_buffer[index];
     uint mesh_id = o.mesh_id;
 
     MeshData mesh = pc.mesh_buffer[mesh_id];
 
-    bool late = pc.late == 1;
-
     float4 world_center = float4(rotate_quat(mesh.center, o.orientation) * o.scale + o.translation, 1.0);
     float4 center = mul(pc.view, world_center);
     float4 occlusion_center = center;
-    if (!late)
-        occlusion_center = mul(pc.prev_view, world_center);
-
     float scale = o.scale;
     float radius = scale * mesh.radius;
+    bool visible = true;
 
-    bool visible = !frustum_culled(center.xyz, radius, pc.planes, pc.near, pc.far);
+    // We can skip frustum cull for late pass. Late pass will only process meshes that pass frustum but fail HZB.
+    if (!late)
+    {
+        occlusion_center = mul(pc.prev_view, world_center);
+        visible &= !frustum_culled(center.xyz, radius, pc.planes, pc.near, pc.far);
+    }
 
     if (!visible)
         return;
@@ -72,6 +85,12 @@ void main(uint3 global_id: SV_DispatchThreadID)
         float depth_sphere = pc.near / (-occlusion_center.z - radius);
 
         visible &= depth_sphere > depth; // reverse depth
+    }
+
+    if (!late && !visible)
+    {
+        InterlockedOr(pc.late_pass_candidates_buffer[index >> 5], 1u << (index & 31u));
+        return;
     }
 
     if (visible)

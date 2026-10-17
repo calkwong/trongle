@@ -50,7 +50,7 @@
 const char* ASSET_NAME = "chinesedragon.gltf";
 // const char* ASSET_NAME = "CS2-assets-ktx2/de_dust2_d.gltf";
 // const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
-int GBUFFER_DEBUG_ID = 0; // color, normal, metal, roughness, debug
+int GBUFFER_DEBUG_ID = 1; // color, normal, metal, roughness, debug
 
 namespace
 {
@@ -468,14 +468,14 @@ void Engine::run()
 #endif
 
     // Set meshlet bits offset, needed for 2 pass culling
-    auto meshlet_bit_offset = 0;
     assert(!renderables.empty());
+    auto meshlet_bits = 0;
     for (auto& renderable : renderables)
     {
-        renderable.meshlet_bit_offset = meshlet_bit_offset;
-        meshlet_bit_offset += meshes[renderable.mesh_id].mesh_lods[0].meshlet_count;
+        renderable.meshlet_bit_offset = meshlet_bits;
+        meshlet_bits += meshes[renderable.mesh_id].mesh_lods[0].meshlet_count;
     }
-    fmt::println("bitfield size: {}mb", get_group_count(meshlet_bit_offset, 32) * sizeof(uint32_t) * 1e-6);
+    auto meshlet_offset = get_group_count(renderables.size(), 32);
 
     // Update descriptors
     for (const auto& image : asset_loader.images)
@@ -512,7 +512,7 @@ void Engine::run()
     Buffer meshlet_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.m_meshlets.data(), asset_loader.m_meshlets.size() * sizeof(Meshlet));
     Buffer meshlet_indices_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.meshlet_indices.data(), asset_loader.meshlet_indices.size() * sizeof(uint32_t));
     Buffer spd_counter_buffer = create_buffer(device, allocator, sizeof(uint32_t), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT_KHR);
-    Buffer meshlets_late_pass_buffer = create_buffer(device, allocator, get_group_count(meshlet_bit_offset, 32) * sizeof(uint32_t), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT_KHR);
+    Buffer late_pass_candidates_buffer = create_buffer(device, allocator, (get_group_count(renderables.size(), 32) + get_group_count(meshlet_bits, 32)) * sizeof(uint32_t), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT_KHR);
 
     VkExtent3D depth_pyramid_extent{};
     depth_pyramid_extent.width = nearest_pow2(swapchain.extent.width);
@@ -927,7 +927,7 @@ void Engine::run()
 
         auto depth_pyramid = graph.import_image(depth_pyramid_image, depth_pyramid_descriptor_handle);
         auto spd_counter = graph.import_buffer(spd_counter_buffer, -1);
-        auto meshlets_late_pass = graph.import_buffer(meshlets_late_pass_buffer, -1);
+        auto late_pass_candidates = graph.import_buffer(late_pass_candidates_buffer, -1);
 
         // Record command buffer
         VkCommandBuffer cmd = frame.command_buffer;
@@ -948,12 +948,12 @@ void Engine::run()
             Pass("Zero buffers early")
                 .write_buffer(dispatch_buffer, AccessType::TransferWrite)
                 .write_buffer(prefix_sum_buffer, AccessType::TransferWrite)
-                .write_buffer(meshlets_late_pass, AccessType::TransferWrite),
+                .write_buffer(late_pass_candidates, AccessType::TransferWrite),
             [&]()
             {
                 vkCmdFillBuffer(cmd, get_buffer(graph, dispatch_buffer), 0, VK_WHOLE_SIZE, 0);
                 vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, VK_WHOLE_SIZE, 0);
-                vkCmdFillBuffer(cmd, get_buffer(graph, meshlets_late_pass), 0, VK_WHOLE_SIZE, 0);
+                vkCmdFillBuffer(cmd, get_buffer(graph, late_pass_candidates), 0, VK_WHOLE_SIZE, 0);
             }
         );
 
@@ -972,6 +972,7 @@ void Engine::run()
                     VkDeviceAddress mesh_buffer;
                     VkDeviceAddress object_buffer;
                     VkDeviceAddress prefix_sum_buffer;
+                    VkDeviceAddress late_pass_candidates_buffer;
                     glm::vec4 planes;
                     glm::vec2 depth_pyramid_extent;
                     float p00;
@@ -999,6 +1000,7 @@ void Engine::run()
                 data.mesh_buffer = mesh_buffer.address;
                 data.object_buffer = object_buffer.address;
                 data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
+                data.late_pass_candidates_buffer = late_pass_candidates_buffer.address;
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
                 data.depth_pyramid_extent = glm::vec2(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height);
                 data.p00 = frame_context.proj[0][0];
@@ -1048,7 +1050,7 @@ void Engine::run()
                 .read_image(depth_pyramid, AccessType::ComputeShaderWrite)
                 .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite)
                 .write_buffer(meshlet_draw_buffer, AccessType::ComputeShaderWrite)
-                .write_buffer(meshlets_late_pass, AccessType::ComputeShaderWrite),
+                .write_buffer(late_pass_candidates, AccessType::ComputeShaderWrite),
             [&]()
             {
                 vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 4);
@@ -1061,7 +1063,7 @@ void Engine::run()
                     VkDeviceAddress prefix_sum_buffer;
                     VkDeviceAddress meshlet_draw_buffer;
                     VkDeviceAddress dispatch_buffer;
-                    VkDeviceAddress meshlets_late_pass_buffer;
+                    VkDeviceAddress late_pass_candidates_buffer;
                     glm::vec4 planes;
                     glm::vec2 depth_pyramid_extent;
                     float p00;
@@ -1089,7 +1091,7 @@ void Engine::run()
                 data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
                 data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
                 data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
-                data.meshlets_late_pass_buffer = meshlets_late_pass_buffer.address;
+                data.late_pass_candidates_buffer = late_pass_candidates_buffer.address + meshlet_offset * sizeof(uint32_t);
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
                 data.depth_pyramid_extent = glm::vec2(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height);
                 data.p00 = frame_context.proj[0][0];
@@ -1251,18 +1253,17 @@ void Engine::run()
 
         graph.add_pass(
             Pass("Zero buffers late")
-                .write_buffer(dispatch_buffer, AccessType::TransferWrite)
-                .write_buffer(prefix_sum_buffer, AccessType::TransferWrite),
+                .write_buffer(dispatch_buffer, AccessType::TransferWrite),
             [&]()
             {
                 vkCmdFillBuffer(cmd, get_buffer(graph, dispatch_buffer), 0, VK_WHOLE_SIZE, 0);
-                vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, VK_WHOLE_SIZE, 0);
             }
         );
 
         graph.add_pass(
             Pass("Compute cull mesh late")
                 .read_image(depth_pyramid, AccessType::ComputeShaderWrite)
+                .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
                 .write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite),
             [&]()
             {
@@ -1274,6 +1275,7 @@ void Engine::run()
                     VkDeviceAddress mesh_buffer;
                     VkDeviceAddress object_buffer;
                     VkDeviceAddress prefix_sum_buffer;
+                    VkDeviceAddress late_pass_candidates_buffer;
                     glm::vec4 planes;
                     glm::vec2 depth_pyramid_extent;
                     float p00;
@@ -1301,6 +1303,7 @@ void Engine::run()
                 data.mesh_buffer = mesh_buffer.address;
                 data.object_buffer = object_buffer.address;
                 data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
+                data.late_pass_candidates_buffer = late_pass_candidates_buffer.address;
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
                 data.depth_pyramid_extent = glm::vec2(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height);
                 data.p00 = frame_context.proj[0][0];
@@ -1347,7 +1350,7 @@ void Engine::run()
             Pass("Compute cull meshlets late")
                 .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
                 .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
-                .read_buffer(meshlets_late_pass, AccessType::ComputeShaderReadOther)
+                .read_buffer(late_pass_candidates, AccessType::ComputeShaderReadOther)
                 .read_image(depth_pyramid, AccessType::ComputeShaderWrite)
                 .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite)
                 .write_buffer(meshlet_draw_buffer, AccessType::ComputeShaderWrite),
@@ -1364,7 +1367,7 @@ void Engine::run()
                     VkDeviceAddress prefix_sum_buffer;
                     VkDeviceAddress meshlet_draw_buffer;
                     VkDeviceAddress dispatch_buffer;
-                    VkDeviceAddress meshlets_late_pass_buffer;
+                    VkDeviceAddress late_pass_candidates_buffer;
                     glm::vec4 planes;
                     glm::vec2 depth_pyramid_extent;
                     float p00;
@@ -1392,7 +1395,7 @@ void Engine::run()
                 data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
                 data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
                 data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
-                data.meshlets_late_pass_buffer = meshlets_late_pass_buffer.address;
+                data.late_pass_candidates_buffer = late_pass_candidates_buffer.address + meshlet_offset * sizeof(uint32_t);
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
                 data.depth_pyramid_extent = glm::vec2(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height);
                 data.p00 = frame_context.proj[0][0];
@@ -1676,7 +1679,7 @@ void Engine::run()
     destroy_buffer(allocator, meshlet_buffer);
     destroy_buffer(allocator, meshlet_indices_buffer);
     destroy_buffer(allocator, spd_counter_buffer);
-    destroy_buffer(allocator, meshlets_late_pass_buffer);
+    destroy_buffer(allocator, late_pass_candidates_buffer);
     destroy_image(device, allocator, depth_pyramid_image);
     vkDestroySampler(device, linear_samp, nullptr);
     vkDestroySampler(device, depth_reduce_samp, nullptr);
