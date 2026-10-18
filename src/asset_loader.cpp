@@ -777,6 +777,9 @@ bool AssetLoader::load_gltf(
             mat_data.emissive_id = static_cast<uint32_t>(image_index) + texture_offset;
         }
 
+        if (mat.alphaMode == fastgltf::AlphaMode::Mask)
+            fmt::println("{}", mat.name);
+
         materials.push_back(mat_data);
     }
 
@@ -898,7 +901,8 @@ bool AssetLoader::load_gltf(
             }
             else
             {
-                // assert(0 && "IMPLEMENT TANGENTS");
+                fmt::println("Implement tangents");
+                assert(0 && "IMPLEMENT TANGENTS");
                 tangents.resize(positions.size());
                 // generate_mikkt_tangents = true;
                 // tangents.resize(positions.size());
@@ -923,10 +927,11 @@ bool AssetLoader::load_gltf(
             if (p.materialIndex.has_value())
             {
                 auto material_id = static_cast<uint32_t>(p.materialIndex.value());
-                // if (material_id == 0 || material_id == 1)
-                // {
-                    // continue;
-                // }
+
+                // Only for Source 2 scenes
+                if (asset.materials[material_id].name.find("tools") != std::string::npos)
+                    continue;
+
                 mesh_data.material_id = material_id;
             }
             else

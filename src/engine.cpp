@@ -47,10 +47,10 @@
 #define MAX_MESH_PIPELINE_QUERIES 2
 
 // const char* ASSET_NAME = "Sponza/Sponza.gltf";
-const char* ASSET_NAME = "chinesedragon.gltf";
-// const char* ASSET_NAME = "CS2-assets-ktx2/de_dust2_d.gltf";
+// const char* ASSET_NAME = "chinesedragon.gltf";
+const char* ASSET_NAME = "de_dust2_d/de_dust2_d.gltf";
 // const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
-int DEBUG_ID = 0; // normal, triangles, meshlets
+int DEBUG_ID = 0; // albedo, triangles, meshlets, normal
 
 namespace
 {
@@ -427,7 +427,7 @@ void Engine::run()
         assert(0 && "load_gltf failed");
     }
 
-#if 0
+#if 1
     for (const auto& node : asset_loader.parent_nodes)
     {
         register_object(node, glm::mat4(1.0), asset_loader.children_nodes, asset_loader.meshes);
@@ -1490,6 +1490,7 @@ void Engine::run()
                     VkDeviceAddress object_buffer;
                     VkDeviceAddress meshlet_buffer;
                     VkDeviceAddress meshlet_indices_buffer;
+                    VkDeviceAddress material_buffer;
                     glm::vec3 camera_pos;
                     uint32_t visbuffer_id;
                     glm::vec2 screen_extent;
@@ -1503,6 +1504,7 @@ void Engine::run()
                 data.object_buffer = object_buffer.address;
                 data.meshlet_buffer = meshlet_buffer.address;
                 data.meshlet_indices_buffer = meshlet_indices_buffer.address;
+                data.material_buffer = material_buffer.address;
                 data.camera_pos = camera.position;
                 data.visbuffer_id = get_image_id(graph, vbuffer);
                 data.screen_extent = glm::vec2(swapchain.extent.width, swapchain.extent.height);

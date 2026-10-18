@@ -53,4 +53,3 @@ public uint hash(uint a)
     a = (a ^ 0xb55a4f09) ^ (a >> 16);
     return a;
 }
-

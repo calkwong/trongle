@@ -10,6 +10,7 @@ struct PushConstants
     ObjectData* object_buffer;
     Meshlet* meshlet_buffer;
     uint32_t* meshlet_indices_buffer;
+    MaterialData* material_buffer;
     float3 camera_pos;
     uint visbuffer_id;
     float2 screen_extent;
@@ -122,11 +123,20 @@ void main(uint3 global_id: SV_DispatchThreadID)
     N = normalize(N);
     N = is_back_face ? -N : N;
 
+    SamplerState samp = get_sampler<SamplerState>(LINEAR_SAMPLER);
+
+    MaterialData m = pc.material_buffer[obj.material_id];
+
     switch (pc.debug_id)
     {
-    case 0: // GEOMETRIC NORMAL
+    case 0:
     {
-        out_color = float4(float3(N) * 0.5 + 0.5, 1);
+        float4 albedo = m.base_color_factor;
+        if (m.diffuse_id != INVALID_ID)
+        {
+            albedo *= get_sampled_image<Texture2D>(m.diffuse_id).SampleGrad(samp, uv, uv_ddx, uv_ddy);
+        }
+        out_color = albedo;
         break;
     }
     case 1: // TRIANGLES
@@ -139,6 +149,11 @@ void main(uint3 global_id: SV_DispatchThreadID)
     {
         uint mhash = hash(meshlet_id);
         out_color.xyz = float3(float(mhash & 255), float((mhash >> 8) & 255), float((mhash >> 16) & 255)) / 255.0;
+        break;
+    }
+    case 3: // GEOMETRIC NORMAL
+    {
+        out_color = float4(float3(N) * 0.5 + 0.5, 1);
         break;
     }
     default:
