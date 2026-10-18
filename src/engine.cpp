@@ -472,7 +472,6 @@ void Engine::run()
     auto meshlet_bits = 0;
     for (auto& renderable : renderables)
     {
-        renderable.meshlet_bit_offset = meshlet_bits;
         meshlet_bits += meshes[renderable.mesh_id].mesh_lods[0].meshlet_count;
     }
     auto meshlet_offset = get_group_count(renderables.size(), 32);
@@ -505,7 +504,6 @@ void Engine::run()
 
     // Load GPU data
     Buffer vertex_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.m_vertices.data(), asset_loader.m_vertices.size() * sizeof(Vertex));
-    Buffer index_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.m_indices.data(), asset_loader.m_indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT);
     Buffer object_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, renderables.data(), renderables.size() * sizeof(ObjectData));
     Buffer material_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.materials.data(), asset_loader.materials.size() * sizeof(MaterialData));
     Buffer mesh_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, meshes.data(), meshes.size() * sizeof(MeshData));
@@ -1677,7 +1675,6 @@ void Engine::run()
     vkDeviceWaitIdle(device);
 
     destroy_buffer(allocator, vertex_buffer);
-    destroy_buffer(allocator, index_buffer);
     destroy_buffer(allocator, object_buffer);
     destroy_buffer(allocator, material_buffer);
     destroy_buffer(allocator, mesh_buffer);
