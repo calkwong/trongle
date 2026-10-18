@@ -12,6 +12,8 @@
 #include <utility>
 #include <cstddef>
 
+#define GIGABARRIER
+
 size_t std::hash<ImageResourceDesc>::operator()(const ImageResourceDesc& key) const noexcept
 {
     size_t ret = 0;
@@ -445,7 +447,7 @@ void Rendergraph::compile(VkCommandBuffer cmd)
 
 void Rendergraph::prepare_barriers()
 {
-#if 1
+#ifndef GIGABARRIER
     auto process_write_dependencies = [&](AccessState& res_state, VkMemoryBarrier2& barrier, const PassInfo& write)
     {
         if (!res_state.readers.empty()) // Src is readers
@@ -570,9 +572,22 @@ void Rendergraph::execute(VkCommandBuffer cmd)
         pipeline_barrier_and_execute(barrier, callback, i);
     }
 
-    // swapchain GENERAL -> PRESENT
+// swapchain GENERAL -> PRESENT
+#ifndef GIGABARRIER
     auto& last_barrier = barriers.back();
-    stage_barrier(cmd, physical_images[swapchain_index].image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, last_barrier.dstStageMask, last_barrier.dstAccessMask, 0, 0);
+    stage_barrier(cmd, physical_images[swapchain_index].image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, last_barrier.dstStageMask, 0, last_barrier.dstAccessMask, 0);
+#else
+    stage_barrier(
+        cmd,
+        physical_images[swapchain_index].image,
+        VK_IMAGE_LAYOUT_GENERAL,
+        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+        0,
+        VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+        0
+    );
+#endif
 }
 
 void Rendergraph::update_cached_resource_states()
