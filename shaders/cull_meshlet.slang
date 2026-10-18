@@ -64,7 +64,11 @@ void main(uint3 global_id: SV_DispatchThreadID)
         uint word = pc.late_pass_candidates_buffer[index >> 5];
         uint bit_set = (word >> (index & 31u)) & 1u;
         if (bit_set == 1u)
+        {
+            // This seems to be more efficient than zeroing the entire buffer each frame
+            InterlockedAnd(pc.late_pass_candidates_buffer[index >> 5], ~(1u << (index & 31u)));
             return;
+        }
     }
 
     uint global_meshlet_id = local_meshlet_id + meshlet_offset;

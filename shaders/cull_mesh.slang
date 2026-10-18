@@ -51,6 +51,8 @@ void main(uint3 global_id: SV_DispatchThreadID)
         uint bit_set = (word >> (index & 31u)) & 1u;
         if (bit_set != 1u)
             return;
+        // This seems to be more efficient than zeroing the entire buffer each frame
+        InterlockedAnd(pc.late_pass_candidates_buffer[index >> 5], ~(1u << (index & 31u)));
     }
 
     ObjectData o = pc.object_buffer[index];

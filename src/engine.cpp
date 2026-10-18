@@ -525,6 +525,7 @@ void Engine::run()
     immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
                      {
                          vkCmdFillBuffer(cmd, spd_counter_buffer.buffer, 0, VK_WHOLE_SIZE, 0);
+                         vkCmdFillBuffer(cmd, late_pass_candidates_buffer.buffer, 0, VK_WHOLE_SIZE, 0);
                          stage_barrier(cmd, depth_pyramid_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, 0, 0, 0);
                      });
 
@@ -928,14 +929,12 @@ void Engine::run()
         graph.add_pass(
             Pass("Zero buffers early")
                 .write_buffer(dispatch_buffer, AccessType::TransferWrite)
-                .write_buffer(prefix_sum_buffer, AccessType::TransferWrite)
-                .write_buffer(late_pass_candidates, AccessType::TransferWrite),
+                .write_buffer(prefix_sum_buffer, AccessType::TransferWrite),
             [&]()
             {
                 vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 18);
                 vkCmdFillBuffer(cmd, get_buffer(graph, dispatch_buffer), 0, VK_WHOLE_SIZE, 0);
-                vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, VK_WHOLE_SIZE, 0);
-                vkCmdFillBuffer(cmd, get_buffer(graph, late_pass_candidates), 0, VK_WHOLE_SIZE, 0);
+                vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, sizeof(uint64_t), 0);
                 vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 19);
             }
         );
