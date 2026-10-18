@@ -16,6 +16,7 @@ struct PushConstants
     uint* late_pass_candidates_buffer;
     float4 planes;
     float2 depth_pyramid_extent;
+    float2 depth_buffer_extent;
     float p00;
     float p11;
     float near;
@@ -87,10 +88,15 @@ void main(uint3 global_id: SV_DispatchThreadID)
     // TODO: do we need this conditional check?
     if (pc.skip_occlusion == 0 && project_sphere(float3(occlusion_center.x, occlusion_center.y, -occlusion_center.z), radius, pc.near, pc.p00, pc.p11, aabb))
     {
+        // TODO: this can be optimized as a push constant, leaving as is for clarity
+        float2 valid_extent = pc.depth_buffer_extent * 0.5;
+        float2 hzb_uv_scale = valid_extent / pc.depth_pyramid_extent;
+
         float mip = get_occlusion_mip(aabb, pc.depth_pyramid_extent, pc.depth_pyramid_lod);
         SamplerState samp = get_sampler<SamplerState>(DEPTH_REDUCE);
-        float depth = get_sampled_image<Texture2D>(pc.depth_pyramid_id).SampleLevel(samp, (aabb.zw + aabb.xy) * 0.5, mip).r;
 
+        float2 adjusted_uv = (aabb.zw + aabb.xy) * 0.5 * hzb_uv_scale;
+        float depth = get_sampled_image<Texture2D>(pc.depth_pyramid_id).SampleLevel(samp, adjusted_uv, mip).r;
         float depth_sphere = pc.near / (-occlusion_center.z - radius);
 
         visible &= depth_sphere > depth; // reverse depth

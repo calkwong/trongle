@@ -37,10 +37,10 @@ public bool frustum_culled(float3 center, float radius, float4 plane, float near
     return !visible;
 }
 
-public float get_occlusion_mip(float4 aabb, float2 extent, float texture_lod)
+public float get_occlusion_mip(float4 aabb, float2 valid_extent, float texture_lod)
 {
-    float2 pixel_size = (aabb.zw - aabb.xy) * extent;
-    float max_dim = max(pixel_size.x, pixel_size.y);
+    float2 size = (aabb.zw - aabb.xy) * valid_extent;
+    float max_dim = max(size.x, size.y);
     float mip = ceil(log2(max_dim));
     mip = min(mip, texture_lod);
 

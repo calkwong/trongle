@@ -12,7 +12,7 @@
 #include <utility>
 #include <cstddef>
 
-#define GIGABARRIER
+// #define GIGABARRIER
 
 size_t std::hash<ImageResourceDesc>::operator()(const ImageResourceDesc& key) const noexcept
 {

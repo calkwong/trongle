@@ -510,7 +510,7 @@ void Engine::run()
     Buffer meshlet_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.m_meshlets.data(), asset_loader.m_meshlets.size() * sizeof(Meshlet));
     Buffer meshlet_indices_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.meshlet_indices.data(), asset_loader.meshlet_indices.size() * sizeof(uint32_t));
     Buffer spd_counter_buffer = create_buffer(device, allocator, sizeof(uint32_t), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT_KHR);
-    Buffer late_pass_candidates_buffer = create_buffer(device, allocator, (get_group_count(renderables.size(), 32) + get_group_count(meshlet_bits, 32)) * sizeof(uint32_t), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT_KHR);
+    Buffer late_pass_candidates_buffer = create_buffer(device, allocator, (meshlet_offset + get_group_count(meshlet_bits, 32)) * sizeof(uint32_t), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT_KHR);
 
     VkExtent3D depth_pyramid_extent{};
     depth_pyramid_extent.width = nearest_pow2(swapchain.extent.width);
@@ -974,6 +974,7 @@ void Engine::run()
                     VkDeviceAddress late_pass_candidates_buffer;
                     glm::vec4 planes;
                     glm::vec2 depth_pyramid_extent;
+                    glm::vec2 depth_buffer_extent;
                     float p00;
                     float p11;
                     float near;
@@ -1002,6 +1003,7 @@ void Engine::run()
                 data.late_pass_candidates_buffer = late_pass_candidates_buffer.address;
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
                 data.depth_pyramid_extent = glm::vec2(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height);
+                data.depth_buffer_extent = glm::vec2(swapchain.extent.width, swapchain.extent.height);
                 data.p00 = frame_context.proj[0][0];
                 data.p11 = frame_context.proj[1][1];
                 data.near = camera.near;
@@ -1065,6 +1067,7 @@ void Engine::run()
                     VkDeviceAddress late_pass_candidates_buffer;
                     glm::vec4 planes;
                     glm::vec2 depth_pyramid_extent;
+                    glm::vec2 depth_buffer_extent;
                     float p00;
                     float p11;
                     float near;
@@ -1093,6 +1096,7 @@ void Engine::run()
                 data.late_pass_candidates_buffer = late_pass_candidates_buffer.address + meshlet_offset * sizeof(uint32_t);
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
                 data.depth_pyramid_extent = glm::vec2(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height);
+                data.depth_buffer_extent = glm::vec2(swapchain.extent.width, swapchain.extent.height);
                 data.p00 = frame_context.proj[0][0];
                 data.p11 = frame_context.proj[1][1];
                 data.near = camera.near;
@@ -1222,7 +1226,7 @@ void Engine::run()
                 struct PushData
                 {
                     VkDeviceAddress spd_counter_buffer;
-                    glm::vec2 rcp_resolution; // resolution of src image mapped to next PoT
+                    glm::vec2 rcp_resolution; // extent of depth buffer
                     uint32_t mips;
                     uint32_t num_wgs;
                     uint32_t src_id; // depth texture to sample
@@ -1236,7 +1240,7 @@ void Engine::run()
 
                 PushData data{};
                 data.spd_counter_buffer = spd_counter_buffer.address;
-                data.rcp_resolution = glm::vec2(1.0) / glm::vec2(width, height);
+                data.rcp_resolution = glm::vec2(1.0) / glm::vec2(swapchain.extent.width, swapchain.extent.height);
                 data.mips = get_depth_pyramid_image_count(depth_pyramid_image);
                 data.num_wgs = group_count_x * group_count_y;
                 data.src_id = get_image_id(graph, depth_image);
@@ -1279,6 +1283,7 @@ void Engine::run()
                     VkDeviceAddress late_pass_candidates_buffer;
                     glm::vec4 planes;
                     glm::vec2 depth_pyramid_extent;
+                    glm::vec2 depth_buffer_extent;
                     float p00;
                     float p11;
                     float near;
@@ -1307,6 +1312,7 @@ void Engine::run()
                 data.late_pass_candidates_buffer = late_pass_candidates_buffer.address;
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
                 data.depth_pyramid_extent = glm::vec2(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height);
+                data.depth_buffer_extent = glm::vec2(swapchain.extent.width, swapchain.extent.height);
                 data.p00 = frame_context.proj[0][0];
                 data.p11 = frame_context.proj[1][1];
                 data.near = camera.near;
@@ -1371,6 +1377,7 @@ void Engine::run()
                     VkDeviceAddress late_pass_candidates_buffer;
                     glm::vec4 planes;
                     glm::vec2 depth_pyramid_extent;
+                    glm::vec2 depth_buffer_extent;
                     float p00;
                     float p11;
                     float near;
@@ -1399,6 +1406,7 @@ void Engine::run()
                 data.late_pass_candidates_buffer = late_pass_candidates_buffer.address + meshlet_offset * sizeof(uint32_t);
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
                 data.depth_pyramid_extent = glm::vec2(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height);
+                data.depth_buffer_extent = glm::vec2(swapchain.extent.width, swapchain.extent.height);
                 data.p00 = frame_context.proj[0][0];
                 data.p11 = frame_context.proj[1][1];
                 data.near = camera.near;
@@ -1564,7 +1572,7 @@ void Engine::run()
                 struct PushData
                 {
                     VkDeviceAddress spd_counter_buffer;
-                    glm::vec2 rcp_resolution; // resolution of src image mapped to next PoT
+                    glm::vec2 rcp_resolution; // extent of depth buffer
                     uint32_t mips;
                     uint32_t num_wgs;
                     uint32_t src_id; // depth texture to sample
@@ -1578,7 +1586,7 @@ void Engine::run()
 
                 PushData data{};
                 data.spd_counter_buffer = spd_counter_buffer.address;
-                data.rcp_resolution = glm::vec2(1.0) / glm::vec2(width, height);
+                data.rcp_resolution = glm::vec2(1.0) / glm::vec2(swapchain.extent.width, swapchain.extent.height);
                 data.mips = get_depth_pyramid_image_count(depth_pyramid_image);
                 data.num_wgs = group_count_x * group_count_y;
                 data.src_id = get_image_id(graph, depth_image);
