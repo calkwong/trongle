@@ -8,4 +8,5 @@
 
 #define MAX_DESCRIPTORS_IMAGE_COUNT 1000
 
-#define MAX_MESHLETS_DRAW 3000000
+// Check limit: VkPhysicalDeviceMeshShaderPropertiesEXT -> maxMeshWorkGroupCount
+#define MAX_MESHLETS_DRAW 4194304

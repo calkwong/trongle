@@ -43,14 +43,14 @@
 #include <dlfcn.h>
 #include <random>
 
-#define MAX_TIMESTAMP_QUERIES 18
+#define MAX_TIMESTAMP_QUERIES 22
 #define MAX_MESH_PIPELINE_QUERIES 2
 
 // const char* ASSET_NAME = "Sponza/Sponza.gltf";
 const char* ASSET_NAME = "chinesedragon.gltf";
 // const char* ASSET_NAME = "CS2-assets-ktx2/de_dust2_d.gltf";
 // const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
-int GBUFFER_DEBUG_ID = 1; // color, normal, metal, roughness, debug
+int DEBUG_ID = 0; // normal, triangles, meshlets
 
 namespace
 {
@@ -120,8 +120,8 @@ VkBool32 custom_debug_callback(
     auto mt = vkb::to_string_message_type(message_type);
     if (message_type & VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT)
     {
-        // if (strcmp(p_callback_data->pMessageIdName, "VUID-RuntimeSpirv-OpVariable-08746") == 0)
-        //     return VK_FALSE;
+        if (strcmp(p_callback_data->pMessageIdName, "VUID-RuntimeSpirv-OpVariable-08746") == 0)
+            return VK_FALSE;
         fmt::println("[{}: {}] - {}\n{}\n", ms, mt, p_callback_data->pMessageIdName, p_callback_data->pMessage);
     }
     else
@@ -401,11 +401,15 @@ void Engine::run()
     graph.allocator = allocator;
     graph.image_manager = &image_manager;
 
+    VkPhysicalDeviceMeshShaderPropertiesEXT mesh_shader_properties{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT};
     VkPhysicalDeviceProperties2 properties2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+    properties2.pNext = &mesh_shader_properties;
+
     vkGetPhysicalDeviceProperties2(physical_device, &properties2);
     assert(properties2.properties.limits.timestampComputeAndGraphics);
     auto max_push_constant_size = properties2.properties.limits.maxPushConstantsSize;
     auto timestamp_period = properties2.properties.limits.timestampPeriod;
+    assert(mesh_shader_properties.maxMeshWorkGroupCount == MAX_MESHLETS_DRAW);
 
     // Init camera
     Camera camera{};
@@ -624,11 +628,11 @@ void Engine::run()
     VK_CHECK(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &pipeline_layout));
 
     VkPipeline cull_mesh_pipeline{};
-    VkPipeline gbuffer_pipeline{};
-    VkPipeline debug_pipeline{};
     VkPipeline cull_meshlet_pipeline{};
     VkPipeline compact_dispatch_pipeline{};
     VkPipeline hiz_pipeline{};
+    VkPipeline vbuffer_pipeline{};
+    VkPipeline lighting_pipeline{};
 
     std::vector<VkPipeline> pipelines{};
 
@@ -636,10 +640,10 @@ void Engine::run()
     {
         auto cull_program = load_shader_program("cull_mesh.slang", device);
         auto cull_meshlets_program = load_shader_program("cull_meshlet.slang", device);
-        auto gbuffer_program = load_shader_program("gbuffer.slang", device);
-        auto debug_program = load_shader_program("debug.slang", device);
         auto compact_dispatch_program = load_shader_program("compact_dispatch.slang", device);
         auto hiz_program = load_shader_program("hiz_spd.slang", device);
+        auto vbuffer_program = load_shader_program("vbuffer.slang", device);
+        auto lighting_program = load_shader_program("resolve_vbuffer.slang", device);
 
         pipelines.clear();
 
@@ -657,21 +661,21 @@ void Engine::run()
         };
 
         replace_pipeline(
-            gbuffer_pipeline,
+            vbuffer_pipeline,
             create_graphics_pipeline(
                 device,
-                &gbuffer_program,
+                &vbuffer_program,
                 { VK_SHADER_STAGE_MESH_BIT_EXT, VK_SHADER_STAGE_FRAGMENT_BIT },
                 nullptr,
                 &pipeline_layout,
-                { VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8_UNORM, VK_FORMAT_R32_UINT }
+                { VK_FORMAT_R32G32_UINT }
             )
         );
         replace_pipeline(cull_mesh_pipeline, create_compute_pipeline(device, &cull_program, nullptr, &pipeline_layout));
-        replace_pipeline(debug_pipeline, create_compute_pipeline(device, &debug_program, nullptr, &pipeline_layout));
         replace_pipeline(cull_meshlet_pipeline, create_compute_pipeline(device, &cull_meshlets_program, nullptr, &pipeline_layout));
         replace_pipeline(compact_dispatch_pipeline, create_compute_pipeline(device, &compact_dispatch_program, nullptr, &pipeline_layout));
         replace_pipeline(hiz_pipeline, create_compute_pipeline(device, &hiz_program, nullptr, &pipeline_layout));
+        replace_pipeline(lighting_pipeline, create_compute_pipeline(device, &lighting_program, nullptr, &pipeline_layout));
     };
 
     build_pipelines();
@@ -842,8 +846,6 @@ void Engine::run()
 
         double new_gpu_time = static_cast<double>(timestamp_results[1] - timestamp_results[0]) * timestamp_period * 1e-6;
         stats.gpu_time = new_gpu_time + 0.95 * (stats.gpu_time - new_gpu_time);
-        auto gbuffer_time_early = static_cast<double>(timestamp_results[3] - timestamp_results[2]) * timestamp_period * 1e-6;
-        auto gbuffer_time_late = static_cast<double>(timestamp_results[5] - timestamp_results[3]) * timestamp_period * 1e-6;
         auto triangles_early = mesh_pipeline_results[0];
         auto triangles_late = mesh_pipeline_results[1];
 
@@ -858,18 +860,20 @@ void Engine::run()
         ImGui::Text("GPU time:           %.3f ms", stats.gpu_time);
         ImGui::Text("Cull mesh early:    %.3f ms", static_cast<double>(timestamp_results[3] - timestamp_results[2]) * timestamp_period * 1e-6);
         ImGui::Text("Cull meshlet early: %.3f ms", static_cast<double>(timestamp_results[5] - timestamp_results[4]) * timestamp_period * 1e-6);
-        ImGui::Text("Gbuffers early:     %.3f ms", static_cast<double>(timestamp_results[7] - timestamp_results[6]) * timestamp_period * 1e-6);
+        ImGui::Text("Vbuffer early:      %.3f ms", static_cast<double>(timestamp_results[7] - timestamp_results[6]) * timestamp_period * 1e-6);
         ImGui::Text("Hiz:                %.3f ms", static_cast<double>(timestamp_results[9] - timestamp_results[8]) * timestamp_period * 1e-6);
         ImGui::Text("Cull mesh late:     %.3f ms", static_cast<double>(timestamp_results[11] - timestamp_results[10]) * timestamp_period * 1e-6);
         ImGui::Text("Cull meshlet late:  %.3f ms", static_cast<double>(timestamp_results[13] - timestamp_results[12]) * timestamp_period * 1e-6);
-        ImGui::Text("Gbuffers late:      %.3f ms", static_cast<double>(timestamp_results[15] - timestamp_results[14]) * timestamp_period * 1e-6);
+        ImGui::Text("Vbuffer late:       %.3f ms", static_cast<double>(timestamp_results[15] - timestamp_results[14]) * timestamp_period * 1e-6);
         ImGui::Text("Hiz temporal:       %.3f ms", static_cast<double>(timestamp_results[17] - timestamp_results[16]) * timestamp_period * 1e-6);
+        ImGui::Text("Zero buffers early: %.3f ms", static_cast<double>(timestamp_results[19] - timestamp_results[18]) * timestamp_period * 1e-6);
+        ImGui::Text("Zero buffers late:  %.3f ms", static_cast<double>(timestamp_results[21] - timestamp_results[20]) * timestamp_period * 1e-6);
 
         ImGui::Text("Triangles early:   %u", static_cast<unsigned int>(triangles_early));
         ImGui::Text("Triangles late:    %u", static_cast<unsigned int>(triangles_late));
         // ImGui::Text("Triangles:   %.1fM", static_cast<double>(triangles) * 1e-6);
         ImGui::Checkbox("Freeze camera", &freeze_matrices);
-        ImGui::SliderInt("Debug gbuffers", &GBUFFER_DEBUG_ID, 0, 4);
+        ImGui::SliderInt("Debug", &DEBUG_ID, 0, 2);
 
         ImGui::End();
         ImGui::Render();
@@ -890,31 +894,10 @@ void Engine::run()
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                 VK_IMAGE_ASPECT_COLOR_BIT }
         );
-        auto gbuffer_color = graph.create_task_image(
+        auto vbuffer = graph.create_task_image(
             ImageResourceDesc{
                 VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
-                VK_FORMAT_R16G16B16A16_SFLOAT,
-                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
-                VK_IMAGE_ASPECT_COLOR_BIT }
-        );
-        auto gbuffer_normal = graph.create_task_image(
-            ImageResourceDesc{
-                VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
-                VK_FORMAT_R8G8B8A8_UNORM,
-                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
-                VK_IMAGE_ASPECT_COLOR_BIT }
-        );
-        auto gbuffer_mr = graph.create_task_image(
-            ImageResourceDesc{
-                VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
-                VK_FORMAT_R8G8_UNORM,
-                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
-                VK_IMAGE_ASPECT_COLOR_BIT }
-        );
-        auto gbuffer_debug = graph.create_task_image(
-            ImageResourceDesc{
-                VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
-                VK_FORMAT_R32_UINT,
+                VK_FORMAT_R32G32_UINT,
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
                 VK_IMAGE_ASPECT_COLOR_BIT }
         );
@@ -949,9 +932,11 @@ void Engine::run()
                 .write_buffer(late_pass_candidates, AccessType::TransferWrite),
             [&]()
             {
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 18);
                 vkCmdFillBuffer(cmd, get_buffer(graph, dispatch_buffer), 0, VK_WHOLE_SIZE, 0);
                 vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, VK_WHOLE_SIZE, 0);
                 vkCmdFillBuffer(cmd, get_buffer(graph, late_pass_candidates), 0, VK_WHOLE_SIZE, 0);
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 19);
             }
         );
 
@@ -1114,42 +1099,28 @@ void Engine::run()
         );
 
         graph.add_pass(
-            Pass("Gbuffers early")
+            Pass("Vbuffer early")
                 .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
                 .read_buffer(prefix_sum_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
                 .read_buffer(meshlet_draw_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
-                .write_image(gbuffer_color, AccessType::ColorAttachmentWrite)
-                .write_image(gbuffer_normal, AccessType::ColorAttachmentWrite)
-                .write_image(gbuffer_mr, AccessType::ColorAttachmentWrite)
-                .write_image(gbuffer_debug, AccessType::ColorAttachmentWrite)
+                .write_image(vbuffer, AccessType::ColorAttachmentWrite)
                 .write_image(depth_image, AccessType::DepthStencilAttachmentWrite),
             [&]()
             {
                 vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 6);
 
-                // TODO: unused, fix
-                VkClearColorValue clear_color_value = { 1.f, 0.f, 0.f, 1.f };
-                VkClearValue clear_value{ .color = clear_color_value };
+                VkClearValue clear_value{};
+                clear_value.color.uint32[0] = 0xFFFFFFFFu;
+                clear_value.color.uint32[1] = 0xFFFFFFFFu;
+                clear_value.color.uint32[2] = 0;
+                clear_value.color.uint32[3] = 0;
 
-                std::array<VkRenderingAttachmentInfo, 4> rendering_attachment_infos{};
-                std::array<VkImageView, 4> gbuffer_views{
-                    get_image_view(graph, gbuffer_color),
-                    get_image_view(graph, gbuffer_normal),
-                    get_image_view(graph, gbuffer_mr),
-                    get_image_view(graph, gbuffer_debug)
-                };
-
-                for (auto i = 0; i < rendering_attachment_infos.size(); i++)
-                {
-                    rendering_attachment_infos[i] =
-                        VkRenderingAttachmentInfo{
-                            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                            .imageView = gbuffer_views[i],
-                            .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
-                            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-                            .storeOp = VK_ATTACHMENT_STORE_OP_STORE
-                        };
-                }
+                VkRenderingAttachmentInfo rendering_attachment_info = VkRenderingAttachmentInfo{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+                rendering_attachment_info.imageView = get_image_view(graph, vbuffer);
+                rendering_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+                rendering_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+                rendering_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+                rendering_attachment_info.clearValue = clear_value;
 
                 VkRenderingAttachmentInfo depth_attachment_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
                 depth_attachment_info.imageView = get_image_view(graph, depth_image);
@@ -1160,8 +1131,8 @@ void Engine::run()
                 VkRenderingInfo rendering_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_INFO };
                 rendering_info.renderArea = VkRect2D{ VkOffset2D{ 0, 0 }, swapchain.extent };
                 rendering_info.layerCount = 1;
-                rendering_info.colorAttachmentCount = static_cast<uint32_t>(rendering_attachment_infos.size());
-                rendering_info.pColorAttachments = rendering_attachment_infos.data();
+                rendering_info.colorAttachmentCount = 1;
+                rendering_info.pColorAttachments = &rendering_attachment_info;
                 rendering_info.pDepthAttachment = &depth_attachment_info;
 
                 vkCmdBeginRendering(cmd, &rendering_info);
@@ -1183,7 +1154,7 @@ void Engine::run()
                 scissor.extent.height = swapchain.extent.height;
                 vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gbuffer_pipeline);
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_pipeline);
 
                 struct PushData
                 {
@@ -1260,7 +1231,9 @@ void Engine::run()
                 .write_buffer(dispatch_buffer, AccessType::TransferWrite),
             [&]()
             {
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 20);
                 vkCmdFillBuffer(cmd, get_buffer(graph, dispatch_buffer), 0, VK_WHOLE_SIZE, 0);
+                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 21);
             }
         );
 
@@ -1425,42 +1398,21 @@ void Engine::run()
 
         // TODO: should we declare read_image for attachments?
         graph.add_pass(
-            Pass("Gbuffers late")
+            Pass("Vbuffer late")
                 .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
                 .read_buffer(prefix_sum_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
                 .read_buffer(meshlet_draw_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
-                .write_image(gbuffer_color, AccessType::ColorAttachmentReadWrite)
-                .write_image(gbuffer_normal, AccessType::ColorAttachmentReadWrite)
-                .write_image(gbuffer_mr, AccessType::ColorAttachmentReadWrite)
-                .write_image(gbuffer_debug, AccessType::ColorAttachmentReadWrite)
+                .write_image(vbuffer, AccessType::ColorAttachmentReadWrite)
                 .write_image(depth_image, AccessType::DepthStencilAttachmentReadWrite),
             [&]()
             {
                 vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 14);
 
-                // TODO: unused, fix
-                VkClearColorValue clear_color_value = { 1.f, 0.f, 0.f, 1.f };
-                VkClearValue clear_value{ .color = clear_color_value };
-
-                std::array<VkRenderingAttachmentInfo, 4> rendering_attachment_infos{};
-                std::array<VkImageView, 4> gbuffer_views{
-                    get_image_view(graph, gbuffer_color),
-                    get_image_view(graph, gbuffer_normal),
-                    get_image_view(graph, gbuffer_mr),
-                    get_image_view(graph, gbuffer_debug)
-                };
-
-                for (auto i = 0; i < rendering_attachment_infos.size(); i++)
-                {
-                    rendering_attachment_infos[i] =
-                        VkRenderingAttachmentInfo{
-                            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                            .imageView = gbuffer_views[i],
-                            .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
-                            .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
-                            .storeOp = VK_ATTACHMENT_STORE_OP_STORE
-                        };
-                }
+                VkRenderingAttachmentInfo rendering_attachment_info = VkRenderingAttachmentInfo{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+                rendering_attachment_info.imageView = get_image_view(graph, vbuffer);
+                rendering_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+                rendering_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+                rendering_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 
                 VkRenderingAttachmentInfo depth_attachment_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
                 depth_attachment_info.imageView = get_image_view(graph, depth_image);
@@ -1471,8 +1423,8 @@ void Engine::run()
                 VkRenderingInfo rendering_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_INFO };
                 rendering_info.renderArea = VkRect2D{ VkOffset2D{ 0, 0 }, swapchain.extent };
                 rendering_info.layerCount = 1;
-                rendering_info.colorAttachmentCount = static_cast<uint32_t>(rendering_attachment_infos.size());
-                rendering_info.pColorAttachments = rendering_attachment_infos.data();
+                rendering_info.colorAttachmentCount = 1;
+                rendering_info.pColorAttachments = &rendering_attachment_info;
                 rendering_info.pDepthAttachment = &depth_attachment_info;
 
                 vkCmdBeginRendering(cmd, &rendering_info);
@@ -1494,7 +1446,7 @@ void Engine::run()
                 scissor.extent.height = swapchain.extent.height;
                 vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gbuffer_pipeline);
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_pipeline);
 
                 struct PushData
                 {
@@ -1527,35 +1479,38 @@ void Engine::run()
         );
 
         graph.add_pass(
-            Pass("Debug gbuffers")
-                .read_image(gbuffer_color, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
-                .read_image(gbuffer_normal, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
-                .read_image(gbuffer_mr, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
-                .read_image(gbuffer_debug, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+            Pass("Lighting")
+                .read_image(vbuffer, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                 .write_image(draw_image, AccessType::ComputeShaderWrite),
             [&]()
             {
                 struct PushData
                 {
-                    glm::uvec2 extent;
+                    glm::mat4 view_proj;
+                    VkDeviceAddress vertex_buffer;
+                    VkDeviceAddress object_buffer;
+                    VkDeviceAddress meshlet_buffer;
+                    VkDeviceAddress meshlet_indices_buffer;
+                    glm::vec3 camera_pos;
+                    uint32_t visbuffer_id;
+                    glm::vec2 screen_extent;
                     uint32_t debug_id;
-                    uint32_t color_id;
-                    uint32_t normal_id;
-                    uint32_t metal_roughness_id;
-                    uint32_t draw_id;
-                    uint32_t debug_tex_id;
+                    uint32_t output_id;
                 };
 
                 PushData data{};
-                data.extent = glm::uvec2(swapchain.extent.width, swapchain.extent.height);
-                data.debug_id = GBUFFER_DEBUG_ID;
-                data.color_id = get_image_id(graph, gbuffer_color);
-                data.normal_id = get_image_id(graph, gbuffer_normal);
-                data.metal_roughness_id = get_image_id(graph, gbuffer_mr);
-                data.draw_id = get_image_id(graph, draw_image);
-                data.debug_tex_id = get_image_id(graph, gbuffer_debug);
+                data.view_proj = frame_context.view_proj;
+                data.vertex_buffer = vertex_buffer.address;
+                data.object_buffer = object_buffer.address;
+                data.meshlet_buffer = meshlet_buffer.address;
+                data.meshlet_indices_buffer = meshlet_indices_buffer.address;
+                data.camera_pos = camera.position;
+                data.visbuffer_id = get_image_id(graph, vbuffer);
+                data.screen_extent = glm::vec2(swapchain.extent.width, swapchain.extent.height);
+                data.debug_id = DEBUG_ID;
+                data.output_id = get_image_id(graph, draw_image);
 
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, debug_pipeline);
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, lighting_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                 vkCmdDispatch(cmd, get_group_count(swapchain.extent.width, 8), get_group_count(swapchain.extent.height, 8), 1);
             }
