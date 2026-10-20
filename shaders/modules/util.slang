@@ -54,18 +54,18 @@ public uint hash(uint a)
     return a;
 }
 
-public float3 tangent_to_world_space(float3 sample, float3 N)
-{
-    float3 up = abs(N.z) < 0.999 ? float3(0.0, 0.0, 1.0) : float3(1.0, 0.0, 0.0);
-    float3 T = normalize(cross(up, N));
-    float3 B = cross(N, T);
-
-    return normalize(T * sample.x + B * sample.y + N * sample.z);
-}
-
-// mikktspace, TBN not normalized
 public float3 tangent_to_world_space(float3 sample, float4 T, float3 N)
 {
+    N = normalize(N);
+    T.xyz = normalize(T.xyz);
+    float3 B = cross(N, T.xyz) * T.w;
+
+    return normalize(T.xyz * sample.x + B * sample.y + N * sample.z);
+}
+
+public float3 tangent_to_world_space_mikktspace(float3 sample, float4 T, float3 N)
+{
+    // Use interpolated T and N directly, no normalization
     float3 B = cross(N, T.xyz) * T.w;
 
     return normalize(T.xyz * sample.x + B * sample.y + N * sample.z);

@@ -160,7 +160,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
     {
         normal = get_nonuniform_sampled_image<Texture2D>(m.normal_id).SampleGrad(samp, uv, uv_ddx, uv_ddy).xyz;
         normal = normal * 2.0 - 1.0;
-        N = tangent_to_world_space(normal, T, N);
+        N = tangent_to_world_space_mikktspace(normal, T, N);
     }
     else
     {

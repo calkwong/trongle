@@ -806,16 +806,20 @@ bool AssetLoader::load_gltf(
 
             using Position = std::array<uint16_t, 3>;
             std::vector<Position> positions{};
+            std::vector<glm::vec3> raw_positions{};
 
             if (auto it = p.findAttribute("POSITION"); it != p.attributes.end())
             {
                 auto& position_accessor = asset.accessors[it->accessorIndex];
                 positions.resize(position_accessor.count);
+                raw_positions.resize(position_accessor.count);
                 fastgltf::iterateAccessorWithIndex<glm::vec3>(
                     asset,
                     position_accessor,
                     [&](glm::vec3 pos, size_t index)
                     {
+                        raw_positions[index] = pos;
+
                         uint16_t px = meshopt_quantizeHalf(pos.x);
                         uint16_t py = meshopt_quantizeHalf(pos.y);
                         uint16_t pz = meshopt_quantizeHalf(pos.z);
@@ -826,15 +830,19 @@ bool AssetLoader::load_gltf(
             }
 
             std::vector<uint32_t> normals{};
+            std::vector<glm::vec3> raw_normals{};
             if (auto it = p.findAttribute("NORMAL"); it != p.attributes.end())
             {
                 auto& normals_accessor = asset.accessors[it->accessorIndex];
                 normals.resize(normals_accessor.count);
+                raw_normals.resize(normals_accessor.count);
                 fastgltf::iterateAccessorWithIndex<glm::vec3>(
                     asset,
                     normals_accessor,
                     [&](glm::vec3 n, size_t index)
                     {
+                        raw_normals[index] = n;
+
                         uint32_t normal =
                             (meshopt_quantizeSnorm(n.x, 10) + 511) << 20
                             | (meshopt_quantizeSnorm(n.y, 10) + 511) << 10
@@ -847,15 +855,19 @@ bool AssetLoader::load_gltf(
 
             using UV = std::array<uint16_t, 2>;
             std::vector<UV> uvs{};
+            std::vector<glm::vec2> raw_uvs{};
             if (auto it = p.findAttribute("TEXCOORD_0"); it != p.attributes.end())
             {
                 auto& uv_accessor = asset.accessors[it->accessorIndex];
                 uvs.resize(uv_accessor.count);
+                raw_uvs.resize(uv_accessor.count);
                 fastgltf::iterateAccessorWithIndex<glm::vec2>(
                     asset,
                     uv_accessor,
                     [&](glm::vec2 uv, size_t index)
                     {
+                        raw_uvs[index] = uv;
+
                         uint16_t uv_x = meshopt_quantizeHalf(uv.x);
                         uint16_t uv_y = meshopt_quantizeHalf(uv.y);
 
@@ -865,6 +877,7 @@ bool AssetLoader::load_gltf(
             }
             else
             {
+                raw_uvs.resize(positions.size());
                 uvs.resize(positions.size());
             }
 
@@ -878,12 +891,18 @@ bool AssetLoader::load_gltf(
                 return glm::vec2(u, v);
             };
 
-            // bool generate_mikkt_tangents = false;
-            std::vector<uint16_t> tangents{};
+            std::vector<Vertex> vertices(positions.size());
+            for (size_t i = 0; i < positions.size(); ++i)
+            {
+                auto& v = vertices[i];
+                // Tangent and normal are handled during tangent generation
+                v = Vertex{ positions[i][0], positions[i][1], positions[i][2], 0, 0, uvs[i][0], uvs[i][1] };
+            }
+
             if (auto it = p.findAttribute("TANGENT"); it != p.attributes.end())
             {
                 auto& tangent_accessor = asset.accessors[it->accessorIndex];
-                tangents.resize(tangent_accessor.count);
+
                 fastgltf::iterateAccessorWithIndex<glm::vec4>(
                     asset,
                     tangent_accessor,
@@ -893,34 +912,68 @@ bool AssetLoader::load_gltf(
 
                         uint16_t t = (meshopt_quantizeSnorm(t_encoded.x, 8) + 127) << 8 | (meshopt_quantizeSnorm(t_encoded.y, 8) + 127);
 
-                        tangents[index] = t;
-                        normals[index] |= (tangent.w >= 0 ? 1 : 0) << 30;
+                        vertices[index].tangent = t;
+                        vertices[index].normal = normals[index] |= (tangent.w >= 0 ? 1 : 0) << 30;
                     }
                 );
             }
             else
             {
-                fmt::println("Implement tangents");
-                assert(0 && "IMPLEMENT TANGENTS");
-                tangents.resize(positions.size());
-                // generate_mikkt_tangents = true;
-                // tangents.resize(positions.size());
+                std::vector<uint16_t> tangents(indices.size());
+                std::vector<glm::vec4> raw_tangents(indices.size());
+
+                meshopt_generateTangents(
+                    &raw_tangents[0].x,
+                    indices.data(),
+                    indices.size(),
+                    &raw_positions[0].x,
+                    raw_positions.size(),
+                    sizeof(glm::vec3),
+                    &raw_normals[0].x,
+                    sizeof(glm::vec3),
+                    &raw_uvs[0].x,
+                    sizeof(glm::vec2),
+                    0
+                    // meshopt_TangentCompatible
+                );
+
+                // https://github.com/zeux/meshoptimizer/blob/f0a684f11ead064e176775c9b796f82a55910e92/demo/main.cpp#L1622
+                // seed each vertex with one of its corner tangents; the loop below fixes any mismatches
+                for (size_t i = 0; i < indices.size(); ++i)
+                {
+                    const auto& tangent = raw_tangents[i];
+                    glm::vec2 t_encoded = encode_oct(glm::vec3(tangent));
+
+                    uint16_t t = (meshopt_quantizeSnorm(t_encoded.x, 8) + 127) << 8 | (meshopt_quantizeSnorm(t_encoded.y, 8) + 127);
+
+                    tangents[i] = t;
+
+                    vertices[indices[i]].tangent = tangents[i];
+                    vertices[indices[i]].normal = normals[indices[i]] |= (tangent.w >= 0 ? 1 : 0) << 30;
+                }
+
+                std::vector<unsigned int> splits(vertices.size(), ~0u);
+                for (size_t i = 0; i < indices.size(); ++i)
+                {
+                    // walk the chain of split copies looking for a vertex whose tangent matches
+                    unsigned int v = indices[i];
+                    while (v != ~0u && vertices[v].tangent != tangents[i])
+                        v = splits[v];
+
+                    // no match in chain: append a new split copy with the target tangent and chain it
+                    if (v == ~0u)
+                    {
+                        v = unsigned(vertices.size());
+                        vertices.push_back(vertices[indices[i]]);
+                        vertices[v].tangent = tangents[i];
+                        vertices[v].normal = normals[indices[i]] |= (raw_tangents[i].w >= 0 ? 1 : 0) << 30;
+                        splits.push_back(splits[indices[i]]);
+                        splits[indices[i]] = v;
+                    }
+
+                    indices[i] = v;
+                }
             }
-
-            assert(positions.size() == normals.size() && positions.size() == tangents.size() && positions.size() == uvs.size());
-
-            std::vector<Vertex> vertices{};
-            for (size_t idx = 0; idx < positions.size(); ++idx)
-            {
-                vertices.emplace_back(Vertex{ positions[idx][0], positions[idx][1], positions[idx][2], tangents[idx], normals[idx], uvs[idx][0], uvs[idx][1] });
-            }
-
-            // if (generate_mikkt_tangents)
-            // {
-            //     // fmt::println("generating tangents manually");
-            //     MikkMesh mikk_mesh{ &vertices, &indices };
-            //     mikk_calculate_tangents(mikk_mesh);
-            // }
 
             GltfPrimitive mesh_data{};
             if (p.materialIndex.has_value())
@@ -938,6 +991,7 @@ bool AssetLoader::load_gltf(
                 assert(0);
             }
 
+            // TODO: explore if optimizing uncompressed Vertex data is worth it as there's lots of back and forth decompressing at the moment
             optimize_mesh(vertices, indices, mesh_data, m_vertices, m_indices, m_meshlets, meshlet_indices);
             new_mesh.mesh.push_back(mesh_data);
         }
