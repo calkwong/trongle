@@ -180,7 +180,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
     float roughness = perceptual_roughness * perceptual_roughness;
 
     // TODO: implement on CPU side
-    float3 L = normalize(float3(0.5, 0.5, 0));
+    float3 L = normalize(float3(0, 1, 0));
     float3 H = normalize(L + V);
     float3 light_color = float3(5);
 
@@ -189,6 +189,9 @@ void main(uint3 global_id: SV_DispatchThreadID)
 
     // TODO: indirect lighting
     out_color.xyz += albedo.xyz * 0.1;
+
+    // TODO: gradient noise from http://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare
+    out_color.xyz = tonemap(out_color.xyz);
 
     switch (pc.debug_id)
     {

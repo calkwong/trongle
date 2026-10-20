@@ -70,3 +70,11 @@ public float3 tangent_to_world_space(float3 sample, float4 T, float3 N)
 
     return normalize(T.xyz * sample.x + B * sample.y + N * sample.z);
 }
+
+// Optimized filmic operator by Jim Hejl and Richard Burgess-Dawson
+// http://filmicworlds.com/blog/filmic-tonemapping-operators/
+public float3 tonemap(float3 color)
+{
+    float3 x = max(0, color - 0.004);
+    return (x * (6.2 * x + .5)) / (x * (6.2 * x + 1.7) + 0.06);
+}
