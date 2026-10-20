@@ -311,7 +311,7 @@ std::vector<Image> load_images(
                 allocator,
                 static_cast<size_t>(buffer_offset * 1.5),
                 VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
-                VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+                VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
             );
         }
 

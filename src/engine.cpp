@@ -46,9 +46,9 @@
 #define MAX_TIMESTAMP_QUERIES 22
 #define MAX_MESH_PIPELINE_QUERIES 2
 
-const char* ASSET_NAME = "Sponza/Sponza.gltf";
+// const char* ASSET_NAME = "Sponza/Sponza.gltf";
 // const char* ASSET_NAME = "chinesedragon.gltf";
-// const char* ASSET_NAME = "de_dust2_d/de_dust2_d.gltf";
+const char* ASSET_NAME = "de_dust2/de_dust2.gltf";
 // const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
 int DEBUG_ID = 0; // albedo, triangles, meshlets, normal
 

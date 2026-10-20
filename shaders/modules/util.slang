@@ -78,3 +78,23 @@ public float3 tonemap(float3 color)
     float3 x = max(0, color - 0.004);
     return (x * (6.2 * x + .5)) / (x * (6.2 * x + 1.7) + 0.06);
 }
+
+// https://github.com/ValveResourceFormat/ValveResourceFormat/blob/86aae0564839303d53aa0b079e92103fe5ac5703/Renderer/Shaders/common/utils.slang#L225C1-L229C2
+float3 hemi_oct_to_float32x3(float2 e)
+{
+    float3 v = float3(e.xy, 1.0 - abs(e.x) - abs(e.y));
+    return normalize(v);
+}
+
+// https://github.com/ValveResourceFormat/ValveResourceFormat/blob/86aae0564839303d53aa0b079e92103fe5ac5703/Renderer/Shaders/common/utils.slang#L260
+// Unpack HemiOct normal map
+public float3 decode_hemi_octahedron_normal(float2 v_hemi_oct)
+{
+    // Reconstruct the tangent vector from the map
+    float2 temp = float2(v_hemi_oct.x + v_hemi_oct.y - 1.003922, v_hemi_oct.x - v_hemi_oct.y);
+    float3 tangent_normal = hemi_oct_to_float32x3(temp);
+
+    // This is free, it gets compiled into the TS->WS matrix mul
+    tangent_normal.y = -tangent_normal.y;
+    return tangent_normal;
+}
