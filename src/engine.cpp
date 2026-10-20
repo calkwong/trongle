@@ -46,9 +46,9 @@
 #define MAX_TIMESTAMP_QUERIES 22
 #define MAX_MESH_PIPELINE_QUERIES 2
 
-// const char* ASSET_NAME = "Sponza/Sponza.gltf";
+const char* ASSET_NAME = "Sponza/Sponza.gltf";
 // const char* ASSET_NAME = "chinesedragon.gltf";
-const char* ASSET_NAME = "de_dust2_d/de_dust2_d.gltf";
+// const char* ASSET_NAME = "de_dust2_d/de_dust2_d.gltf";
 // const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
 int DEBUG_ID = 0; // albedo, triangles, meshlets, normal
 
@@ -874,7 +874,7 @@ void Engine::run()
         ImGui::Text("Triangles late:    %u", static_cast<unsigned int>(triangles_late));
         // ImGui::Text("Triangles:   %.1fM", static_cast<double>(triangles) * 1e-6);
         ImGui::Checkbox("Freeze camera", &freeze_matrices);
-        ImGui::SliderInt("Debug", &DEBUG_ID, 0, 2);
+        ImGui::SliderInt("Debug", &DEBUG_ID, 0, 9);
 
         ImGui::End();
         ImGui::Render();

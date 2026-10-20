@@ -2,6 +2,7 @@ import types;
 import bindings;
 import util;
 import barycentrics;
+import pbr;
 
 struct PushConstants
 {
@@ -20,6 +21,20 @@ struct PushConstants
 
 [[vk::push_constant]]
 PushConstants pc;
+
+enum Debug : uint
+{
+    Default,
+    Albedo,
+    Normal, // Shading normal (or geometric normal if no normal mapping)
+    Tangent,
+    TangentSign,
+    Metallic,
+    Roughness,
+    Uv,
+    Triangles,
+    Meshlets,
+};
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
@@ -109,7 +124,6 @@ void main(uint3 global_id: SV_DispatchThreadID)
 
     float3 V = normalize(pc.camera_pos - world_pos);
 
-    // alternative: store triangle face bit in visibility buffer
     float3 e1 = wp1 - wp0;
     float3 e2 = wp2 - wp0;
     float3 gN = cross(e1, e2);
@@ -123,37 +137,108 @@ void main(uint3 global_id: SV_DispatchThreadID)
     N = normalize(N);
     N = is_back_face ? -N : N;
 
+    float4 t0 = float4(rotate_quat(tp0.xyz, obj.orientation), tp0.w);
+    float4 t1 = float4(rotate_quat(tp1.xyz, obj.orientation), tp1.w);
+    float4 t2 = float4(rotate_quat(tp2.xyz, obj.orientation), tp2.w);
+
+    float4 T = interpolate(bary, t0, t1, t2); // mikktspace
+    // T.w is naturally flipped during tangent generation so mikktspace is consistent with glTF handedness
+    T.w = is_back_face ? -T.w : T.w;
+
     SamplerState samp = get_sampler<SamplerState>(LINEAR_SAMPLER);
 
     MaterialData m = pc.material_buffer[obj.material_id];
 
+    float4 albedo = m.base_color_factor;
+    if (m.diffuse_id != INVALID_ID)
+    {
+        albedo *= get_nonuniform_sampled_image<Texture2D>(m.diffuse_id).SampleGrad(samp, uv, uv_ddx, uv_ddy);
+    }
+
+    float3 normal;
+    if (m.normal_id != INVALID_ID)
+    {
+        normal = get_nonuniform_sampled_image<Texture2D>(m.normal_id).SampleGrad(samp, uv, uv_ddx, uv_ddy).xyz;
+        normal = normal * 2.0 - 1.0;
+        N = tangent_to_world_space(normal, T, N);
+    }
+    else
+    {
+        N = normalize(N);
+    }
+
+    float metallic = m.metallic_factor;
+    float perceptual_roughness = m.roughness_factor;
+    if (m.metal_roughness_id != INVALID_ID)
+    {
+        float2 metal_roughness = get_nonuniform_sampled_image<Texture2D>(m.metal_roughness_id).SampleGrad(samp, uv, uv_ddx, uv_ddy).bg;
+        metallic *= metal_roughness.x;
+        perceptual_roughness *= metal_roughness.y;
+    }
+
+    perceptual_roughness = max(perceptual_roughness, 0.045);
+    float roughness = perceptual_roughness * perceptual_roughness;
+
+    // TODO: implement on CPU side
+    float3 L = normalize(float3(0.5, 0.5, 0));
+    float3 H = normalize(L + V);
+    float3 light_color = float3(5);
+
+    BRDFData brdf_data = prepare_brdf_data(N, L, V, albedo.xyz, roughness, metallic);
+    out_color.xyz = eval_brdf(brdf_data, albedo.xyz, roughness, metallic) * light_color * brdf_data.NoL;
+
+    // TODO: indirect lighting
+    out_color.xyz += albedo.xyz * 0.1;
+
     switch (pc.debug_id)
     {
-    case 0:
+    case Debug::Albedo:
     {
-        float4 albedo = m.base_color_factor;
-        if (m.diffuse_id != INVALID_ID)
-        {
-            albedo *= get_sampled_image<Texture2D>(m.diffuse_id).SampleGrad(samp, uv, uv_ddx, uv_ddy);
-        }
         out_color = albedo;
         break;
     }
-    case 1: // TRIANGLES
+    case Debug::Normal:
+    {
+        out_color = float4(float3(N) * 0.5 + 0.5, 1);
+        break;
+    }
+    case Debug::Tangent:
+    {
+        T.xyz = T.xyz * 0.5 + 0.5;
+        out_color = float4(T.xyz, 1.0);
+        break;
+    }
+    case Debug::TangentSign:
+    {
+        float T_sign = T.w > 0.0 ? 1.0 : 0.0;
+        out_color = float4(float3(T_sign), 1.0);
+        break;
+    }
+    case Debug::Metallic:
+    {
+        out_color = float4(float3(metallic), 1.0);
+        break;
+    }
+    case Debug::Roughness:
+    {
+        out_color = float4(float3(perceptual_roughness), 1.0);
+        break;
+    }
+    case Debug::Uv:
+    {
+        out_color = float4(uv, 0.0, 1.0);
+        break;
+    }
+    case Debug::Triangles:
     {
         uint mhash = hash(triangle_id);
         out_color.xyz = float3(float(mhash & 255), float((mhash >> 8) & 255), float((mhash >> 16) & 255)) / 255.0;
         break;
     }
-    case 2: // MESHLETS
+    case Debug::Meshlets:
     {
         uint mhash = hash(meshlet_id);
         out_color.xyz = float3(float(mhash & 255), float((mhash >> 8) & 255), float((mhash >> 16) & 255)) / 255.0;
-        break;
-    }
-    case 3: // GEOMETRIC NORMAL
-    {
-        out_color = float4(float3(N) * 0.5 + 0.5, 1);
         break;
     }
     default:
