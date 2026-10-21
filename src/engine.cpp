@@ -45,7 +45,7 @@
 #include <string>
 #include <random>
 
-#define MAX_TIMESTAMP_QUERIES 22
+#define MAX_TIMESTAMP_QUERIES 20
 #define MAX_MESH_PIPELINE_QUERIES 2
 
 const char* ASSET_NAME = "Sponza/Sponza.gltf";
@@ -938,7 +938,6 @@ void Engine::run()
         ImGui::Text("Vbuffer late:       %.3f ms", static_cast<double>(timestamp_results[15] - timestamp_results[14]) * timestamp_period * 1e-6);
         ImGui::Text("Hiz temporal:       %.3f ms", static_cast<double>(timestamp_results[17] - timestamp_results[16]) * timestamp_period * 1e-6);
         ImGui::Text("Zero buffers early: %.3f ms", static_cast<double>(timestamp_results[19] - timestamp_results[18]) * timestamp_period * 1e-6);
-        ImGui::Text("Zero buffers late:  %.3f ms", static_cast<double>(timestamp_results[21] - timestamp_results[20]) * timestamp_period * 1e-6);
 
         ImGui::Text("Triangles early:   %u", static_cast<unsigned int>(triangles_early));
         ImGui::Text("Triangles late:    %u", static_cast<unsigned int>(triangles_late));
@@ -1006,15 +1005,12 @@ void Engine::run()
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
 
-        // TODO: dispatch may not need to be zeroed since its already done in compact dispatch
         graph.add_pass(
             Pass("Zero buffers early")
-                .write_buffer(dispatch_buffer, AccessType::TransferWrite)
                 .write_buffer(prefix_sum_buffer, AccessType::TransferWrite),
             [&]()
             {
                 vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 18);
-                vkCmdFillBuffer(cmd, get_buffer(graph, dispatch_buffer), 0, VK_WHOLE_SIZE, 0);
                 // TODO: refactor
                 vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, VK_WHOLE_SIZE, 0);
                 // vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, sizeof(uint64_t), 0);
@@ -1309,17 +1305,6 @@ void Engine::run()
         );
 
         skip_occlusion = false;
-
-        graph.add_pass(
-            Pass("Zero buffers late")
-                .write_buffer(dispatch_buffer, AccessType::TransferWrite),
-            [&]()
-            {
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 20);
-                vkCmdFillBuffer(cmd, get_buffer(graph, dispatch_buffer), 0, VK_WHOLE_SIZE, 0);
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 21);
-            }
-        );
 
         graph.add_pass(
             Pass("Compute cull mesh late")
