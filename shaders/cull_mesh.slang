@@ -10,7 +10,7 @@ struct PushConstants
     float4x4 prev_view;
     MeshData* mesh_buffer;
     ObjectData* object_buffer;
-    PrefixSum* prefix_sum_buffer;
+    PrefixSums* prefix_sum_buffer;
     uint* late_pass_candidates_buffer;
     float4 planes;
     float2 depth_pyramid_extent;
@@ -116,6 +116,6 @@ void main(uint3 global_id: SV_DispatchThreadID)
         uint meshlet_count = lod.meshlet_count;
         uint meshlet_offset = lod.meshlet_offset;
 
-        prefix_sum_inclusive_append(pc.prefix_sum_buffer, index, meshlet_count, meshlet_offset);
+        prefix_sum_inclusive_append(pc.prefix_sum_buffer, 0, index, meshlet_count, meshlet_offset);
     }
 }

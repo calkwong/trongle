@@ -5,7 +5,7 @@
 
 #include <cstddef>
 #include <functional>
-#include <initializer_list>
+#include <vector>
 
 struct Image
 {
@@ -96,9 +96,9 @@ VkDeviceAddress get_buffer_address(VkDevice device, VkBuffer buffer);
 
 void immediate_submit(VkDevice device, VkQueue queue, VkFence fence, VkCommandPool command_pool, VkCommandBuffer cmd, std::function<void(VkCommandBuffer cmd)>&& func);
 
-VkSampler create_sampler(VkDevice device, VkFilter filter, VkSamplerMipmapMode mipmap, VkSamplerAddressMode address);
+VkSampler create_sampler(VkDevice device, VkFilter filter, VkSamplerMipmapMode mipmap, VkSamplerAddressMode address, bool compare_enable = 0);
 VkSampler create_depth_reduce_sampler(VkDevice device);
 
-void transition_images(VkCommandBuffer cmd, std::initializer_list<VkImage> images, std::initializer_list<VkImage> depth_images);
+void transition_images(VkCommandBuffer cmd, std::vector<VkImage>& images, std::vector<VkImage>& depth_images);
 
 void copy_image(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent2D src_extent, VkExtent2D dst_extent);

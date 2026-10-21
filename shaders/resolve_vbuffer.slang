@@ -3,6 +3,7 @@ import bindings;
 import util;
 import barycentrics;
 import pbr;
+import shadow_mapping;
 
 struct PushConstants
 {
@@ -12,11 +13,14 @@ struct PushConstants
     Meshlet* meshlet_buffer;
     uint32_t* meshlet_indices_buffer;
     MaterialData* material_buffer;
+    GlobalData* global_buffer;
     float3 camera_pos;
     uint visbuffer_id;
     float2 screen_extent;
     uint debug_id;
     uint output_id;
+    float3 light_dir;
+    uint shadowmap_id;
 }
 
 [[vk::push_constant]]
@@ -32,6 +36,7 @@ enum Debug : uint
     Metallic,
     Roughness,
     Uv,
+    Shadow,
     Triangles,
     Meshlets,
 };
@@ -210,13 +215,18 @@ void main(uint3 global_id: SV_DispatchThreadID)
     perceptual_roughness = max(perceptual_roughness, 0.045);
     float roughness = perceptual_roughness * perceptual_roughness;
 
-    // TODO: implement on CPU side
-    float3 L = normalize(float3(0, 1, 0));
+    float3 L = pc.light_dir;
     float3 H = normalize(L + V);
     float3 light_color = float3(5);
 
     BRDFData brdf_data = prepare_brdf_data(N, L, V, albedo.xyz, roughness, metallic);
     out_color.xyz = eval_brdf(brdf_data, albedo.xyz, roughness, metallic) * light_color * brdf_data.NoL;
+
+    if (pc.shadowmap_id != INVALID_ID)
+    {
+        float occluded = calculate_shadow(world_pos, pc.shadowmap_id, pc.global_buffer);
+        out_color.xyz *= occluded;
+    }
 
     // TODO: indirect lighting
     out_color.xyz += albedo.xyz * 0.1;
@@ -261,6 +271,25 @@ void main(uint3 global_id: SV_DispatchThreadID)
     case Debug::Uv:
     {
         out_color = float4(uv, 0.0, 1.0);
+        break;
+    }
+    case Debug::Shadow:
+    {
+        SamplerState nearest_samp = get_sampler<SamplerState>(NEAREST_SAMPLER);
+
+        float2 uv = in_uv;
+
+        if (uv.x < 0.5 && uv.y < 0.5)
+        {
+            uint cascade = 0;
+            cascade = uv.x < 0.25 ? cascade : cascade + 1;
+            cascade = uv.y < 0.25 ? cascade : cascade + 2;
+
+            float2 shadow_uv = uv * 4.0;
+            shadow_uv = fmod(shadow_uv, float2(1.0));
+
+            out_color.xyz = get_nonuniform_sampled_image<Texture2D>(pc.shadowmap_id + cascade).SampleLevel(nearest_samp, shadow_uv, 0.0).rrr;
+        }
         break;
     }
     case Debug::Triangles:

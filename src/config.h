@@ -10,3 +10,12 @@
 
 // Check limit: VkPhysicalDeviceMeshShaderPropertiesEXT -> maxMeshWorkGroupCount
 #define MAX_MESHLETS_DRAW 4194304
+
+// #define MAX_INSTANCES 1000000
+#define MAX_INSTANCES 4000
+
+#define SUN_CASCADE_COUNT 4
+#define SHADOWMAP_EXTENT 2048
+#define SHADOW_DRAW_DISTANCE 48.0f
+
+#define MAX_DEBUG_ID 10

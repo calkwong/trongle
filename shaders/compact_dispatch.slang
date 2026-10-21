@@ -4,8 +4,9 @@ import prefix_sum;
 
 struct PushConstants
 {
-    PrefixSum* prefix_sum_buffer;
+    PrefixSums* prefix_sum_buffer;
     Dispatch* dispatch_buffer;
+    uint prefix_sum_idx;
 };
 
 [[vk::push_constant]]
@@ -16,7 +17,7 @@ PushConstants pc;
 void main()
 {
     // lower 32 bits only
-    uint count = uint(get_prefix_sum_counter(pc.prefix_sum_buffer));
+    uint count = uint(get_prefix_sum_counter(pc.prefix_sum_buffer, pc.prefix_sum_idx));
 
     const uint threads = 256;
 
@@ -28,4 +29,3 @@ void main()
     pc.dispatch_buffer[1].y = 1;
     pc.dispatch_buffer[1].z = 1;
 }
-

@@ -10,7 +10,7 @@ struct PushConstants
     float4x4 prev_view;
     Meshlet* meshlet_buffer;
     ObjectData* object_buffer;
-    PrefixSum* prefix_sum_buffer;
+    PrefixSums* prefix_sum_buffer;
     uint* meshlet_draw_buffer;
     Dispatch* dispatch_buffer;
     uint* late_pass_candidates_buffer;
@@ -42,14 +42,14 @@ void main(uint3 global_id: SV_DispatchThreadID)
     uint index = global_id.x;
 
     // lower 32 bits only
-    uint total = uint(get_prefix_sum_counter(pc.prefix_sum_buffer));
+    uint total = uint(get_prefix_sum_counter(pc.prefix_sum_buffer, 0));
     if (index >= total)
     {
         return;
     }
 
-    uint prefix_sum_idx = prefix_sum_binary_search(pc.prefix_sum_buffer, index);
-    PrefixSumData prefix_sum_data = pc.prefix_sum_buffer.data[prefix_sum_idx];
+    uint prefix_sum_idx = prefix_sum_binary_search(pc.prefix_sum_buffer, 0, index);
+    PrefixSumData prefix_sum_data = pc.prefix_sum_buffer.prefix_sums[0].data[prefix_sum_idx];
     uint meshlet_offset = prefix_sum_data.meshlet_offset;
     uint meshlet_count = prefix_sum_data.meshlet_count;
     uint instance_id = prefix_sum_data.instance_id;

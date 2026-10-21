@@ -1,6 +1,6 @@
+import bindings;
 import types;
 import util;
-import bindings;
 import prefix_sum;
 
 #include "../src/config.h"
@@ -8,24 +8,19 @@ import prefix_sum;
 struct Interp
 {
     float4 position : SV_Position;
-    float3 normal;
-    float4 tangent;
-    float2 uv;
-    nointerpolation uint material_id;
-    nointerpolation uint meshlet_id;
-}
+};
 
 struct PushConstants
 {
-    float4x4 view_proj;
-    Vertex* vertex_buffer;
+    GlobalData* global_buffer;
     ObjectData* object_buffer;
-    MaterialData* material_buffer;
+    Vertex* vertex_buffer;
     Meshlet* meshlet_buffer;
-    uint32_t* meshlet_indices_buffer;
-    PrefixSum* prefix_sum_buffer;
-    uint32_t* meshlet_draw_buffer;
-}
+    PrefixSums* prefix_sum_buffer;
+    uint* meshlet_indices_buffer;
+    uint* meshlet_draw_buffer;
+    uint cascade_index;
+};
 
 [[vk::push_constant]]
 PushConstants pc;
@@ -44,8 +39,8 @@ void mesh_main(
 {
     uint index = pc.meshlet_draw_buffer[wg_id.x];
 
-    uint prefix_sum_idx = prefix_sum_binary_search(pc.prefix_sum_buffer, index);
-    PrefixSumData prefix_sum_data = pc.prefix_sum_buffer.data[prefix_sum_idx];
+    uint prefix_sum_idx = prefix_sum_binary_search(pc.prefix_sum_buffer, pc.cascade_index, index);
+    PrefixSumData prefix_sum_data = pc.prefix_sum_buffer.prefix_sums[pc.cascade_index].data[prefix_sum_idx];
     uint meshlet_offset = prefix_sum_data.meshlet_offset;
     uint meshlet_count = prefix_sum_data.meshlet_count;
     uint instance_id = prefix_sum_data.instance_id;
@@ -73,6 +68,7 @@ void mesh_main(
 
         if (pack_vertex)
         {
+            // Check for odd/even
             vertex_index = (i & 1u) != 0 ? vertex_index >> 16 : vertex_index & (0xFFFF);
         }
 
@@ -80,17 +76,7 @@ void mesh_main(
 
         float3 pos = float3(v.px, v.py, v.pz);
         float4 world_pos = float4(rotate_quat(pos, o.orientation) * o.scale + o.translation, 1.0);
-
-        float3 normal;
-        float4 tangent;
-        unpack_tbn(v.normal, uint(v.tangent), normal, tangent);
-
-        verts[i].position = mul(pc.view_proj, world_pos);
-        verts[i].normal = rotate_quat(normal, o.orientation);
-        verts[i].tangent = float4(rotate_quat(tangent.xyz, o.orientation), tangent.w);
-        verts[i].uv = float2(v.uv_x, v.uv_y);
-        verts[i].material_id = o.material_id;
-        verts[i].meshlet_id = global_meshlet_id;
+        verts[i].position = mul(pc.global_buffer.shadow_matrices[pc.cascade_index], world_pos);
     }
 
     for (uint i = t_index; i < triangle_count; i += WG_SIZE_X)
@@ -105,48 +91,4 @@ void mesh_main(
 
         tris[i] = uint3(idx0, idx1, idx2);
     }
-}
-
-[shader("pixel")]
-void ps_main(
-    Interp in,
-    out float4 out_color: SV_Target0,
-    out float4 out_normal: SV_Target1,
-    out float2 out_mr: SV_Target2,
-    out uint out_debug: SV_Target3
-)
-{
-    MaterialData m = pc.material_buffer[in.material_id];
-
-    SamplerState samp = get_sampler<SamplerState>(LINEAR_SAMPLER);
-
-    float4 albedo = m.base_color_factor;
-    if (m.diffuse_id != INVALID_ID)
-    {
-        Texture2D tex = get_nonuniform_sampled_image<Texture2D>(m.diffuse_id);
-        albedo.xyz *= tex.Sample(samp, in.uv).xyz;
-    }
-
-    float3 N;
-    if (m.normal_id != INVALID_ID)
-    {
-        Texture2D tex = get_nonuniform_sampled_image<Texture2D>(m.normal_id);
-        N = tex.Sample(samp, in.uv).xyz;
-    }
-    else
-    {
-        N = normalize(in.normal);
-    }
-
-    float2 metal_roughness = float2(m.metallic_factor, m.roughness_factor);
-    if (m.metal_roughness_id != INVALID_ID)
-    {
-        Texture2D tex = get_nonuniform_sampled_image<Texture2D>(m.metal_roughness_id);
-        metal_roughness *= tex.Sample(samp, in.uv).bg;
-    }
-
-    out_color = albedo;
-    out_normal = float4(N, 1.0);
-    out_mr = float2(metal_roughness);
-    out_debug = in.meshlet_id;
 }

@@ -11,11 +11,13 @@
     #include <glm/ext/vector_float4.hpp>
     #include <glm/ext/quaternion_float.hpp>
     #include <glm/ext/vector_float3.hpp>
+    #include <glm/ext/matrix_float4x4.hpp>
     #include <cstdint>
 
     #define PUBLIC_ACCESS
     using float3 = glm::vec3;
     using float4 = glm::vec4;
+    using float4x4 = glm::mat4;
 #else // Slang
 
     #define PUBLIC_ACCESS public
@@ -126,9 +128,22 @@ PUBLIC_ACCESS struct PrefixSumData
     uint32_t instance_id;
 };
 
-// TODO: set a limit
 PUBLIC_ACCESS struct PrefixSum
 {
     uint64_t counter;
-    PrefixSumData data[1000000];
+    PrefixSumData data[MAX_INSTANCES];
+};
+
+PUBLIC_ACCESS struct PrefixSums
+{
+    PrefixSum prefix_sums[SUN_CASCADE_COUNT];
+};
+
+PUBLIC_ACCESS struct GlobalData
+{
+    float4x4 shadow_matrices[SUN_CASCADE_COUNT];
+    float4x4 shadow_views[SUN_CASCADE_COUNT];
+
+    // Shadow frustums are fit to a sphere
+    float shadow_radius[SUN_CASCADE_COUNT];
 };

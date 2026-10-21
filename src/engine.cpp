@@ -30,6 +30,7 @@
 #include <glm/trigonometric.hpp>
 #include <glm/ext/vector_uint2.hpp>
 #include <glm/ext/vector_float2.hpp>
+#include <glm/ext/matrix_clip_space.hpp>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
@@ -41,16 +42,17 @@
 #include <array>
 #include <cstring>
 #include <dlfcn.h>
+#include <string>
 #include <random>
 
 #define MAX_TIMESTAMP_QUERIES 22
 #define MAX_MESH_PIPELINE_QUERIES 2
 
-// const char* ASSET_NAME = "Sponza/Sponza.gltf";
+const char* ASSET_NAME = "Sponza/Sponza.gltf";
 // const char* ASSET_NAME = "chinesedragon.gltf";
-const char* ASSET_NAME = "de_dust2/de_dust2.gltf";
+// const char* ASSET_NAME = "de_dust2/de_dust2.gltf";
 // const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
-int DEBUG_ID = 0; // albedo, triangles, meshlets, normal
+int DEBUG_ID = 8;
 
 namespace
 {
@@ -209,6 +211,7 @@ void Engine::init_vulkan()
     features_10.shaderInt16 = true;
     features_10.pipelineStatisticsQuery = true;
     features_10.shaderInt64 = true;
+    features_10.depthClamp = true;
 
     vkb::PhysicalDeviceSelector selector{ vkb_inst };
     auto phys_ret = selector.set_surface(surface)
@@ -401,7 +404,7 @@ void Engine::run()
     graph.allocator = allocator;
     graph.image_manager = &image_manager;
 
-    VkPhysicalDeviceMeshShaderPropertiesEXT mesh_shader_properties{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT};
+    VkPhysicalDeviceMeshShaderPropertiesEXT mesh_shader_properties{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT };
     VkPhysicalDeviceProperties2 properties2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
     properties2.pNext = &mesh_shader_properties;
 
@@ -409,7 +412,7 @@ void Engine::run()
     assert(properties2.properties.limits.timestampComputeAndGraphics);
     auto max_push_constant_size = properties2.properties.limits.maxPushConstantsSize;
     auto timestamp_period = properties2.properties.limits.timestampPeriod;
-    assert(mesh_shader_properties.maxMeshWorkGroupCount == MAX_MESHLETS_DRAW);
+    assert(mesh_shader_properties.maxMeshWorkGroupCount[0] == MAX_MESHLETS_DRAW); // Only checking workgroup x
 
     // Init camera
     Camera camera{};
@@ -492,9 +495,13 @@ void Engine::run()
     VkSampler linear_samp = create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT);
     VkSampler depth_reduce_samp = create_depth_reduce_sampler(device);
     VkSampler nearest_samp = create_sampler(device, VK_FILTER_NEAREST, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+    // TODO: clamp to border? use compareEnable
+    // VkSampler shadow_samp = create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, true);
+    VkSampler shadow_samp = create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
     desc_info.emplace_back(VkDescriptorImageInfo{ .sampler = linear_samp });
     desc_info.emplace_back(VkDescriptorImageInfo{ .sampler = depth_reduce_samp });
     desc_info.emplace_back(VkDescriptorImageInfo{ .sampler = nearest_samp });
+    desc_info.emplace_back(VkDescriptorImageInfo{ .sampler = shadow_samp });
 
     for (auto i = 0; i < desc_info.size(); i++)
     {
@@ -516,18 +523,43 @@ void Engine::run()
     Buffer spd_counter_buffer = create_buffer(device, allocator, sizeof(uint32_t), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT_KHR);
     Buffer late_pass_candidates_buffer = create_buffer(device, allocator, (meshlet_offset + get_group_count(meshlet_bits, 32)) * sizeof(uint32_t), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT_KHR);
 
+    std::array<Image, SUN_CASCADE_COUNT> shadowmap_images{};
+    std::array<uint32_t, SUN_CASCADE_COUNT> shadowmap_descriptor_handles{};
+    for (auto i = 0; i < SUN_CASCADE_COUNT; i++)
+    {
+        shadowmap_images[i] = create_image(
+            device,
+            allocator,
+            VkExtent3D{ SHADOWMAP_EXTENT, SHADOWMAP_EXTENT, 1 },
+            VK_FORMAT_D32_SFLOAT,
+            VK_IMAGE_USAGE_2_DEPTH_STENCIL_ATTACHMENT_BIT_KHR | VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR | VK_IMAGE_USAGE_2_STORAGE_BIT_KHR,
+            VK_IMAGE_ASPECT_DEPTH_BIT
+        );
+
+        shadowmap_descriptor_handles[i] = image_manager.register_image(device, shadowmap_images[i].view, VK_IMAGE_LAYOUT_GENERAL);
+    }
+
     VkExtent3D depth_pyramid_extent{};
     depth_pyramid_extent.width = nearest_pow2(swapchain.extent.width);
     depth_pyramid_extent.height = nearest_pow2(swapchain.extent.height);
     depth_pyramid_extent.depth = 1;
     Image depth_pyramid_image = create_image(device, allocator, depth_pyramid_extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 0, true);
 
-    immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
-                     {
-                         vkCmdFillBuffer(cmd, spd_counter_buffer.buffer, 0, VK_WHOLE_SIZE, 0);
-                         vkCmdFillBuffer(cmd, late_pass_candidates_buffer.buffer, 0, VK_WHOLE_SIZE, 0);
-                         stage_barrier(cmd, depth_pyramid_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, 0, 0, 0);
-                     });
+    {
+        std::vector<VkImage> color_images = {depth_pyramid_image.image};
+        std::vector<VkImage> depth_images{};
+        for (const auto& image : shadowmap_images)
+        {
+            depth_images.push_back(image.image);
+        }
+
+        immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
+                         {
+                             vkCmdFillBuffer(cmd, spd_counter_buffer.buffer, 0, VK_WHOLE_SIZE, 0);
+                             vkCmdFillBuffer(cmd, late_pass_candidates_buffer.buffer, 0, VK_WHOLE_SIZE, 0);
+                             transition_images(cmd, color_images, depth_images);
+                         });
+    }
 
     const auto depth_pyramid_descriptor_handle = image_manager.register_image(device, depth_pyramid_image.view, VK_IMAGE_LAYOUT_GENERAL);
 
@@ -634,6 +666,10 @@ void Engine::run()
     VkPipeline hiz_pipeline{};
     VkPipeline vbuffer_pipeline{};
     VkPipeline lighting_pipeline{};
+    VkPipeline shadow_matrices_pipeline{};
+    VkPipeline cull_shadow_pipeline{};
+    VkPipeline cull_shadow_meshlet_pipeline{};
+    VkPipeline depth_pipeline{};
 
     std::vector<VkPipeline> pipelines{};
 
@@ -645,6 +681,10 @@ void Engine::run()
         auto hiz_program = load_shader_program("hiz_spd.slang", device);
         auto vbuffer_program = load_shader_program("vbuffer.slang", device);
         auto lighting_program = load_shader_program("resolve_vbuffer.slang", device);
+        auto shadow_matrices_program = load_shader_program("shadow_matrices.slang", device);
+        auto cull_shadow_program = load_shader_program("cull_shadow.slang", device);
+        auto cull_shadow_meshlet_program = load_shader_program("cull_shadow_meshlet.slang", device);
+        auto depth_program = load_shader_program("depth.slang", device);
 
         pipelines.clear();
 
@@ -672,11 +712,29 @@ void Engine::run()
                 { VK_FORMAT_R32G32_UINT }
             )
         );
+
+        replace_pipeline(
+            depth_pipeline,
+            create_graphics_pipeline(
+                device,
+                &depth_program,
+                { VK_SHADER_STAGE_MESH_BIT_EXT },
+                nullptr,
+                &pipeline_layout,
+                {},
+                {},
+                GraphicsPipelineConfig{ .cull_mode = VK_CULL_MODE_FRONT_BIT, .depth_clamp = VK_TRUE }
+            )
+        );
+
         replace_pipeline(cull_mesh_pipeline, create_compute_pipeline(device, &cull_program, nullptr, &pipeline_layout));
         replace_pipeline(cull_meshlet_pipeline, create_compute_pipeline(device, &cull_meshlets_program, nullptr, &pipeline_layout));
         replace_pipeline(compact_dispatch_pipeline, create_compute_pipeline(device, &compact_dispatch_program, nullptr, &pipeline_layout));
         replace_pipeline(hiz_pipeline, create_compute_pipeline(device, &hiz_program, nullptr, &pipeline_layout));
         replace_pipeline(lighting_pipeline, create_compute_pipeline(device, &lighting_program, nullptr, &pipeline_layout));
+        replace_pipeline(shadow_matrices_pipeline, create_compute_pipeline(device, &shadow_matrices_program, nullptr, &pipeline_layout));
+        replace_pipeline(cull_shadow_pipeline, create_compute_pipeline(device, &cull_shadow_program, nullptr, &pipeline_layout));
+        replace_pipeline(cull_shadow_meshlet_pipeline, create_compute_pipeline(device, &cull_shadow_meshlet_program, nullptr, &pipeline_layout));
     };
 
     build_pipelines();
@@ -685,6 +743,9 @@ void Engine::run()
     std::array<uint64_t, MAX_MESH_PIPELINE_QUERIES> mesh_pipeline_results{};
 
     bool skip_occlusion = true;
+    bool b_shadows = true;
+    float azimuth = 0.0f;
+    float elevation = 80.0f;
 
     auto last_frame = SDL_GetTicks();
     bool quit{ false };
@@ -800,6 +861,15 @@ void Engine::run()
             frame_context.debug_view_proj = frame_context.debug_proj * frame_context.debug_view;
         }
 
+        float az = glm::radians(azimuth);
+        float el = glm::radians(elevation);
+        float3 sunlight_dir{};
+        float3 sunlight_color{};
+        sunlight_dir.x = glm::cos(el) * glm::sin(az);
+        sunlight_dir.y = glm::sin(el);
+        sunlight_dir.z = -glm::cos(el) * glm::cos(az);
+        sunlight_dir = glm::normalize(glm::vec3(sunlight_dir));
+
         // Wait on fence
         auto frame = get_current_frame();
         VK_CHECK(vkWaitForFences(device, 1, &frame.fence, true, WAIT_TIME));
@@ -874,7 +944,10 @@ void Engine::run()
         ImGui::Text("Triangles late:    %u", static_cast<unsigned int>(triangles_late));
         // ImGui::Text("Triangles:   %.1fM", static_cast<double>(triangles) * 1e-6);
         ImGui::Checkbox("Freeze camera", &freeze_matrices);
-        ImGui::SliderInt("Debug", &DEBUG_ID, 0, 9);
+        ImGui::Checkbox("Shadows", &b_shadows);
+        ImGui::SliderInt("Debug", &DEBUG_ID, 0, MAX_DEBUG_ID);
+        ImGui::SliderFloat("Azimuth", &azimuth, 0.0, 360.0);
+        ImGui::SliderFloat("Elevation", &elevation, 0.0, 90.0);
 
         ImGui::End();
         ImGui::Render();
@@ -903,9 +976,16 @@ void Engine::run()
                 VK_IMAGE_ASPECT_COLOR_BIT }
         );
 
+        std::array<uint32_t, SUN_CASCADE_COUNT> shadowmaps{};
+        for (uint32_t i = 0; i < SUN_CASCADE_COUNT; i++)
+        {
+            shadowmaps[i] = graph.import_image(shadowmap_images[i], shadowmap_descriptor_handles[i]);
+        }
+
         auto dispatch_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(Dispatch) * 2, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
-        auto prefix_sum_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(PrefixSum), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
+        auto prefix_sum_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(PrefixSums), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
         auto meshlet_draw_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(uint32_t) * MAX_MESHLETS_DRAW, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
+        auto global_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(GlobalData) * FRAMES_IN_FLIGHT, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
 
         auto depth_pyramid = graph.import_image(depth_pyramid_image, depth_pyramid_descriptor_handle);
         auto spd_counter = graph.import_buffer(spd_counter_buffer, -1);
@@ -926,6 +1006,7 @@ void Engine::run()
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
 
+        // TODO: dispatch may not need to be zeroed since its already done in compact dispatch
         graph.add_pass(
             Pass("Zero buffers early")
                 .write_buffer(dispatch_buffer, AccessType::TransferWrite)
@@ -934,7 +1015,9 @@ void Engine::run()
             {
                 vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 18);
                 vkCmdFillBuffer(cmd, get_buffer(graph, dispatch_buffer), 0, VK_WHOLE_SIZE, 0);
-                vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, sizeof(uint64_t), 0);
+                // TODO: refactor
+                vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, VK_WHOLE_SIZE, 0);
+                // vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, sizeof(uint64_t), 0);
                 vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 19);
             }
         );
@@ -1016,11 +1099,13 @@ void Engine::run()
                 {
                     VkDeviceAddress prefix_sum_buffer;
                     VkDeviceAddress dispatch_buffer;
+                    uint32_t prefix_sum_idx;
                 };
 
                 PushData data{};
                 data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
                 data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
+                data.prefix_sum_idx = 0;
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compact_dispatch_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
@@ -1313,11 +1398,13 @@ void Engine::run()
                 {
                     VkDeviceAddress prefix_sum_buffer;
                     VkDeviceAddress dispatch_buffer;
+                    uint32_t prefix_sum_idx;
                 };
 
                 PushData data{};
                 data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
                 data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
+                data.prefix_sum_idx = 0;
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compact_dispatch_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
@@ -1477,9 +1564,221 @@ void Engine::run()
             }
         );
 
+        if (b_shadows)
+        {
+            graph.add_pass(
+                Pass("Zero buffers for shadow pass")
+                    .write_buffer(prefix_sum_buffer, AccessType::TransferWrite),
+                [&]()
+                {
+                    vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, sizeof(uint64_t), 0);
+                }
+            );
+
+            graph.add_pass(
+                Pass("Generate shadow matrices")
+                    .write_buffer(global_buffer, AccessType::ComputeShaderWrite),
+                [&]()
+                {
+                    struct PushData
+                    {
+                        VkDeviceAddress global_buffer;
+                        float4x4 inverse_view_proj;
+                        float3 sunlight_dir; // normalized
+                        float shadow_near;
+                        float shadow_far;
+                        float lambda;
+                    };
+                    PushData data{};
+                    data.global_buffer = get_buffer_address(graph, global_buffer, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
+                    auto proj = glm::perspective(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / static_cast<float>(swapchain.extent.height), SHADOW_DRAW_DISTANCE, camera.near);
+                    data.inverse_view_proj = glm::inverse(proj * frame_context.view);
+                    data.sunlight_dir = sunlight_dir;
+                    data.shadow_near = camera.near;
+                    data.shadow_far = SHADOW_DRAW_DISTANCE;
+                    data.lambda = 0.95;
+
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, shadow_matrices_pipeline);
+                    vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                    vkCmdDispatch(cmd, 1, 1, 1);
+                }
+            );
+
+            graph.add_pass(
+                Pass("Cull shadow instances")
+                    .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
+                    .read_buffer(global_buffer, AccessType::ComputeShaderReadOther)
+                    .write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite),
+                [&]()
+                {
+                    struct PushData
+                    {
+                        VkDeviceAddress global_buffer;
+                        VkDeviceAddress object_buffer;
+                        VkDeviceAddress mesh_buffer;
+                        VkDeviceAddress prefix_sum_buffer;
+                        uint32_t count;
+                        uint32_t shadowmap_height;
+                        float lod_distance_factor;
+                    };
+
+                    PushData data{};
+                    data.global_buffer = get_buffer_address(graph, global_buffer, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
+                    data.object_buffer = object_buffer.address;
+                    data.mesh_buffer = mesh_buffer.address;
+                    data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
+                    data.count = static_cast<uint32_t>(renderables.size());
+                    data.shadowmap_height = SHADOWMAP_EXTENT;
+                    auto p11 = frame_context.proj[1][1];
+                    data.lod_distance_factor = 2.0f / (p11 * swapchain.extent.height);
+
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_shadow_pipeline);
+                    vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                    vkCmdDispatch(cmd, get_group_count(renderables.size(), 256), 1, 1);
+                }
+            );
+
+            for (uint32_t cascade_index = 0; cascade_index < SUN_CASCADE_COUNT; cascade_index++)
+            {
+                graph.add_pass(
+                    Pass("Compact dispatch for cascade " + std::to_string(cascade_index + 1))
+                        .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
+                        .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite),
+                    [&, cascade_index]()
+                    {
+                        struct PushData
+                        {
+                            VkDeviceAddress prefix_sum_buffer;
+                            VkDeviceAddress dispatch_buffer;
+                            uint32_t prefix_sum_idx;
+                        };
+
+                        PushData data{};
+                        data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
+                        data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
+                        data.prefix_sum_idx = cascade_index;
+
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compact_dispatch_pipeline);
+                        vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                        vkCmdDispatch(cmd, 1, 1, 1);
+                    }
+                );
+
+                graph.add_pass(
+                    Pass("Cull shadow meshlets")
+                        .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
+                        .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
+                        .read_buffer(global_buffer, AccessType::ComputeShaderReadOther)
+                        .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite)
+                        .write_buffer(meshlet_draw_buffer, AccessType::ComputeShaderWrite),
+                    [&, cascade_index]()
+                    {
+                        struct PushData
+                        {
+                            VkDeviceAddress global_buffer;
+                            VkDeviceAddress object_buffer;
+                            VkDeviceAddress meshlet_buffer;
+                            VkDeviceAddress prefix_sum_buffer;
+                            VkDeviceAddress dispatch_buffer;
+                            VkDeviceAddress meshlet_draw_buffer;
+                            uint32_t count;
+                            uint32_t shadowmap_height;
+                            uint32_t cascade_index;
+                        };
+
+                        PushData data{};
+                        data.global_buffer = get_buffer_address(graph, global_buffer, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
+                        data.object_buffer = object_buffer.address;
+                        data.meshlet_buffer = meshlet_buffer.address;
+                        data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
+                        data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
+                        data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
+                        data.count = static_cast<uint32_t>(renderables.size());
+                        data.shadowmap_height = SHADOWMAP_EXTENT;
+
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_shadow_meshlet_pipeline);
+                        vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                        vkCmdDispatchIndirect(cmd, get_buffer(graph, dispatch_buffer), 0);
+                    }
+                );
+
+                graph.add_pass(
+                    Pass("Shadowmap " + std::to_string(cascade_index + 1))
+                        .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
+                        .read_buffer(prefix_sum_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
+                        .read_buffer(meshlet_draw_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
+                        .read_buffer(global_buffer, AccessType::ComputeShaderReadOther)
+                        .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
+                        .write_image(shadowmaps[cascade_index], AccessType::DepthStencilAttachmentReadWrite),
+                    [&, cascade_index]()
+                    {
+                        VkRenderingAttachmentInfo depth_attachment_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+                        depth_attachment_info.imageView = get_image_view(graph, shadowmaps[cascade_index]);
+                        depth_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+                        depth_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+                        depth_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+                        VkRenderingInfo rendering_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_INFO };
+                        rendering_info.renderArea = VkRect2D{ VkOffset2D{ 0, 0 }, VkExtent2D{ SHADOWMAP_EXTENT, SHADOWMAP_EXTENT } };
+                        rendering_info.layerCount = 1;
+                        rendering_info.pDepthAttachment = &depth_attachment_info;
+
+                        vkCmdBeginRendering(cmd, &rendering_info);
+
+                        VkViewport viewport{};
+                        viewport.x = 0;
+                        viewport.y = static_cast<float>(SHADOWMAP_EXTENT);
+                        viewport.width = static_cast<float>(SHADOWMAP_EXTENT);
+                        viewport.height = -static_cast<float>(SHADOWMAP_EXTENT);
+                        viewport.minDepth = 0.0f;
+                        viewport.maxDepth = 1.0f;
+                        vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+                        VkRect2D scissor{};
+                        scissor.offset.x = 0;
+                        scissor.offset.y = 0;
+                        scissor.extent.width = SHADOWMAP_EXTENT;
+                        scissor.extent.height = SHADOWMAP_EXTENT;
+                        vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, depth_pipeline);
+
+                        struct PushData
+                        {
+                            VkDeviceAddress global_buffer;
+                            VkDeviceAddress object_buffer;
+                            VkDeviceAddress vertex_buffer;
+                            VkDeviceAddress meshlet_buffer;
+                            VkDeviceAddress prefix_sum_buffer;
+                            VkDeviceAddress meshlet_indices_buffer;
+                            VkDeviceAddress meshlet_draw_buffer;
+                            uint32_t cascade_index;
+                        };
+
+                        PushData data{};
+                        data.global_buffer = get_buffer_address(graph, global_buffer, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
+                        data.object_buffer = object_buffer.address;
+                        data.vertex_buffer = vertex_buffer.address;
+                        data.meshlet_buffer = meshlet_buffer.address;
+                        data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
+                        data.meshlet_indices_buffer = meshlet_indices_buffer.address;
+                        data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
+                        data.cascade_index = cascade_index;
+
+                        vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
+                        vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch), 1, 0);
+                        vkCmdEndRendering(cmd);
+                    }
+                );
+            }
+        }
+
         graph.add_pass(
             Pass("Lighting")
                 .read_image(vbuffer, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                .read_image(global_buffer, AccessType::ComputeShaderReadOther)
+                // TODO: handle other cascades, use a texture array?
+                .read_image(shadowmaps[0], AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                 .write_image(draw_image, AccessType::ComputeShaderWrite),
             [&]()
             {
@@ -1491,11 +1790,14 @@ void Engine::run()
                     VkDeviceAddress meshlet_buffer;
                     VkDeviceAddress meshlet_indices_buffer;
                     VkDeviceAddress material_buffer;
+                    VkDeviceAddress global_buffer;
                     glm::vec3 camera_pos;
                     uint32_t visbuffer_id;
                     glm::vec2 screen_extent;
                     uint32_t debug_id;
                     uint32_t output_id;
+                    glm::vec3 light_dir;
+                    uint32_t shadowmap_id; // Offset accordingly
                 };
 
                 PushData data{};
@@ -1505,11 +1807,14 @@ void Engine::run()
                 data.meshlet_buffer = meshlet_buffer.address;
                 data.meshlet_indices_buffer = meshlet_indices_buffer.address;
                 data.material_buffer = material_buffer.address;
+                data.global_buffer = get_buffer_address(graph, global_buffer, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
                 data.camera_pos = camera.position;
                 data.visbuffer_id = get_image_id(graph, vbuffer);
                 data.screen_extent = glm::vec2(swapchain.extent.width, swapchain.extent.height);
                 data.debug_id = DEBUG_ID;
                 data.output_id = get_image_id(graph, draw_image);
+                data.light_dir = sunlight_dir;
+                data.shadowmap_id = b_shadows ? get_image_id(graph, shadowmaps[0]) : -1u;
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, lighting_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
@@ -1646,10 +1951,18 @@ void Engine::run()
     destroy_buffer(allocator, meshlet_indices_buffer);
     destroy_buffer(allocator, spd_counter_buffer);
     destroy_buffer(allocator, late_pass_candidates_buffer);
+
     destroy_image(device, allocator, depth_pyramid_image);
+    for (const auto& img : shadowmap_images)
+    {
+        destroy_image(device, allocator, img);
+    }
+
     vkDestroySampler(device, linear_samp, nullptr);
     vkDestroySampler(device, depth_reduce_samp, nullptr);
     vkDestroySampler(device, nearest_samp, nullptr);
+    vkDestroySampler(device, shadow_samp, nullptr);
+
     for (const auto& view : depth_pyramid_image_views)
     {
         vkDestroyImageView(device, view, nullptr);

@@ -24,7 +24,7 @@ struct PushConstants
     MaterialData* material_buffer;
     Meshlet* meshlet_buffer;
     uint32_t* meshlet_indices_buffer;
-    PrefixSum* prefix_sum_buffer;
+    PrefixSums* prefix_sum_buffer;
     uint32_t* meshlet_draw_buffer;
 }
 
@@ -46,8 +46,8 @@ void mesh_main(
 {
     uint index = pc.meshlet_draw_buffer[wg_id.x];
 
-    uint prefix_sum_idx = prefix_sum_binary_search(pc.prefix_sum_buffer, index);
-    PrefixSumData prefix_sum_data = pc.prefix_sum_buffer.data[prefix_sum_idx];
+    uint prefix_sum_idx = prefix_sum_binary_search(pc.prefix_sum_buffer, 0, index);
+    PrefixSumData prefix_sum_data = pc.prefix_sum_buffer.prefix_sums[0].data[prefix_sum_idx];
     uint meshlet_offset = prefix_sum_data.meshlet_offset;
     uint meshlet_count = prefix_sum_data.meshlet_count;
     uint instance_id = prefix_sum_data.instance_id;

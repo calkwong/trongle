@@ -11,7 +11,6 @@
 #include <cstring>
 #include <cmath>
 #include <vector>
-#include <initializer_list>
 
 void stage_barrier(
     VkCommandBuffer cmd,
@@ -285,7 +284,7 @@ VkImageMemoryBarrier2 image_barrier(
     return barrier;
 }
 
-VkSampler create_sampler(VkDevice device, VkFilter filter, VkSamplerMipmapMode mipmap, VkSamplerAddressMode address)
+VkSampler create_sampler(VkDevice device, VkFilter filter, VkSamplerMipmapMode mipmap, VkSamplerAddressMode address, bool compare_enable /*= 0*/)
 {
     VkSamplerCreateInfo info{ .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
     info.magFilter = filter;
@@ -295,6 +294,9 @@ VkSampler create_sampler(VkDevice device, VkFilter filter, VkSamplerMipmapMode m
     info.addressModeV = address;
     info.addressModeW = address;
     info.maxLod = VK_LOD_CLAMP_NONE;
+    info.compareEnable = compare_enable;
+    if (compare_enable)
+        info.compareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
 
     VkSampler sampler{};
 
@@ -327,8 +329,8 @@ VkSampler create_depth_reduce_sampler(VkDevice device)
 
 void transition_images(
     VkCommandBuffer cmd,
-    std::initializer_list<VkImage> images,
-    std::initializer_list<VkImage> depth_images
+    std::vector<VkImage>& images,
+    std::vector<VkImage>& depth_images
 )
 {
     std::vector<VkImageMemoryBarrier2> barriers{};

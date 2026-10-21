@@ -78,8 +78,8 @@ VkPipeline create_graphics_pipeline(
     const VkShaderDescriptorSetAndBindingMappingInfoEXT* p_desc_set_and_binding_mapping_info,
     const VkPipelineLayout* pipeline_layout,
     ColorAttachmentFormats color_attachment_formats,
-    VkCullModeFlags cull_mode /*= VK_CULL_MODE_BACK_BIT*/,
-    SpecConstants spec_constants /*= {}*/
+    SpecConstants spec_constants /*= {}*/,
+    GraphicsPipelineConfig config /*= GraphicsPipelineConfig{}*/
 )
 {
     VkPipeline pipeline{};
@@ -170,10 +170,10 @@ VkPipeline create_graphics_pipeline(
     VkPipelineRasterizationStateCreateInfo rasterization_state_create_info{ .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
     rasterization_state_create_info.pNext = 0;
     rasterization_state_create_info.flags = 0;
-    rasterization_state_create_info.depthClampEnable = VK_FALSE;
+    rasterization_state_create_info.depthClampEnable = config.depth_clamp;
     rasterization_state_create_info.rasterizerDiscardEnable = 0;
     rasterization_state_create_info.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterization_state_create_info.cullMode = cull_mode;
+    rasterization_state_create_info.cullMode = config.cull_mode;
     rasterization_state_create_info.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterization_state_create_info.depthBiasEnable = VK_FALSE;
     rasterization_state_create_info.depthBiasConstantFactor = 0.0f;

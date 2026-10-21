@@ -19,6 +19,12 @@ using SpecConstants = std::initializer_list<uint32_t>;
 using ShaderStages = std::initializer_list<VkShaderStageFlagBits>;
 using ColorAttachmentFormats = std::initializer_list<VkFormat>;
 
+struct GraphicsPipelineConfig
+{
+    VkCullModeFlags cull_mode = VK_CULL_MODE_BACK_BIT;
+    VkBool32 depth_clamp = VK_FALSE;
+};
+
 VkPipeline create_graphics_pipeline(
     VkDevice device,
     const ShaderProgram* program,
@@ -26,8 +32,8 @@ VkPipeline create_graphics_pipeline(
     const VkShaderDescriptorSetAndBindingMappingInfoEXT* p_desc_set_and_binding_mapping_info,
     const VkPipelineLayout* pipeline_layout,
     ColorAttachmentFormats color_attachment_formats,
-    VkCullModeFlags cull_mode = VK_CULL_MODE_BACK_BIT,
-    SpecConstants spec_constants = {}
+    SpecConstants spec_constants = {},
+    GraphicsPipelineConfig config = GraphicsPipelineConfig{}
 );
 
 VkPipeline create_compute_pipeline(
