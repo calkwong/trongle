@@ -634,9 +634,9 @@ VkImage get_image(const Rendergraph& graph, uint32_t handle)
     return graph.physical_images[handle].image;
 }
 
-VkDeviceAddress get_buffer_address(const Rendergraph& graph, uint32_t handle)
+VkDeviceAddress get_buffer_address(const Rendergraph& graph, uint32_t handle, uint32_t offset /*= 0*/)
 {
-    return graph.physical_buffers[handle].address;
+    return graph.physical_buffers[handle].address + offset;
 }
 
 VkBuffer get_buffer(const Rendergraph& graph, uint32_t handle)

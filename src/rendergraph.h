@@ -242,7 +242,7 @@ uint32_t get_image_id(const Rendergraph& graph, uint32_t handle);
 
 VkImageView get_image_view(const Rendergraph& graph, uint32_t handle);
 VkImage get_image(const Rendergraph& graph, uint32_t handle);
-VkDeviceAddress get_buffer_address(const Rendergraph& graph, uint32_t handle);
+VkDeviceAddress get_buffer_address(const Rendergraph& graph, uint32_t handle, uint32_t offset = 0);
 VkBuffer get_buffer(const Rendergraph& graph, uint32_t handle);
 VkDeviceSize get_buffer_size(const Rendergraph& graph, uint32_t handle);
 
