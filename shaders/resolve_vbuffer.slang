@@ -224,8 +224,8 @@ void main(uint3 global_id: SV_DispatchThreadID)
 
     if (pc.shadowmap_id != INVALID_ID)
     {
-        float occluded = calculate_shadow(world_pos, pc.shadowmap_id, pc.global_buffer);
-        out_color.xyz *= occluded;
+        float shadow_factor = calculate_shadow(world_pos, pc.shadowmap_id, pc.global_buffer);
+        out_color.xyz *= shadow_factor;
     }
 
     // TODO: indirect lighting

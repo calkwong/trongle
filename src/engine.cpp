@@ -495,9 +495,7 @@ void Engine::run()
     VkSampler linear_samp = create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT);
     VkSampler depth_reduce_samp = create_depth_reduce_sampler(device);
     VkSampler nearest_samp = create_sampler(device, VK_FILTER_NEAREST, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
-    // TODO: clamp to border? use compareEnable
-    // VkSampler shadow_samp = create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, true);
-    VkSampler shadow_samp = create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+    VkSampler shadow_samp = create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, true);
     desc_info.emplace_back(VkDescriptorImageInfo{ .sampler = linear_samp });
     desc_info.emplace_back(VkDescriptorImageInfo{ .sampler = depth_reduce_samp });
     desc_info.emplace_back(VkDescriptorImageInfo{ .sampler = nearest_samp });
