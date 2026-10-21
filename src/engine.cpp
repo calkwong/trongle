@@ -546,7 +546,7 @@ void Engine::run()
     Image depth_pyramid_image = create_image(device, allocator, depth_pyramid_extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 0, true);
 
     {
-        std::vector<VkImage> color_images = {depth_pyramid_image.image};
+        std::vector<VkImage> color_images = { depth_pyramid_image.image };
         std::vector<VkImage> depth_images{};
         for (const auto& image : shadowmap_images)
         {
@@ -1011,9 +1011,8 @@ void Engine::run()
             [&]()
             {
                 vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 18);
-                // TODO: refactor
+                // TODO: likely more efficient on compute - we only need to zero 4 values (1 in each PrefixSums sector)
                 vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, VK_WHOLE_SIZE, 0);
-                // vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, sizeof(uint64_t), 0);
                 vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 19);
             }
         );
@@ -1556,6 +1555,7 @@ void Engine::run()
                     .write_buffer(prefix_sum_buffer, AccessType::TransferWrite),
                 [&]()
                 {
+                    // We can get away with only zeroing the first counter as other 'sectors' of PrefixSums are unused up to this point
                     vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, sizeof(uint64_t), 0);
                 }
             );
@@ -1602,6 +1602,7 @@ void Engine::run()
                         VkDeviceAddress object_buffer;
                         VkDeviceAddress mesh_buffer;
                         VkDeviceAddress prefix_sum_buffer;
+                        float3 camera_pos;
                         uint32_t count;
                         uint32_t shadowmap_height;
                         float lod_distance_factor;
@@ -1612,6 +1613,7 @@ void Engine::run()
                     data.object_buffer = object_buffer.address;
                     data.mesh_buffer = mesh_buffer.address;
                     data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
+                    data.camera_pos = camera.position;
                     data.count = static_cast<uint32_t>(renderables.size());
                     data.shadowmap_height = SHADOWMAP_EXTENT;
                     auto p11 = frame_context.proj[1][1];
@@ -1680,6 +1682,7 @@ void Engine::run()
                         data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
                         data.count = static_cast<uint32_t>(renderables.size());
                         data.shadowmap_height = SHADOWMAP_EXTENT;
+                        data.cascade_index = cascade_index;
 
                         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_shadow_meshlet_pipeline);
                         vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);

@@ -70,8 +70,8 @@ void main(
     float radius = float(meshlet.radius);
     radius *= o.scale;
 
-    // if (!partially_inside_cascade(center_ws, radius, pc.cascade_index))
-    //     return;
+    if (!partially_inside_cascade(center_ws, radius, pc.cascade_index))
+        return;
 
     uint count;
     InterlockedAdd(pc.dispatch_buffer[1].x, 1, count);

@@ -129,7 +129,7 @@ void main(
     float4x4 shadow_proj = create_ortho_projection_matrix(-radius, radius, -radius, radius, radius * 2.0, 0.0);
 
     // For shadow culling
+    pc.global_buffer.shadow_matrices[thread_id] = mul(shadow_proj, shadow_view);
     pc.global_buffer.shadow_views[thread_id] = shadow_view;
     pc.global_buffer.shadow_radius[thread_id] = radius;
-    pc.global_buffer.shadow_matrices[thread_id] = mul(shadow_proj, shadow_view);
 }

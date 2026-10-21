@@ -60,9 +60,9 @@ void main(uint3 global_id: SV_DispatchThreadID)
 
     MeshData mesh = pc.mesh_buffer[mesh_id];
 
-    float4 world_center = float4(rotate_quat(mesh.center, o.orientation) * o.scale + o.translation, 1.0);
-    float4 center = mul(pc.view, world_center);
-    float4 occlusion_center = center;
+    float4 center_ws = float4(rotate_quat(mesh.center, o.orientation) * o.scale + o.translation, 1.0);
+    float4 center_vs = mul(pc.view, center_ws);
+    float4 occlusion_center = center_vs;
     float scale = o.scale;
     float radius = scale * mesh.radius;
     bool visible = true;
@@ -70,8 +70,8 @@ void main(uint3 global_id: SV_DispatchThreadID)
     // We can skip frustum cull for late pass. Late pass will only process meshes that pass frustum but fail HZB.
     if (!late)
     {
-        occlusion_center = mul(pc.prev_view, world_center);
-        visible &= !frustum_culled(center.xyz, radius, pc.planes, pc.near, pc.far);
+        occlusion_center = mul(pc.prev_view, center_ws);
+        visible &= !frustum_culled(center_vs.xyz, radius, pc.planes, pc.near, pc.far);
     }
 
     if (!visible)
@@ -104,7 +104,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
     if (visible)
     {
         uint lod_index = 0;
-        float d = max(0.0, length(center.xyz) - radius);
+        float d = max(0.0, length(center_vs.xyz) - radius);
         float e = d * pc.lod_distance_factor / scale;
 
         for (uint i = 0; i < mesh.lod_count; i++)
