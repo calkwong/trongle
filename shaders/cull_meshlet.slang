@@ -92,7 +92,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
     // TODO: do we need this conditional check?
     if (pc.skip_occlusion == 0 && project_sphere(float3(occlusion_center.x, occlusion_center.y, -occlusion_center.z), radius, pc.near, pc.p00, pc.p11, aabb))
     {
-        // TODO: this can be optimized as a push constant, leaving as is for clarity
+        // This can be optimized as a push constant, leaving as is for clarity
         float2 valid_extent = pc.depth_buffer_extent * 0.5;
         float2 hzb_uv_scale = valid_extent / pc.depth_pyramid_extent;
 

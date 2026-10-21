@@ -27,7 +27,6 @@ public float calculate_shadow(float3 world_pos, uint shadowmap_id, GlobalData* g
 	if (current_depth < 0.0) // necessary
         return 1.0;
 
-	// TODO: optimize - encode in the matrix above?
 	float2 uv = ndc.xy * 0.5 + 0.5;
 	uv.y = 1.0 - uv.y;
 

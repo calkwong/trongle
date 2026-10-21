@@ -424,7 +424,7 @@ void optimize_mesh(
     // Vertex cache optimization
     meshopt_optimizeVertexCache(indices.data(), indices.data(), indices.size(), vertices.size());
 
-    // TODO: (Optional) Overdraw optimization
+    // (optional) Overdraw optimization
 
     // Vertex fetch optimization
     meshopt_optimizeVertexFetch(vertices.data(), indices.data(), indices.size(), vertices.data(), vertices.size(), sizeof(Vertex));

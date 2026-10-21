@@ -1464,14 +1464,15 @@ void Engine::run()
             }
         );
 
-        // TODO: should we declare read_image for attachments?
         graph.add_pass(
             Pass("Vbuffer late")
                 .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
                 .read_buffer(prefix_sum_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
                 .read_buffer(meshlet_draw_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
-                .write_image(vbuffer, AccessType::ColorAttachmentReadWrite)
-                .write_image(depth_image, AccessType::DepthStencilAttachmentReadWrite),
+                .read_image(vbuffer, AccessType::ColorAttachmentRead)
+                .read_image(depth_image, AccessType::DepthStencilAttachmentRead)
+                .write_image(vbuffer, AccessType::ColorAttachmentWrite)
+                .write_image(depth_image, AccessType::DepthStencilAttachmentWrite),
             [&]()
             {
                 vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 14);
@@ -1759,13 +1760,16 @@ void Engine::run()
             }
         }
 
+        auto lighting_pass = Pass("Lighting")
+                                 .read_image(vbuffer, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                                 .read_image(global_buffer, AccessType::ComputeShaderReadOther)
+                                 .write_image(draw_image, AccessType::ComputeShaderWrite);
+        for (const auto shadowmap : shadowmaps)
+        {
+            lighting_pass.read_image(shadowmap, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
+        }
         graph.add_pass(
-            Pass("Lighting")
-                .read_image(vbuffer, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
-                .read_image(global_buffer, AccessType::ComputeShaderReadOther)
-                // TODO: handle other cascades, use a texture array?
-                .read_image(shadowmaps[0], AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
-                .write_image(draw_image, AccessType::ComputeShaderWrite),
+            lighting_pass,
             [&]()
             {
                 struct PushData

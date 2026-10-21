@@ -111,7 +111,7 @@ void main(
     }
     center /= 8.0;
 
-    // TODO: Ritter's algorithm for tighter bounding sphere
+    // (optional) Ritter's algorithm for tighter bounding sphere
 
     float radius = 0.0;
 
@@ -121,7 +121,7 @@ void main(
         radius = max(dist, radius);
     }
 
-    // TODO (optional): stable cascades
+    // (optional) stable cascades
     // https://github.com/TheRealMJP/Shadows/blob/master/Shadows/SetupShadows.hlsl
     // https://alextardif.com/shadowmapping.html
 
