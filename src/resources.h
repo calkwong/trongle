@@ -118,4 +118,4 @@ void copy_image(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent2D src_ex
 
 uint32_t get_image_mip_level(uint32_t width, uint32_t height);
 uint32_t get_image_mip_level(VkExtent2D image_extent);
-void generate_mipmaps(VkCommandBuffer cmd, VkImage image, VkExtent3D extent, uint32_t layers = 1);
+void generate_mipmaps(VkCommandBuffer cmd, VkImage image, VkExtent3D extent, uint32_t layer_count = 1);
