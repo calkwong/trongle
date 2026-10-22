@@ -10,6 +10,7 @@
 
 #include <vector>
 #include <string>
+#include <string_view>
 #include <cstdint>
 
 struct GltfPrimitive
@@ -60,3 +61,14 @@ struct AssetLoader
     void cleanup();
     bool load_gltf(VkQueue queue, VkFence fence, VkCommandPool command_pool, VkCommandBuffer cmd, const std::string& file_path, uint32_t texture_offset);
 };
+
+std::vector<Image> load_exr_images(
+    VkDevice device,
+    VkQueue queue,
+    VkFence fence,
+    VkCommandPool command_pool,
+    VkCommandBuffer cmd,
+    VmaAllocator allocator,
+    std::string_view asset_path,
+    bool mipmap = false
+);

@@ -99,6 +99,8 @@ std::vector<Image> load_images(
         std::unique_ptr<basist::ktx2_image_level_info[]> ktx_info;
     };
 
+    // TODO: refactor when we stop using BC7 across the board
+    auto target_format = basist::transcoder_texture_format::cTFBC7_RGBA;
     auto create_raw_image_data = [&](const void* data, size_t data_size) -> RawImageData
     {
         RawImageData raw_image_data{};
@@ -110,8 +112,6 @@ std::vector<Image> load_images(
         if (!transcoder.init(data, static_cast<uint32_t>(data_size)))
             assert(0 && "Failed to initialize transcoder");
 
-        // TODO: refactor when we stop using BC7 across the board
-        auto target_format = basist::transcoder_texture_format::cTFBC7_RGBA;
         uint32_t bytes_per_block_or_pixel = basist::basis_get_bytes_per_block_or_pixel(target_format);
 
         auto transfer_func = transcoder.get_dfd_transfer_func();
@@ -179,13 +179,6 @@ std::vector<Image> load_images(
     std::vector<size_t> indices(asset.images.size());
     for (size_t i = 0; i < indices.size(); i++)
         indices[i] = i;
-
-    auto has_ktx2_format = [&](std::string_view file_path) -> bool
-    {
-        auto pos = file_path.find_last_of('.');
-        auto format = file_path.substr(pos + 1);
-        return (format == "ktx2");
-    };
 
     auto raw_images = std::vector<RawImageData>(asset.images.size());
 
@@ -256,8 +249,6 @@ std::vector<Image> load_images(
         VkExtent3D extent;
     };
 
-    // TODO: refactor when we stop using BC7 across the board
-    auto target_format = basist::transcoder_texture_format::cTFBC7_RGBA;
     const uint32_t bytes_per_block_or_pixel = basist::basis_get_bytes_per_block_or_pixel(target_format);
 
     std::vector<ImageUploadInfo> image_upload_info{};
@@ -1091,4 +1082,298 @@ void Node::refresh_transform(const glm::mat4& parent_matrix, std::vector<Node>& 
         auto& child = children[first_child];
         child.refresh_transform(world_transform, children);
     }
+}
+
+std::vector<Image> load_exr_images(
+    VkDevice device,
+    VkQueue queue,
+    VkFence fence,
+    VkCommandPool command_pool,
+    VkCommandBuffer cmd,
+    VmaAllocator allocator,
+    std::string_view asset_path,
+    bool mipmap /*= false*/
+)
+{
+    std::vector<std::string> file_names{};
+    for (const auto& entry : std::filesystem::directory_iterator(asset_path))
+    {
+        if (entry.is_regular_file())
+        {
+            auto file = entry.path().filename().string();
+            file_names.push_back(file);
+        }
+    }
+
+    std::vector<Image> images{};
+
+    struct RawImageData
+    {
+        int width;
+        int height;
+        int components;
+        uint32_t mips;
+        uint32_t size;
+        VkFormat format;
+
+        std::unique_ptr<unsigned char[]> ktx;
+        std::unique_ptr<basist::ktx2_image_level_info[]> ktx_info;
+    };
+
+    auto target_format = basist::transcoder_texture_format::cTFBC6H;
+    auto create_raw_image_data = [&](const void* data, size_t data_size) -> RawImageData
+    {
+        RawImageData raw_image_data{};
+
+        // Create the KTX2 transcoder object
+        basist::ktx2_transcoder transcoder{};
+
+        // Initialize the transcoder
+        if (!transcoder.init(data, static_cast<uint32_t>(data_size)))
+            assert(0 && "Failed to initialize transcoder");
+
+        uint32_t bytes_per_block_or_pixel = basist::basis_get_bytes_per_block_or_pixel(target_format);
+
+        auto transfer_func = transcoder.get_dfd_transfer_func();
+        switch (transfer_func)
+        {
+        case basist::KTX2_KHR_DF_TRANSFER_LINEAR:
+            raw_image_data.format = VK_FORMAT_BC6H_UFLOAT_BLOCK;
+            break;
+        default:
+            assert(0);
+            break;
+        }
+
+        raw_image_data.mips = transcoder.get_levels();
+        raw_image_data.ktx_info = std::make_unique<basist::ktx2_image_level_info[]>(raw_image_data.mips);
+        for (uint32_t i = 0; i < raw_image_data.mips; i++)
+        {
+            transcoder.get_image_level_info(raw_image_data.ktx_info[i], i, 0, 0);
+        }
+
+        uint32_t num_blocks_or_pixels{};
+        uint64_t buffer_size{};
+        for (uint32_t i = 0; i < raw_image_data.mips; i++)
+        {
+            num_blocks_or_pixels = raw_image_data.ktx_info[i].m_total_blocks;
+            buffer_size += bytes_per_block_or_pixel * num_blocks_or_pixels;
+        }
+
+        auto header = transcoder.get_header();
+        auto supercompression_scheme = header.m_supercompression_scheme;
+        switch (supercompression_scheme)
+        {
+        case basist::KTX2_SS_BASISLZ:
+        case basist::KTX2_SS_ZSTANDARD:
+            break;
+        default:
+            assert(0 && "Unsupported supercompression scheme");
+            break;
+        }
+
+        transcoder.start_transcoding();
+
+        raw_image_data.ktx = std::make_unique<unsigned char[]>(buffer_size);
+
+        unsigned char* ktx_data = raw_image_data.ktx.get();
+
+        raw_image_data.size = 0;
+        for (uint32_t i = 0; i < raw_image_data.mips; i++)
+        {
+            num_blocks_or_pixels = raw_image_data.ktx_info[i].m_total_blocks;
+            uint32_t output_size = bytes_per_block_or_pixel * num_blocks_or_pixels;
+
+            if (!transcoder.transcode_image_level(i, 0, 0, ktx_data, output_size, target_format))
+                assert(0 && "Transcoding image failed");
+            ktx_data += output_size;
+            raw_image_data.size += output_size;
+        }
+
+        return raw_image_data;
+    };
+
+    std::vector<size_t> indices(file_names.size());
+    for (size_t i = 0; i < indices.size(); i++)
+        indices[i] = i;
+
+    auto raw_images = std::vector<RawImageData>(file_names.size());
+
+    std::filesystem::path path = asset_path;
+    basist::basisu_transcoder_init();
+
+    std::transform(
+        std::execution::par,
+        indices.begin(),
+        indices.end(),
+        raw_images.begin(),
+        [&](size_t index)
+        {
+            std::filesystem::path full_path = path / std::filesystem::path{ file_names[index] };
+
+            std::vector<uint8_t> buffer{};
+            if (!read_raw_image_data_from_file(full_path.string().c_str(), buffer))
+                assert(0);
+
+            return create_raw_image_data(buffer.data(), buffer.size());
+        }
+    );
+
+    Buffer scratch = create_buffer(
+        device,
+        allocator,
+        1000000000,
+        VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
+        VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
+    );
+
+    struct ImageUploadInfo
+    {
+        const void* data;
+        uint32_t size;
+        uint32_t buffer_offset;
+        uint32_t image_index;
+        uint32_t mips;
+        VkExtent3D extent;
+    };
+
+    const uint32_t bytes_per_block_or_pixel = basist::basis_get_bytes_per_block_or_pixel(target_format);
+
+    std::vector<ImageUploadInfo> image_upload_info{};
+
+    // Offset for each image upload
+    uint32_t buffer_offset{};
+
+    for (const auto& raw_image_data : raw_images)
+    {
+        uint32_t upload_offset{};
+        for (uint32_t mip = 0; mip < raw_image_data.mips; mip++)
+        {
+            uint32_t num_blocks_or_pixels = raw_image_data.ktx_info[mip].m_total_blocks;
+            uint32_t output_size = bytes_per_block_or_pixel * num_blocks_or_pixels;
+
+            image_upload_info.emplace_back(
+                ImageUploadInfo{
+                    .data = static_cast<void*>(raw_image_data.ktx.get() + upload_offset),
+                    .size = output_size,
+                    .buffer_offset = buffer_offset,
+                    .image_index = static_cast<uint32_t>(images.size()),
+                    .mips = mip,
+                    .extent = { raw_image_data.ktx_info[mip].m_orig_width,
+                                raw_image_data.ktx_info[mip].m_orig_height,
+                                1 } }
+            );
+
+            upload_offset += output_size;
+            buffer_offset += output_size;
+        }
+
+        images.emplace_back(create_image(
+            device,
+            allocator,
+            { raw_image_data.ktx_info[0].m_orig_width, raw_image_data.ktx_info[0].m_orig_height, 1 },
+            raw_image_data.format,
+            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_IMAGE_ASPECT_COLOR_BIT,
+            0,
+            mipmap
+        ));
+    }
+
+    auto flush_uploads = [&]()
+    {
+        if (scratch.info.size < buffer_offset)
+        {
+            destroy_buffer(allocator, scratch);
+            scratch = create_buffer(
+                device,
+                allocator,
+                static_cast<size_t>(buffer_offset * 1.5),
+                VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
+                VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
+            );
+        }
+
+        // Copy to staging in parallel
+        std::for_each(
+            std::execution::par,
+            image_upload_info.begin(),
+            image_upload_info.end(),
+            [&](const ImageUploadInfo& upload_info)
+            {
+                auto p = static_cast<std::byte*>(scratch.info.pMappedData) + upload_info.buffer_offset;
+                memcpy(p, upload_info.data, upload_info.size);
+            }
+        );
+
+        std::vector<VkBufferImageCopy2> buffer_image_copies(image_upload_info.size());
+        std::vector<VkCopyBufferToImageInfo2> buffer_to_image_info(image_upload_info.size());
+        for (int i = 0; i < image_upload_info.size(); i++)
+        {
+            const auto& upload_info = image_upload_info[i];
+            auto& copy = buffer_image_copies[i];
+            auto& info = buffer_to_image_info[i];
+
+            copy.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2;
+            copy.pNext = nullptr;
+            copy.bufferOffset = upload_info.buffer_offset;
+            copy.bufferRowLength = 0;
+            copy.bufferImageHeight = 0;
+            copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            copy.imageSubresource.mipLevel = upload_info.mips;
+            copy.imageSubresource.baseArrayLayer = 0;
+            copy.imageSubresource.layerCount = 1;
+            copy.imageOffset = VkOffset3D{ 0, 0, 0 };
+            copy.imageExtent = upload_info.extent;
+
+            info.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2;
+            info.pNext = nullptr;
+            info.srcBuffer = scratch.buffer;
+            info.dstImage = images[upload_info.image_index].image;
+            info.dstImageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            info.regionCount = 1;
+            info.pRegions = &copy;
+        }
+
+        for (const auto& info : buffer_to_image_info)
+        {
+            vkCmdCopyBufferToImage2(cmd, &info);
+        }
+    };
+
+    std::vector<VkImageMemoryBarrier2> image_barriers(file_names.size());
+    for (int i = 0; i < image_barriers.size(); i++)
+    {
+        image_barriers[i] = image_barrier(
+            images[i].image,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_GENERAL,
+            0,
+            0,
+            0,
+            0
+        );
+    }
+
+    immediate_submit(
+        device,
+        queue,
+        fence,
+        command_pool,
+        cmd,
+        [&](VkCommandBuffer cmd)
+        {
+            VkDependencyInfo info{ .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+            info.imageMemoryBarrierCount = image_barriers.size();
+            info.pImageMemoryBarriers = image_barriers.data();
+
+            vkCmdPipelineBarrier2(cmd, &info);
+
+            flush_uploads();
+        }
+    );
+
+    destroy_buffer(allocator, scratch);
+
+    return images;
 }

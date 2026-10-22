@@ -48,8 +48,8 @@
 #define MAX_TIMESTAMP_QUERIES 20
 #define MAX_MESH_PIPELINE_QUERIES 2
 
-const char* ASSET_NAME = "Sponza/Sponza.gltf";
-// const char* ASSET_NAME = "chinesedragon.gltf";
+// const char* ASSET_NAME = "Sponza/Sponza.gltf";
+const char* ASSET_NAME = "chinesedragon.gltf";
 // const char* ASSET_NAME = "de_dust2/de_dust2.gltf";
 // const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
 int DEBUG_ID = 8;
@@ -487,6 +487,13 @@ void Engine::run()
     for (const auto& image : asset_loader.images)
     {
         image_manager.register_sampled_image(device, image.view, VK_IMAGE_LAYOUT_GENERAL);
+    }
+
+    auto first_env_handle = static_cast<uint32_t>(image_manager.infos.size());
+    auto env_maps = load_exr_images(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, "../assets/cubemaps/", true);
+    for (const auto& env_map : env_maps)
+    {
+        image_manager.register_sampled_image(device, env_map.view, VK_IMAGE_LAYOUT_GENERAL);
     }
 
     // Create sampler
@@ -1946,6 +1953,10 @@ void Engine::run()
     for (const auto& img : shadowmap_images)
     {
         destroy_image(device, allocator, img);
+    }
+    for (const auto& env_map : env_maps)
+    {
+        destroy_image(device, allocator, env_map);
     }
 
     vkDestroySampler(device, linear_samp, nullptr);
