@@ -110,7 +110,7 @@ Image create_image(
     image.extent = extent;
     image.format = format;
 
-    VkImageCreateInfo img_info{};
+    VkImageCreateInfo img_info{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     img_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     img_info.imageType = VK_IMAGE_TYPE_2D;
     img_info.format = format;
@@ -140,6 +140,63 @@ Image create_image(
     img_view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     img_view_info.image = image.image;
     img_view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    img_view_info.format = format;
+    VkImageSubresourceRange subresource_range{};
+    subresource_range.aspectMask = aspect;
+    subresource_range.baseMipLevel = 0;
+    subresource_range.levelCount = VK_REMAINING_MIP_LEVELS;
+    subresource_range.baseArrayLayer = 0;
+    subresource_range.layerCount = VK_REMAINING_ARRAY_LAYERS;
+    img_view_info.subresourceRange = subresource_range;
+
+    VK_CHECK(vkCreateImageView(device, &img_view_info, nullptr, &image.view));
+
+    return image;
+}
+
+Image create_cubemap(
+    VkDevice device,
+    VmaAllocator allocator,
+    VkExtent3D extent,
+    VkFormat format,
+    VkImageUsageFlags usage,
+    VkImageAspectFlags aspect /*= VK_IMAGE_ASPECT_COLOR_BIT*/,
+    VmaAllocationCreateFlags allocation_flags /*= 0*/,
+    bool mipmapped /*= false*/
+)
+{
+    Image image{};
+    image.extent = extent;
+    image.format = format;
+
+    VkImageCreateInfo img_info{ .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+    img_info.imageType = VK_IMAGE_TYPE_2D;
+    img_info.format = format;
+    img_info.extent = extent;
+    img_info.mipLevels = 1;
+    img_info.arrayLayers = 6;
+    img_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    img_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    img_info.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+    img_info.usage = usage;
+
+    if (mipmapped)
+    {
+        auto larger_extent = extent.width >= extent.height ? extent.width : extent.height;
+        img_info.mipLevels = static_cast<uint32_t>(std::floor(std::log2(larger_extent))) + 1;
+    }
+
+    VmaAllocationCreateInfo alloc_info{};
+    alloc_info.flags = allocation_flags;
+    alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+    alloc_info.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+    VK_CHECK(vmaCreateImage(allocator, &img_info, &alloc_info, &image.image, &image.allocation, nullptr));
+
+    VkImageViewCreateInfo img_view_info{};
+    img_view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    img_view_info.image = image.image;
+    img_view_info.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
     img_view_info.format = format;
     VkImageSubresourceRange subresource_range{};
     subresource_range.aspectMask = aspect;

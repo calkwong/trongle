@@ -489,24 +489,20 @@ void Engine::run()
         image_manager.register_sampled_image(device, image.view, VK_IMAGE_LAYOUT_GENERAL);
     }
 
-    auto first_env_handle = static_cast<uint32_t>(image_manager.infos.size());
-    auto env_maps = load_exr_images(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, "../assets/cubemaps/", true);
-    for (const auto& env_map : env_maps)
-    {
-        image_manager.register_sampled_image(device, env_map.view, VK_IMAGE_LAYOUT_GENERAL);
-    }
-
     // Create sampler
     std::vector<VkWriteDescriptorSet> writes{};
     std::vector<VkDescriptorImageInfo> desc_info{};
-    VkSampler linear_samp = create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT);
-    VkSampler depth_reduce_samp = create_depth_reduce_sampler(device);
-    VkSampler nearest_samp = create_sampler(device, VK_FILTER_NEAREST, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
-    VkSampler shadow_samp = create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, true);
-    desc_info.emplace_back(VkDescriptorImageInfo{ .sampler = linear_samp });
-    desc_info.emplace_back(VkDescriptorImageInfo{ .sampler = depth_reduce_samp });
-    desc_info.emplace_back(VkDescriptorImageInfo{ .sampler = nearest_samp });
-    desc_info.emplace_back(VkDescriptorImageInfo{ .sampler = shadow_samp });
+    std::vector<VkSampler> samplers{};
+    samplers.emplace_back(create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT));
+    samplers.emplace_back(create_depth_reduce_sampler(device));
+    samplers.emplace_back(create_sampler(device, VK_FILTER_NEAREST, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE));
+    samplers.emplace_back(create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, true));
+    samplers.emplace_back(create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE));
+
+    for (const auto& samp : samplers)
+    {
+        desc_info.emplace_back(VkDescriptorImageInfo{ .sampler = samp });
+    }
 
     for (auto i = 0; i < desc_info.size(); i++)
     {
@@ -675,6 +671,8 @@ void Engine::run()
     VkPipeline cull_shadow_pipeline{};
     VkPipeline cull_shadow_meshlet_pipeline{};
     VkPipeline depth_pipeline{};
+    VkPipeline exr_to_cubemap_pipeline{};
+    VkPipeline envmap_pipeline{};
 
     std::vector<VkPipeline> pipelines{};
 
@@ -690,6 +688,8 @@ void Engine::run()
         auto cull_shadow_program = load_shader_program("cull_shadow.slang", device);
         auto cull_shadow_meshlet_program = load_shader_program("cull_shadow_meshlet.slang", device);
         auto depth_program = load_shader_program("depth.slang", device);
+        auto exr_to_cubemap_program = load_shader_program("exr_to_cubemap.slang", device);
+        auto envmap_program = load_shader_program("envmap.slang", device);
 
         pipelines.clear();
 
@@ -740,9 +740,72 @@ void Engine::run()
         replace_pipeline(shadow_matrices_pipeline, create_compute_pipeline(device, &shadow_matrices_program, nullptr, &pipeline_layout));
         replace_pipeline(cull_shadow_pipeline, create_compute_pipeline(device, &cull_shadow_program, nullptr, &pipeline_layout));
         replace_pipeline(cull_shadow_meshlet_pipeline, create_compute_pipeline(device, &cull_shadow_meshlet_program, nullptr, &pipeline_layout));
+        replace_pipeline(exr_to_cubemap_pipeline, create_compute_pipeline(device, &exr_to_cubemap_program, nullptr, &pipeline_layout));
+        replace_pipeline(envmap_pipeline, create_compute_pipeline(device, &envmap_program, nullptr, &pipeline_layout));
     };
 
     build_pipelines();
+
+    // Initialize scene LPVs and envmaps
+    auto first_exr_handle = static_cast<uint32_t>(image_manager.infos.size());
+    auto exr_envmaps = load_exr_images(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, "../assets/de_dust2_envmaps/", true);
+    for (const auto& exr_envmap : exr_envmaps)
+    {
+        image_manager.register_sampled_image(device, exr_envmap.view, VK_IMAGE_LAYOUT_GENERAL);
+    }
+
+    // Cubemaps with mipmaps so we can create prefiltered envmaps
+    auto first_cubemap_handle = static_cast<uint32_t>(image_manager.infos.size());
+    std::vector<Image> cubemaps(exr_envmaps.size());
+    for (auto& cubemap : cubemaps)
+    {
+        cubemap = create_cubemap(
+            device,
+            allocator,
+            VkExtent3D{ 256, 256, 1 },
+            VK_FORMAT_R16G16B16A16_SFLOAT,
+            VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR | VK_IMAGE_USAGE_2_STORAGE_BIT_KHR | VK_IMAGE_USAGE_2_TRANSFER_SRC_BIT_KHR | VK_IMAGE_USAGE_2_TRANSFER_DST_BIT_KHR,
+            VK_IMAGE_ASPECT_COLOR_BIT,
+            0,
+            true
+        );
+    }
+    for (auto& cubemap : cubemaps)
+    {
+        image_manager.register_image(device, cubemap.view, VK_IMAGE_LAYOUT_GENERAL);
+    }
+
+    auto first_envmap_handle = static_cast<uint32_t>(image_manager.infos.size());
+    std::vector<Image> envmaps(exr_envmaps.size());
+    for (auto& envmap : envmaps)
+    {
+        envmap = create_cubemap(
+            device,
+            allocator,
+            VkExtent3D{ 256, 256, 1 },
+            VK_FORMAT_R16G16B16A16_SFLOAT,
+            VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR | VK_IMAGE_USAGE_2_STORAGE_BIT_KHR,
+            VK_IMAGE_ASPECT_COLOR_BIT,
+            0,
+            true
+        );
+    }
+    for (auto& envmap : envmaps)
+    {
+        image_manager.register_image(device, envmap.view, VK_IMAGE_LAYOUT_GENERAL);
+    }
+
+    // Destroy exr and cubemaps as they are no longer needed
+    for (const auto& exr_envmap : exr_envmaps)
+    {
+        destroy_image(device, allocator, exr_envmap);
+        image_manager.free_ids.push_back(first_exr_handle++);
+    }
+    for (const auto& cubemap : cubemaps)
+    {
+        destroy_image(device, allocator, cubemap);
+        image_manager.free_ids.push_back(first_cubemap_handle++);
+    }
 
     std::array<uint64_t, MAX_TIMESTAMP_QUERIES> timestamp_results{};
     std::array<uint64_t, MAX_MESH_PIPELINE_QUERIES> mesh_pipeline_results{};
@@ -1954,15 +2017,15 @@ void Engine::run()
     {
         destroy_image(device, allocator, img);
     }
-    for (const auto& env_map : env_maps)
+    for (const auto& img : envmaps)
     {
-        destroy_image(device, allocator, env_map);
+        destroy_image(device, allocator, img);
     }
 
-    vkDestroySampler(device, linear_samp, nullptr);
-    vkDestroySampler(device, depth_reduce_samp, nullptr);
-    vkDestroySampler(device, nearest_samp, nullptr);
-    vkDestroySampler(device, shadow_samp, nullptr);
+    for (const auto& samp : samplers)
+    {
+        vkDestroySampler(device, samp, nullptr);
+    }
 
     for (const auto& view : depth_pyramid_image_views)
     {

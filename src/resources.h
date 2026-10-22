@@ -90,6 +90,17 @@ Image create_image(
     bool mipmapped = false
 );
 
+Image create_cubemap(
+    VkDevice device,
+    VmaAllocator allocator,
+    VkExtent3D extent,
+    VkFormat format,
+    VkImageUsageFlags usage,
+    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+    VmaAllocationCreateFlags allocation_flags = 0,
+    bool mipmapped = false
+);
+
 void destroy_buffer(VmaAllocator allocator, const Buffer& buffer);
 void destroy_image(VkDevice device, VmaAllocator allocator, const Image& image);
 VkDeviceAddress get_buffer_address(VkDevice device, VkBuffer buffer);
