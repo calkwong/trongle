@@ -568,6 +568,7 @@ void Engine::run()
     auto get_depth_pyramid_image_count = [&](const Image& image) -> uint32_t
     {
         const auto& depth_pyramid_extent = image.extent;
+        // TODO: get_image_mip_level helper
         return static_cast<uint32_t>(glm::floor(glm::log2(static_cast<float>(glm::max(depth_pyramid_extent.width, depth_pyramid_extent.height))))) + 1;
     };
 
@@ -754,6 +755,8 @@ void Engine::run()
         image_manager.register_sampled_image(device, exr_envmap.view, VK_IMAGE_LAYOUT_GENERAL);
     }
 
+    std::vector<VkImage> images_to_transition{};
+
     // Cubemaps with mipmaps so we can create prefiltered envmaps
     auto first_cubemap_handle = static_cast<uint32_t>(image_manager.infos.size());
     std::vector<Image> cubemaps(exr_envmaps.size());
@@ -769,6 +772,7 @@ void Engine::run()
             0,
             true
         );
+        images_to_transition.push_back(cubemap.image);
     }
     for (auto& cubemap : cubemaps)
     {
@@ -789,11 +793,54 @@ void Engine::run()
             0,
             true
         );
+        images_to_transition.push_back(envmap.image);
     }
     for (auto& envmap : envmaps)
     {
         image_manager.register_image(device, envmap.view, VK_IMAGE_LAYOUT_GENERAL);
     }
+
+    immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
+                     {
+                         transition_images(cmd, images_to_transition);
+                     });
+
+    immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
+                     {
+                         struct PushData
+                         {
+                             uint32_t src_id;
+                             uint32_t cubemap_id;
+                         };
+
+                         PushData data{};
+                         data.src_id = first_exr_handle;
+                         data.cubemap_id = first_cubemap_handle;
+
+                         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, exr_to_cubemap_pipeline);
+                         std::array<VkDescriptorSet, 3> sets{ buffer_set, image_set, sampler_set };
+                         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
+                         for (auto i = 0; i < exr_envmaps.size(); i++)
+                         {
+                             auto& exr_envmap = exr_envmaps[i];
+                             auto& cubemap = cubemaps[i];
+
+                             data.src_id = first_exr_handle + i;
+                             data.cubemap_id = first_cubemap_handle + i;
+                             vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+
+                             auto wg_x = get_group_count(exr_envmaps[i].extent.width, 32);
+                             auto wg_y = get_group_count(exr_envmaps[i].extent.height, 32);
+                             vkCmdDispatch(cmd, wg_x, wg_y, 6);
+                         }
+
+                         giga_barrier(cmd);
+
+                         for (const auto& cubemap : cubemaps)
+                         {
+                             generate_mipmaps(cmd, cubemap.image, cubemap.extent, 6);
+                         }
+                     });
 
     // Destroy exr and cubemaps as they are no longer needed
     for (const auto& exr_envmap : exr_envmaps)

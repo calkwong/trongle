@@ -110,7 +110,7 @@ Image create_image(
     image.extent = extent;
     image.format = format;
 
-    VkImageCreateInfo img_info{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    VkImageCreateInfo img_info{ .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
     img_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     img_info.imageType = VK_IMAGE_TYPE_2D;
     img_info.format = format;
@@ -389,11 +389,36 @@ VkSampler create_depth_reduce_sampler(VkDevice device)
     return sampler;
 }
 
-void transition_images(
-    VkCommandBuffer cmd,
-    std::vector<VkImage>& images,
-    std::vector<VkImage>& depth_images
-)
+void transition_images(VkCommandBuffer cmd, std::vector<VkImage>& images)
+{
+    std::vector<VkImageMemoryBarrier2> barriers{};
+
+    VkImageSubresourceRange subresource_range{};
+    subresource_range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    subresource_range.baseMipLevel = 0;
+    subresource_range.levelCount = VK_REMAINING_MIP_LEVELS;
+    subresource_range.baseArrayLayer = 0;
+    subresource_range.layerCount = VK_REMAINING_ARRAY_LAYERS;
+
+    for (auto image : images)
+    {
+        barriers.emplace_back(VkImageMemoryBarrier2{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .image = image,
+            .subresourceRange = subresource_range,
+        });
+    }
+
+    VkDependencyInfo info{ .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+    info.imageMemoryBarrierCount = barriers.size();
+    info.pImageMemoryBarriers = barriers.data();
+
+    vkCmdPipelineBarrier2(cmd, &info);
+}
+
+void transition_images(VkCommandBuffer cmd, std::vector<VkImage>& images, std::vector<VkImage>& depth_images)
 {
     std::vector<VkImageMemoryBarrier2> barriers{};
 
@@ -464,4 +489,75 @@ void copy_image(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent2D src_ex
     blit_info.pRegions = &blit;
 
     vkCmdBlitImage2(cmd, &blit_info);
+}
+
+uint32_t get_image_mip_level(uint32_t width, uint32_t height)
+{
+    auto extent = width > height ? width : height;
+    return static_cast<uint32_t>(std::floor(std::log2(extent))) + 1;
+}
+
+uint32_t get_image_mip_level(VkExtent2D image_extent)
+{
+    auto extent = image_extent.width > image_extent.height ? image_extent.width : image_extent.height;
+    return static_cast<uint32_t>(std::floor(std::log2(extent))) + 1;
+}
+
+// TODO: blit all 6 layers for cubemap per mip levelin a single call
+void generate_mipmaps(VkCommandBuffer cmd, VkImage image, VkExtent3D extent, uint32_t layers /*= 1*/)
+{
+    VkExtent2D current_extent = VkExtent2D{ extent.width, extent.height };
+    int mip_levels = get_image_mip_level(current_extent);
+    int current_layer = layers - 1;
+
+    while (current_layer >= 0)
+    {
+        for (int mip = 0; mip < mip_levels; mip++)
+        {
+            VkExtent2D half_extent = current_extent;
+            half_extent.width /= 2;
+            half_extent.height /= 2;
+
+            if (mip < mip_levels - 1)
+            {
+                VkImageBlit2 blit_region{};
+                blit_region.sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2;
+                blit_region.srcOffsets[1].x = current_extent.width;
+                blit_region.srcOffsets[1].y = current_extent.height;
+                blit_region.srcOffsets[1].z = 1;
+
+                blit_region.dstOffsets[1].x = half_extent.width;
+                blit_region.dstOffsets[1].y = half_extent.height;
+                blit_region.dstOffsets[1].z = 1;
+
+                blit_region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                blit_region.srcSubresource.baseArrayLayer = current_layer;
+                blit_region.srcSubresource.layerCount = 1;
+                blit_region.srcSubresource.mipLevel = mip;
+
+                blit_region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                blit_region.dstSubresource.baseArrayLayer = current_layer;
+                blit_region.dstSubresource.layerCount = 1;
+                blit_region.dstSubresource.mipLevel = mip + 1;
+
+                VkBlitImageInfo2 blit_info{};
+                blit_info.sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2;
+                blit_info.dstImage = image;
+                blit_info.dstImageLayout = VK_IMAGE_LAYOUT_GENERAL;
+                blit_info.srcImage = image;
+                blit_info.srcImageLayout = VK_IMAGE_LAYOUT_GENERAL;
+                blit_info.filter = VK_FILTER_LINEAR;
+                blit_info.regionCount = 1;
+                blit_info.pRegions = &blit_region;
+
+                vkCmdBlitImage2(cmd, &blit_info);
+
+                current_extent = half_extent;
+
+                stage_barrier(cmd, image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+            }
+        }
+        current_layer--;
+        current_extent = VkExtent2D{ extent.width, extent.height };
+    }
 }

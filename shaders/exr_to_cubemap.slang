@@ -2,7 +2,6 @@ import bindings;
 
 struct PushConstants
 {
-    float2 image_size;
     uint src_id;
     uint cubemap_id;
 };
@@ -41,7 +40,7 @@ void main(
     if (any(texel_coord.xy >= float2(cubemap_size)))
         return;
 
-    float2 uv = (float2(texel_coord) + float2(0.5)) / pc.image_size;
+    float2 uv = (float2(texel_coord) + float2(0.5)) / float2(cubemap_size);
     uv = uv * 2.0 - 1.0;
     uv.y *= -1.0;
 

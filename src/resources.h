@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <functional>
 #include <vector>
+#include <cstdint>
 
 struct Image
 {
@@ -110,6 +111,11 @@ void immediate_submit(VkDevice device, VkQueue queue, VkFence fence, VkCommandPo
 VkSampler create_sampler(VkDevice device, VkFilter filter, VkSamplerMipmapMode mipmap, VkSamplerAddressMode address, bool compare_enable = 0);
 VkSampler create_depth_reduce_sampler(VkDevice device);
 
+void transition_images(VkCommandBuffer cmd, std::vector<VkImage>& images);
 void transition_images(VkCommandBuffer cmd, std::vector<VkImage>& images, std::vector<VkImage>& depth_images);
 
 void copy_image(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent2D src_extent, VkExtent2D dst_extent);
+
+uint32_t get_image_mip_level(uint32_t width, uint32_t height);
+uint32_t get_image_mip_level(VkExtent2D image_extent);
+void generate_mipmaps(VkCommandBuffer cmd, VkImage image, VkExtent3D extent, uint32_t layers = 1);
