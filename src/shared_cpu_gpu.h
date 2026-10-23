@@ -68,7 +68,7 @@ PUBLIC_ACCESS struct MaterialData
     uint32_t diffuse_id = -1;
     uint32_t metal_roughness_id = -1;
 
-    float3 emissive_factor;
+    float3 emissive_factor = float3(0.0f);
     uint32_t normal_id = -1;
 
     uint32_t emissive_id = -1;

@@ -701,7 +701,11 @@ bool AssetLoader::load_gltf(
         images = load_images(asset, device, queue, fence, command_pool, cmd, allocator, gltf_path.string());
     }
 
-    assert(!asset.materials.empty() && "No materials found");
+    if (asset.materials.empty())
+    {
+        fmt::println("WARNING: No materials found");
+        materials.emplace_back(MaterialData{});
+    }
 
     for (fastgltf::Material& mat : asset.materials)
     {
@@ -979,7 +983,7 @@ bool AssetLoader::load_gltf(
             }
             else
             {
-                assert(0);
+                mesh_data.material_id = 0;
             }
 
             // TODO: explore if optimizing uncompressed Vertex data is worth it as there's lots of back and forth decompressing at the moment
