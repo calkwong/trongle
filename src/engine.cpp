@@ -49,8 +49,8 @@
 #define MAX_MESH_PIPELINE_QUERIES 2
 
 // const char* ASSET_NAME = "Sponza/Sponza.gltf";
-// const char* ASSET_NAME = "chinesedragon.gltf";
-const char* ASSET_NAME = "sphere.gltf";
+const char* ASSET_NAME = "chinesedragon.gltf";
+// const char* ASSET_NAME = "sphere.gltf";
 // const char* ASSET_NAME = "de_dust2/de_dust2.gltf";
 // const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
 int DEBUG_ID = 0;
@@ -431,7 +431,7 @@ void Engine::run()
         assert(0 && "load_gltf failed");
     }
 
-#if 1
+#if STRESS_TEST == 0
     for (const auto& node : asset_loader.parent_nodes)
     {
         register_object(node, glm::mat4(1.0), asset_loader.children_nodes, asset_loader.meshes);
@@ -912,8 +912,13 @@ void Engine::run()
     std::array<uint64_t, MAX_TIMESTAMP_QUERIES> timestamp_results{};
     std::array<uint64_t, MAX_MESH_PIPELINE_QUERIES> mesh_pipeline_results{};
 
-    bool skip_occlusion = true;
+#if STRESS_TEST == 1
+    bool b_shadows = false;
+#else
     bool b_shadows = true;
+#endif
+
+    bool skip_occlusion = true;
     float azimuth = 0.0f;
     float elevation = 80.0f;
 
