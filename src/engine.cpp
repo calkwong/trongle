@@ -800,13 +800,13 @@ void Engine::run()
         image_manager.register_image(device, envmap.view, VK_IMAGE_LAYOUT_GENERAL);
     }
 
-    immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
-                     {
-                         transition_images(cmd, images_to_transition);
-                     });
+    Image lpv_atlas = load_exr_image_array(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, "../assets/de_dust2_lpv_atlas/");
+    auto lpv_atlas_handle = image_manager.register_sampled_image(device, lpv_atlas.view, VK_IMAGE_LAYOUT_GENERAL);
 
     immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
                      {
+                         transition_images(cmd, images_to_transition);
+
                          struct PushData
                          {
                              uint32_t src_id;
@@ -2060,6 +2060,7 @@ void Engine::run()
     destroy_buffer(allocator, late_pass_candidates_buffer);
 
     destroy_image(device, allocator, depth_pyramid_image);
+    destroy_image(device, allocator, lpv_atlas);
     for (const auto& img : shadowmap_images)
     {
         destroy_image(device, allocator, img);

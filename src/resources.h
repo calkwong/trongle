@@ -91,6 +91,18 @@ Image create_image(
     bool mipmapped = false
 );
 
+Image create_image_array(
+    VkDevice device,
+    VmaAllocator allocator,
+    VkExtent3D extent,
+    VkFormat format,
+    VkImageUsageFlags usage,
+    uint32_t layer_count,
+    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+    VmaAllocationCreateFlags allocation_flags = 0,
+    bool mipmapped = false
+);
+
 Image create_cubemap(
     VkDevice device,
     VmaAllocator allocator,

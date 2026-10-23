@@ -72,3 +72,15 @@ std::vector<Image> load_exr_images(
     std::string_view asset_path,
     bool mipmap = false
 );
+
+// Packs directory of images into a single texture array
+Image load_exr_image_array(
+    VkDevice device,
+    VkQueue queue,
+    VkFence fence,
+    VkCommandPool command_pool,
+    VkCommandBuffer cmd,
+    VmaAllocator allocator,
+    std::string_view asset_path,
+    bool mipmap = false
+);
