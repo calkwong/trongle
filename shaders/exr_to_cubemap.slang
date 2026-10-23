@@ -25,10 +25,9 @@ float2 sample_equirectangular_map(float3 dir)
 }
 
 [shader("compute")]
-[numthreads(32, 32, 1)]
+[numthreads(8, 8, 6)]
 void main(
     uint3 global_id: SV_DispatchThreadID,
-    uint3 wg_id: SV_GroupID
 )
 {
     int2 cubemap_size;
@@ -45,7 +44,7 @@ void main(
     uv.y *= -1.0;
 
     float3 direction = float3(0.0);
-    uint face = wg_id.z;
+    uint face = global_id.z;
 
     // +X, -X, +Y, -Y, +Z, -Z
     switch (face)

@@ -842,9 +842,9 @@ void Engine::run()
                              data.cubemap_id = first_cubemap_handle + i;
                              vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(CubemapPushData), &data);
 
-                             auto wg_x = get_group_count(exr_envmaps[i].extent.width, 32);
-                             auto wg_y = get_group_count(exr_envmaps[i].extent.height, 32);
-                             vkCmdDispatch(cmd, wg_x, wg_y, 6);
+                             auto wg_x = get_group_count(exr_envmaps[i].extent.width, 8);
+                             auto wg_y = get_group_count(exr_envmaps[i].extent.height, 8);
+                             vkCmdDispatch(cmd, wg_x, wg_y, 1);
                          }
 
                          giga_barrier(cmd);
@@ -875,16 +875,19 @@ void Engine::run()
                              data.src_id = first_cubemap_handle + i;
 
                              auto mips = get_image_mip_level(envmap.extent.width, envmap.extent.height);
-                             auto wg_x = get_group_count(envmap.extent.width, 32);
-                             auto wg_y = get_group_count(envmap.extent.height, 32);
+                             auto current_extent = VkExtent2D{ envmap.extent.width, envmap.extent.height };
                              for (uint32_t mip = 0; mip < mips; mip++)
                              {
+                                 auto wg_x = get_group_count(current_extent.width, 8);
+                                 auto wg_y = get_group_count(current_extent.height, 8);
                                  data.envmap_id = first_envmap_mip_handle + counter;
                                  data.roughness = static_cast<float>(mip) / static_cast<float>(mips);
                                  vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(EnvmapPushData), &data);
-                                 vkCmdDispatch(cmd, wg_x, wg_y, 6);
+                                 vkCmdDispatch(cmd, wg_x, wg_y, 1);
 
                                  counter++;
+                                 current_extent.width /= 2;
+                                 current_extent.height /= 2;
                              }
                          }
                      });

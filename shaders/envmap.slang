@@ -15,10 +15,9 @@ PushConstants pc;
 static const float PI = 3.14159265359;
 
 [shader("compute")]
-[numthreads(32, 32, 1)]
+[numthreads(8, 8, 6)]
 void main(
     uint3 global_id: SV_DispatchThreadID,
-    uint3 wg_id: SV_GroupID
 )
 {
     int2 envmap_size;
@@ -38,7 +37,7 @@ void main(
     get_sampled_image<TextureCube>(pc.src_id).GetDimensions(0, src_size.x, src_size.y, layers);
 
     float3 direction = float3(0.0);
-    uint face = wg_id.z;
+    uint face = global_id.z;
 
     // +X, -X, +Y, -Y, +Z, -Z
     switch (face)
