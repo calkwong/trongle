@@ -21,6 +21,8 @@ struct PushConstants
     uint output_id;
     float3 light_dir;
     uint shadowmap_id;
+    uint envmap_id;
+    uint lpv_atlas_id;
 }
 
 [[vk::push_constant]]
@@ -39,6 +41,8 @@ enum Debug : uint
     Shadow,
     Triangles,
     Meshlets,
+    IndirectSpecular,
+    IndirectDiffuse
 };
 
 #define CS2 1
@@ -277,15 +281,13 @@ void main(uint3 global_id: SV_DispatchThreadID)
     {
         SamplerState nearest_samp = get_sampler<SamplerState>(NEAREST_SAMPLER);
 
-        float2 uv = in_uv;
-
-        if (uv.x < 0.5 && uv.y < 0.5)
+        if (in_uv.x < 0.5 && in_uv.y < 0.5)
         {
             uint cascade = 0;
-            cascade = uv.x < 0.25 ? cascade : cascade + 1;
-            cascade = uv.y < 0.25 ? cascade : cascade + 2;
+            cascade = in_uv.x < 0.25 ? cascade : cascade + 1;
+            cascade = in_uv.y < 0.25 ? cascade : cascade + 2;
 
-            float2 shadow_uv = uv * 4.0;
+            float2 shadow_uv = in_uv * 4.0;
             shadow_uv = fmod(shadow_uv, float2(1.0));
 
             out_color.xyz = get_nonuniform_sampled_image<Texture2D>(pc.shadowmap_id + cascade).SampleLevel(nearest_samp, shadow_uv, 0.0).rrr;
@@ -302,6 +304,20 @@ void main(uint3 global_id: SV_DispatchThreadID)
     {
         uint mhash = hash(meshlet_id);
         out_color.xyz = float3(float(mhash & 255), float((mhash >> 8) & 255), float((mhash >> 16) & 255)) / 255.0;
+        break;
+    }
+    case Debug::IndirectSpecular:
+    {
+        SamplerState cube_samp = get_sampler<SamplerState>(CUBE_SAMPLER);
+        uint offset = 0;
+        float mip = 0.0;
+        out_color.xyz = get_sampled_image<TextureCube>(pc.envmap_id + offset).SampleLevel(cube_samp, N, mip).rgb;
+        break;
+    }
+    case Debug::IndirectDiffuse:
+    {
+        uint offset = 0;
+        out_color.xyz = get_sampled_image<texture2D>(pc.lpv_atlas_id + offset).SampleLevel(samp, in_uv, 0.0).rgb;
         break;
     }
     default:

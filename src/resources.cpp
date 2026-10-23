@@ -590,3 +590,25 @@ void generate_mipmaps(VkCommandBuffer cmd, VkImage image, VkExtent3D extent, uin
         }
     }
 }
+
+VkImageView create_image_view(VkDevice device, const Image& image, VkImageViewType view_type, uint32_t base_mip, uint32_t mip_level_count, VkImageAspectFlags aspect /*= VK_IMAGE_ASPECT_COLOR_BIT*/)
+{
+    VkImageView image_view{};
+
+    VkImageViewCreateInfo img_view_info{};
+    img_view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    img_view_info.image = image.image;
+    img_view_info.viewType = view_type;
+    img_view_info.format = image.format;
+    VkImageSubresourceRange subresource_range{};
+    subresource_range.aspectMask = aspect;
+    subresource_range.baseMipLevel = base_mip;
+    subresource_range.levelCount = mip_level_count;
+    subresource_range.baseArrayLayer = 0;
+    subresource_range.layerCount = VK_REMAINING_ARRAY_LAYERS;
+    img_view_info.subresourceRange = subresource_range;
+
+    VK_CHECK(vkCreateImageView(device, &img_view_info, nullptr, &image_view));
+
+    return image_view;
+}
