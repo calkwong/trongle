@@ -156,3 +156,9 @@ PUBLIC_ACCESS struct LightProbeVolume
     float4 atlas_scale;
     float4 atlas_offset;
 };
+
+PUBLIC_ACCESS struct FroxelAABB
+{
+	float4 min;
+	float4 max;
+};

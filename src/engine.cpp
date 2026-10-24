@@ -528,6 +528,7 @@ void Engine::run()
     Buffer meshlet_indices_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, asset_loader.meshlet_indices.data(), asset_loader.meshlet_indices.size() * sizeof(uint32_t));
     Buffer spd_counter_buffer = create_buffer(device, allocator, sizeof(uint32_t), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT_KHR);
     Buffer late_pass_candidates_buffer = create_buffer(device, allocator, (meshlet_offset + get_group_count(meshlet_bits, 32)) * sizeof(uint32_t), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT_KHR);
+    Buffer froxels_buffer = create_buffer(device, allocator, sizeof(FroxelAABB) * FROXELS_X * FROXELS_Y * FROXELS_X, 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT);
 
     std::array<Image, SUN_CASCADE_COUNT> shadowmap_images{};
     std::array<uint32_t, SUN_CASCADE_COUNT> shadowmap_descriptor_handles{};
@@ -678,6 +679,7 @@ void Engine::run()
     VkPipeline depth_pipeline{};
     VkPipeline exr_to_cubemap_pipeline{};
     VkPipeline envmap_pipeline{};
+    VkPipeline froxels_pipeline{};
 
     std::vector<VkPipeline> pipelines{};
 
@@ -695,6 +697,7 @@ void Engine::run()
         auto depth_program = load_shader_program("depth.slang", device);
         auto exr_to_cubemap_program = load_shader_program("exr_to_cubemap.slang", device);
         auto envmap_program = load_shader_program("envmap.slang", device);
+        auto froxels_program = load_shader_program("froxels.slang", device);
 
         pipelines.clear();
 
@@ -747,6 +750,7 @@ void Engine::run()
         replace_pipeline(cull_shadow_meshlet_pipeline, create_compute_pipeline(device, &cull_shadow_meshlet_program, nullptr, &pipeline_layout));
         replace_pipeline(exr_to_cubemap_pipeline, create_compute_pipeline(device, &exr_to_cubemap_program, nullptr, &pipeline_layout));
         replace_pipeline(envmap_pipeline, create_compute_pipeline(device, &envmap_program, nullptr, &pipeline_layout));
+        replace_pipeline(froxels_pipeline, create_compute_pipeline(device, &froxels_program, nullptr, &pipeline_layout));
     };
 
     build_pipelines();
@@ -870,6 +874,39 @@ void Engine::run()
                      {
                          transition_images(cmd, images_to_transition);
 
+                         std::array<VkDescriptorSet, 3> sets{ buffer_set, image_set, sampler_set };
+                         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
+
+                         {
+                             struct FroxelsPushConstants
+                             {
+                                 float4x4 inverse_proj;
+                                 VkDeviceAddress froxels_buffer;
+                                 glm::vec2 screen_size;
+                                 glm::vec2 froxel_dim;
+                                 float near_z;
+                                 float far_z;
+                                 uint32_t depth_slices;
+                             };
+
+                             FroxelsPushConstants data{};
+                             data.inverse_proj = glm::inverse(frame_context.proj);
+                             data.froxels_buffer = froxels_buffer.address;
+                             data.screen_size = glm::vec2(swapchain.extent.width, swapchain.extent.height);
+                             auto froxel_x = glm::ceil(static_cast<float>(swapchain.extent.width) / FROXELS_X);
+                             auto froxel_y = glm::ceil(static_cast<float>(swapchain.extent.height) / FROXELS_Y);
+                             data.froxel_dim = glm::vec2(froxel_x, froxel_y);
+                             // TODO: We can inflate near plane otherwise we get lots of intersections close to near plane
+                             // Setting a limit on far plane is also an option - need to modify line_intersection_to_z_plane on shader side
+                             data.near_z = camera.near;
+                             data.far_z = camera.far;
+                             data.depth_slices = FROXELS_Z;
+
+                             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, froxels_pipeline);
+                             vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(FroxelsPushConstants), &data);
+                             vkCmdDispatch(cmd, 1, 1, FROXELS_Z);
+                         }
+
                          struct CubemapPushData
                          {
                              uint32_t src_id;
@@ -881,8 +918,6 @@ void Engine::run()
                          data.cubemap_id = first_cubemap_handle;
 
                          vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, exr_to_cubemap_pipeline);
-                         std::array<VkDescriptorSet, 3> sets{ buffer_set, image_set, sampler_set };
-                         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
                          for (auto i = 0; i < exr_envmaps.size(); i++)
                          {
                              auto& exr_envmap = exr_envmaps[i];
@@ -2176,6 +2211,7 @@ void Engine::run()
     destroy_buffer(allocator, meshlet_indices_buffer);
     destroy_buffer(allocator, spd_counter_buffer);
     destroy_buffer(allocator, late_pass_candidates_buffer);
+    destroy_buffer(allocator, froxels_buffer);
     destroy_buffer(allocator, lpv_buffer);
 
     destroy_image(device, allocator, depth_pyramid_image);

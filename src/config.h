@@ -23,3 +23,7 @@
 #define SHADOW_DRAW_DISTANCE 48.0f
 
 #define MAX_DEBUG_ID 12
+
+#define FROXELS_X 16
+#define FROXELS_Y 8
+#define FROXELS_Z 24
