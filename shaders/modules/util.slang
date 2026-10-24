@@ -1,5 +1,7 @@
 module util;
 
+#include "../../src/config.h"
+
 // 10-10-10-2
 public float3 decode_normal(uint n)
 {
@@ -97,4 +99,26 @@ public float3 decode_hemi_octahedron_normal(float2 v_hemi_oct)
     // This is free, it gets compiled into the TS->WS matrix mul
     tangent_normal.y = -tangent_normal.y;
     return tangent_normal;
+}
+
+// Assumes infinite far plane, reverse z
+// Returns positive z, negate where necessary
+public float linearize_depth(float near, float depth)
+{
+	return near / depth;
+}
+
+// https://advances.realtimerendering.com/s2016/Siggraph2016_idTech6.pdf, Slide 5
+// view_z must be positive!
+// Do not use this for volumetrics!
+public uint get_cluster_z_slice(float view_z, float scale, float bias)
+{
+    uint slice = uint(floor(log(view_z) * scale - bias));
+    return clamp(slice, 0, FROXELS_Z - 1);
+}
+
+public uint get_cluster_index(float2 frag_coord, float2 pixels_per_cluster, uint slice)
+{
+    uint2 clusters = uint2(floor(frag_coord / pixels_per_cluster));
+    return clusters.x + FROXELS_X * clusters.y + slice * FROXELS_X * FROXELS_Y;
 }

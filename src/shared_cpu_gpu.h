@@ -162,3 +162,16 @@ PUBLIC_ACCESS struct FroxelAABB
 	float4 min;
 	float4 max;
 };
+
+PUBLIC_ACCESS struct FroxelOffset
+{
+    uint32_t offset;
+    uint32_t count;
+};
+
+PUBLIC_ACCESS struct PointLight
+{
+    float3 pos;
+    float radius;
+    float4 color;
+};

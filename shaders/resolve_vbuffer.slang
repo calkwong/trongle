@@ -16,15 +16,23 @@ struct PushConstants
     MaterialData* material_buffer;
     GlobalData* global_buffer;
     LightProbeVolume* lpv_buffer;
+    PointLight* light_buffer;
+    FroxelOffset* froxel_offset_list;
+    uint* froxel_item_list;
+    float3 light_dir;
+    uint shadowmap_id;
     float3 camera_pos;
     uint visbuffer_id;
     float2 screen_extent;
+    float2 pixels_per_cluster;
     uint debug_id;
     uint output_id;
-    float3 light_dir;
-    uint shadowmap_id;
     uint envmap_id;
     uint lpv_atlas_id;
+    uint depth_id;
+    float near;
+    float scale;
+    float bias;
 }
 
 [[vk::push_constant]]
@@ -233,6 +241,33 @@ void main(uint3 global_id: SV_DispatchThreadID)
         float shadow_factor = calculate_shadow(world_pos, pc.shadowmap_id, pc.global_buffer);
         out_color.xyz *= shadow_factor;
     }
+
+#if 0
+    let frag_coord = tex_coord + float2(0.5);
+    float depth = get_sampled_image<Texture2D>(pc.depth_id).Load(int3(tex_coord, 0)).r;
+    float view_z = linearize_depth(pc.near, depth);
+    uint slice = get_cluster_z_slice(view_z, pc.scale, pc.bias);
+    uint cluster_index = get_cluster_index(float2(frag_coord.x, pc.screen_extent.y - frag_coord.y), pc.pixels_per_cluster.xy, slice);
+
+    FroxelOffset froxel_offset = pc.froxel_offset_list[cluster_index];
+    for (int i = 0; i < froxel_offset.count; i++)
+    {
+        uint index = pc.froxel_item_list[froxel_offset.offset + i];
+
+        PointLight point_light = pc.light_buffer[index];
+        float3 light_pos = point_light.pos;
+        float light_radius = point_light.radius;
+        float3 light_color = point_light.color.xyz;
+
+        float3 distance = light_pos - world_pos;
+        float3 L = normalize(distance);
+
+        update_brdf_data(brdf_data, L);
+
+        float attenuation = get_square_falloff_attenuation(distance, light_radius);
+        out_color.xyz += eval_brdf(brdf_data, albedo.xyz, roughness, metallic) * light_color * attenuation * brdf_data.NoL;
+    }
+#endif
 
     // TODO: indirect lighting
     out_color.xyz += albedo.xyz * 0.1;

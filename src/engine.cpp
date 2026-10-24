@@ -52,9 +52,9 @@
 #define MAX_TIMESTAMP_QUERIES 20
 #define MAX_MESH_PIPELINE_QUERIES 2
 
-// const char* ASSET_NAME = "Sponza/Sponza.gltf";
+const char* ASSET_NAME = "Sponza/Sponza.gltf";
 // const char* ASSET_NAME = "chinesedragon.gltf";
-const char* ASSET_NAME = "sphere.gltf";
+// const char* ASSET_NAME = "sphere.gltf";
 // const char* ASSET_NAME = "de_dust2/de_dust2.gltf";
 // const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
 int DEBUG_ID = 0;
@@ -529,6 +529,7 @@ void Engine::run()
     Buffer spd_counter_buffer = create_buffer(device, allocator, sizeof(uint32_t), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT_KHR);
     Buffer late_pass_candidates_buffer = create_buffer(device, allocator, (meshlet_offset + get_group_count(meshlet_bits, 32)) * sizeof(uint32_t), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT_KHR);
     Buffer froxels_buffer = create_buffer(device, allocator, sizeof(FroxelAABB) * FROXELS_X * FROXELS_Y * FROXELS_X, 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT);
+    Buffer global_buffer = create_buffer(device, allocator, sizeof(GlobalData) * FRAMES_IN_FLIGHT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT);
 
     std::array<Image, SUN_CASCADE_COUNT> shadowmap_images{};
     std::array<uint32_t, SUN_CASCADE_COUNT> shadowmap_descriptor_handles{};
@@ -680,6 +681,7 @@ void Engine::run()
     VkPipeline exr_to_cubemap_pipeline{};
     VkPipeline envmap_pipeline{};
     VkPipeline froxels_pipeline{};
+    VkPipeline binning_pipeline{};
 
     std::vector<VkPipeline> pipelines{};
 
@@ -698,6 +700,7 @@ void Engine::run()
         auto exr_to_cubemap_program = load_shader_program("exr_to_cubemap.slang", device);
         auto envmap_program = load_shader_program("envmap.slang", device);
         auto froxels_program = load_shader_program("froxels.slang", device);
+        auto binning_program = load_shader_program("binning.slang", device);
 
         pipelines.clear();
 
@@ -751,6 +754,7 @@ void Engine::run()
         replace_pipeline(exr_to_cubemap_pipeline, create_compute_pipeline(device, &exr_to_cubemap_program, nullptr, &pipeline_layout));
         replace_pipeline(envmap_pipeline, create_compute_pipeline(device, &envmap_program, nullptr, &pipeline_layout));
         replace_pipeline(froxels_pipeline, create_compute_pipeline(device, &froxels_program, nullptr, &pipeline_layout));
+        replace_pipeline(binning_pipeline, create_compute_pipeline(device, &binning_program, nullptr, &pipeline_layout));
     };
 
     build_pipelines();
@@ -869,6 +873,25 @@ void Engine::run()
 
     std::vector<LightProbeVolume> lpv_gpu_data = calculate_light_probe_binding(lpv_cpu_data, lpv_atlas);
     Buffer lpv_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, lpv_gpu_data.data(), lpv_gpu_data.size() * sizeof(LightProbeVolume));
+
+    std::mt19937 mt(42);
+    std::uniform_real_distribution<float> pos(-1.0f, 1.0f);
+    std::uniform_real_distribution<float> color(0.f, 1.0f);
+
+    std::vector<PointLight> light_data(MAX_POINT_LIGHTS);
+
+    float light_area = 10.f; // in radius
+    float light_radius = 1.f;
+
+    for (size_t i = 0; i < 1000; i++)
+    {
+        light_data[i].pos = glm::vec3(pos(mt) * light_area, std::abs(pos(mt) * light_area), pos(mt) * light_area);
+        light_data[i].radius = light_radius;
+        glm::vec3 light_color = glm::vec3(color(mt), color(mt), color(mt));
+        light_data[i].color = glm::vec4(light_color, 1.0);
+    }
+
+    Buffer light_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, light_data.data(), MAX_POINT_LIGHTS * sizeof(PointLight));
 
     immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
                      {
@@ -1147,6 +1170,10 @@ void Engine::run()
         VK_CHECK_SWAPCHAIN(acquire_result);
         VK_CHECK(vkResetFences(device, 1, &frame.fence));
 
+        // auto* mapped_global_buffer = static_cast<GlobalData*>(global_buffer.info.pMappedData);
+        // GlobalData glob_data{};
+        // mapped_global_buffer[frame_number % FRAMES_IN_FLIGHT] = glob_data;
+
         // Get query pool results
         auto timestamp_results_size = timestamp_results.size();
         auto mesh_pipeline_results_size = mesh_pipeline_results.size();
@@ -1245,12 +1272,15 @@ void Engine::run()
         auto dispatch_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(Dispatch) * 2, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
         auto prefix_sum_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(PrefixSums), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
         auto meshlet_draw_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(uint32_t) * MAX_MESHLETS_DRAW, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
-        auto global_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(GlobalData) * FRAMES_IN_FLIGHT, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
+        auto froxel_offset_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(FroxelOffset) * TOTAL_FROXELS, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
+        auto froxel_item_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(uint32_t) * MAX_LIGHTS_PER_FROXEL * TOTAL_FROXELS, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
+        auto light_count_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(uint32_t), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
 
         auto depth_pyramid = graph.import_image(depth_pyramid_image, depth_pyramid_descriptor_handle);
         auto spd_counter = graph.import_buffer(spd_counter_buffer, -1);
         auto late_pass_candidates = graph.import_buffer(late_pass_candidates_buffer, -1);
         auto lpv = graph.import_buffer(lpv_buffer, -1);
+        auto globals = graph.import_buffer(global_buffer, -1);
 
         // Record command buffer
         VkCommandBuffer cmd = frame.command_buffer;
@@ -1275,7 +1305,43 @@ void Engine::run()
                 vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 18);
                 // TODO: likely more efficient on compute - we only need to zero 4 values (1 in each PrefixSums sector)
                 vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, VK_WHOLE_SIZE, 0);
+                vkCmdFillBuffer(cmd, get_buffer(graph, light_count_buffer), 0, VK_WHOLE_SIZE, 0);
                 vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 19);
+            }
+        );
+
+        graph.add_pass(
+            Pass("Light culling")
+                .write_buffer(froxel_offset_buffer, AccessType::ComputeShaderWrite)
+                .write_buffer(froxel_item_buffer, AccessType::ComputeShaderWrite)
+                .write_buffer(light_count_buffer, AccessType::ComputeShaderWrite),
+            [&]()
+            {
+                struct PushData
+                {
+                    float4x4 view;
+                    VkDeviceAddress froxels_buffer;
+                    VkDeviceAddress lpv_buffer;
+                    VkDeviceAddress light_buffer;
+                    VkDeviceAddress froxel_offset_list;
+                    VkDeviceAddress froxel_item_list;
+                    VkDeviceAddress light_count_buffer;
+                    uint32_t light_count;
+                };
+
+                PushData data{};
+                data.view = frame_context.view;
+                data.froxels_buffer = froxels_buffer.address;
+                data.lpv_buffer = lpv_buffer.address;
+                data.light_buffer = light_buffer.address;
+                data.froxel_offset_list = get_buffer_address(graph, froxel_offset_buffer);
+                data.froxel_item_list = get_buffer_address(graph, froxel_item_buffer);
+                data.light_count_buffer = get_buffer_address(graph, light_count_buffer);
+                data.light_count = MAX_POINT_LIGHTS;
+
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, binning_pipeline);
+                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                vkCmdDispatch(cmd, 1, 1, 6);
             }
         );
 
@@ -1825,7 +1891,7 @@ void Engine::run()
 
             graph.add_pass(
                 Pass("Generate shadow matrices")
-                    .write_buffer(global_buffer, AccessType::ComputeShaderWrite),
+                    .write_buffer(globals, AccessType::ComputeShaderWrite),
                 [&]()
                 {
                     struct PushData
@@ -1838,7 +1904,7 @@ void Engine::run()
                         float lambda;
                     };
                     PushData data{};
-                    data.global_buffer = get_buffer_address(graph, global_buffer, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
+                    data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
                     auto proj = glm::perspective(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / static_cast<float>(swapchain.extent.height), SHADOW_DRAW_DISTANCE, camera.near);
                     data.inverse_view_proj = glm::inverse(proj * frame_context.view);
                     data.sunlight_dir = sunlight_dir;
@@ -1855,7 +1921,7 @@ void Engine::run()
             graph.add_pass(
                 Pass("Cull shadow instances")
                     .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
-                    .read_buffer(global_buffer, AccessType::ComputeShaderReadOther)
+                    .read_buffer(globals, AccessType::ComputeShaderReadOther)
                     .write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite),
                 [&]()
                 {
@@ -1872,7 +1938,7 @@ void Engine::run()
                     };
 
                     PushData data{};
-                    data.global_buffer = get_buffer_address(graph, global_buffer, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
+                    data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
                     data.object_buffer = object_buffer.address;
                     data.mesh_buffer = mesh_buffer.address;
                     data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
@@ -1918,7 +1984,7 @@ void Engine::run()
                     Pass("Cull shadow meshlets")
                         .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
                         .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
-                        .read_buffer(global_buffer, AccessType::ComputeShaderReadOther)
+                        .read_buffer(globals, AccessType::ComputeShaderReadOther)
                         .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite)
                         .write_buffer(meshlet_draw_buffer, AccessType::ComputeShaderWrite),
                     [&, cascade_index]()
@@ -1937,7 +2003,7 @@ void Engine::run()
                         };
 
                         PushData data{};
-                        data.global_buffer = get_buffer_address(graph, global_buffer, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
+                        data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
                         data.object_buffer = object_buffer.address;
                         data.meshlet_buffer = meshlet_buffer.address;
                         data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
@@ -1958,7 +2024,7 @@ void Engine::run()
                         .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
                         .read_buffer(prefix_sum_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
                         .read_buffer(meshlet_draw_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
-                        .read_buffer(global_buffer, AccessType::ComputeShaderReadOther)
+                        .read_buffer(globals, AccessType::ComputeShaderReadOther)
                         .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
                         .write_image(shadowmaps[cascade_index], AccessType::DepthStencilAttachmentReadWrite),
                     [&, cascade_index]()
@@ -2007,7 +2073,7 @@ void Engine::run()
                         };
 
                         PushData data{};
-                        data.global_buffer = get_buffer_address(graph, global_buffer, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
+                        data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
                         data.object_buffer = object_buffer.address;
                         data.vertex_buffer = vertex_buffer.address;
                         data.meshlet_buffer = meshlet_buffer.address;
@@ -2026,7 +2092,10 @@ void Engine::run()
 
         auto lighting_pass = Pass("Lighting")
                                  .read_image(vbuffer, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
-                                 .read_image(global_buffer, AccessType::ComputeShaderReadOther)
+                                 .read_buffer(globals, AccessType::ComputeShaderReadOther)
+                                 .read_image(depth_image, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                                 .read_buffer(froxel_offset_buffer, AccessType::ComputeShaderReadOther)
+                                 .read_buffer(froxel_item_buffer, AccessType::ComputeShaderReadOther)
                                  .write_image(draw_image, AccessType::ComputeShaderWrite);
         for (const auto shadowmap : shadowmaps)
         {
@@ -2046,15 +2115,23 @@ void Engine::run()
                     VkDeviceAddress material_buffer;
                     VkDeviceAddress global_buffer;
                     VkDeviceAddress lpv_buffer;
+                    VkDeviceAddress light_buffer;
+                    VkDeviceAddress froxel_offset_list;
+                    VkDeviceAddress froxel_item_list;
+                    glm::vec3 light_dir;
+                    uint32_t shadowmap_id; // Offset accordingly
                     glm::vec3 camera_pos;
                     uint32_t visbuffer_id;
                     glm::vec2 screen_extent;
+                    glm::vec2 pixels_per_cluster;
                     uint32_t debug_id;
                     uint32_t output_id;
-                    glm::vec3 light_dir;
-                    uint32_t shadowmap_id; // Offset accordingly
                     uint32_t envmap_id;
                     uint32_t lpv_atlas_id;
+                    uint32_t depth_id;
+                    float near;
+                    float scale;
+                    float bias;
                 };
 
                 PushData data{};
@@ -2064,17 +2141,28 @@ void Engine::run()
                 data.meshlet_buffer = meshlet_buffer.address;
                 data.meshlet_indices_buffer = meshlet_indices_buffer.address;
                 data.material_buffer = material_buffer.address;
-                data.global_buffer = get_buffer_address(graph, global_buffer, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
+                data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
                 data.lpv_buffer = lpv_buffer.address;
+                data.light_buffer = light_buffer.address;
+                data.froxel_offset_list = get_buffer_address(graph, froxel_offset_buffer);
+                data.froxel_item_list = get_buffer_address(graph, froxel_item_buffer);
+                data.light_dir = sunlight_dir;
+                data.shadowmap_id = b_shadows ? get_image_id(graph, shadowmaps[0]) : -1u;
                 data.camera_pos = camera.position;
                 data.visbuffer_id = get_image_id(graph, vbuffer);
                 data.screen_extent = glm::vec2(swapchain.extent.width, swapchain.extent.height);
+                auto cluster_x = glm::ceil(static_cast<float>(swapchain.extent.width) / FROXELS_X);
+                auto cluster_y = glm::ceil(static_cast<float>(swapchain.extent.height) / FROXELS_Y);
+                data.pixels_per_cluster = glm::vec2(cluster_x, cluster_y);
                 data.debug_id = DEBUG_ID;
                 data.output_id = get_image_id(graph, draw_image);
-                data.light_dir = sunlight_dir;
-                data.shadowmap_id = b_shadows ? get_image_id(graph, shadowmaps[0]) : -1u;
                 data.envmap_id = first_envmap_handle;
                 data.lpv_atlas_id = lpv_atlas_handle;
+                data.depth_id = get_image_id(graph, depth_image);
+                data.near = camera.near;
+                const float ratio = camera.far / camera.near;
+                data.scale = static_cast<float>(FROXELS_Z) / glm::log(ratio);
+                data.bias = static_cast<float>(FROXELS_Z) * glm::log(camera.near) / glm::log(ratio);
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, lighting_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
@@ -2213,6 +2301,8 @@ void Engine::run()
     destroy_buffer(allocator, late_pass_candidates_buffer);
     destroy_buffer(allocator, froxels_buffer);
     destroy_buffer(allocator, lpv_buffer);
+    destroy_buffer(allocator, light_buffer);
+    destroy_buffer(allocator, global_buffer);
 
     destroy_image(device, allocator, depth_pyramid_image);
     destroy_image(device, allocator, lpv_atlas);
