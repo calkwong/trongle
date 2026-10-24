@@ -107,6 +107,8 @@ template<typename T>
 struct FrameLocalAccessState
 {
     AccessState state;
+
+    // Careful of dangling ptr - this currently relies on ResourceList being stored in an std::unordered_map, which is ok
     ResourceList<T>* res_list;
 
     // For Owned images, this is for indexing res_list; for External images, index into physical_images/buffers

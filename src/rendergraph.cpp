@@ -248,7 +248,8 @@ void Rendergraph::resolve_images()
             }
 
             physical_images.emplace_back(PhysicalImage{ .image = image.image, .view = image.view, .handle = descriptor_handle });
-            image_states.emplace_back(FrameLocalAccessState<TrackedImage>{ .state = tracked_res.state, .imported = true });
+            uint32_t index = static_cast<uint32_t>(physical_images.size()) - 1;
+            image_states.emplace_back(FrameLocalAccessState<TrackedImage>{ .state = tracked_res.state, .index = index, .imported = true });
             break;
         }
         }
@@ -326,7 +327,8 @@ void Rendergraph::resolve_buffers()
             }
 
             physical_buffers.emplace_back(PhysicalBuffer{ .buffer = buffer.buffer, .address = buffer.address, .size = buffer.size });
-            buffer_states.emplace_back(FrameLocalAccessState<TrackedBuffer>{ .state = tracked_res.state, .imported = true });
+            uint32_t index = static_cast<uint32_t>(physical_buffers.size()) - 1;
+            buffer_states.emplace_back(FrameLocalAccessState<TrackedBuffer>{ .state = tracked_res.state, .index = index, .imported = true });
             break;
         }
         }
@@ -414,6 +416,12 @@ void Rendergraph::reset()
 
 void Rendergraph::add_pass(const Pass& pass, std::function<void()> execute)
 {
+    // fmt::println("Pass: {}", pass.name);
+    // for (const PassInfo& info : pass.reads)
+    //     assert(info.handle < (info.is_image ? image_infos.size() : buffer_infos.size()));
+    // for (const PassInfo& info : pass.writes)
+    //     assert(info.handle < (info.is_image ? image_infos.size() : buffer_infos.size()));
+
     passes.push_back(std::move(pass));
     executes.push_back(std::move(execute));
 }
@@ -513,12 +521,12 @@ void Rendergraph::prepare_barriers()
             if (read.is_image)
             {
                 AccessState& res_state = image_states[id].state;
-                process_write_dependencies(res_state, barrier, read);
+                process_read_dependencies(res_state, barrier, read);
             }
             else
             {
                 AccessState& res_state = buffer_states[id].state;
-                process_write_dependencies(res_state, barrier, read);
+                process_read_dependencies(res_state, barrier, read);
             }
         }
 
