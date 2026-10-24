@@ -4,6 +4,7 @@ import util;
 import barycentrics;
 import pbr;
 import shadow_mapping;
+import lighting_lpv;
 
 struct PushConstants
 {
@@ -14,6 +15,7 @@ struct PushConstants
     uint32_t* meshlet_indices_buffer;
     MaterialData* material_buffer;
     GlobalData* global_buffer;
+    LightProbeVolume* lpv_buffer;
     float3 camera_pos;
     uint visbuffer_id;
     float2 screen_extent;
@@ -316,8 +318,8 @@ void main(uint3 global_id: SV_DispatchThreadID)
     }
     case Debug::IndirectDiffuse:
     {
-        uint offset = 0;
-        out_color.xyz = get_sampled_image<texture2D>(pc.lpv_atlas_id + offset).SampleLevel(samp, in_uv, 0.0).rgb;
+        float3 indirect_diffuse = SampleLightProbeIrradiance(pc.lpv_buffer, world_pos, N, pc.lpv_atlas_id);
+        out_color.xyz = indirect_diffuse;
         break;
     }
     default:

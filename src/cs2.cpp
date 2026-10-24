@@ -118,18 +118,17 @@ std::vector<Entity> parse_and_extract_lpvs(std::string entity_file)
     return probes;
 }
 
+// S2V assigns each node the 'best' LPV - we will do a simple selection based on distance on the GPU instead, ignoring indoor/outdoor levels etc.
+// TODO: No sorting of light probes, test if sampling is still valid
 std::vector<LightProbeVolume> calculate_light_probe_binding(std::vector<LpvData>& lpv_cpu_data, const Image& lpv_atlas)
 {
     std::vector<LightProbeVolume> lpv_gpu_data{};
-    // TODO: sort light probes
 
-    // calculate_gpu_probe_data
     for (const auto& lpv : lpv_cpu_data)
     {
         lpv_gpu_data.emplace_back(calculate_gpu_probe_data(lpv, lpv_atlas.extent.width, lpv_atlas.extent.height, lpv_atlas.extent.depth));
     }
 
-    // TODO: chooselightprobevolume
 
     return lpv_gpu_data;
 }

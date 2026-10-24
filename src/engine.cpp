@@ -53,8 +53,8 @@
 #define MAX_MESH_PIPELINE_QUERIES 2
 
 // const char* ASSET_NAME = "Sponza/Sponza.gltf";
-const char* ASSET_NAME = "chinesedragon.gltf";
-// const char* ASSET_NAME = "sphere.gltf";
+// const char* ASSET_NAME = "chinesedragon.gltf";
+const char* ASSET_NAME = "sphere.gltf";
 // const char* ASSET_NAME = "de_dust2/de_dust2.gltf";
 // const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
 int DEBUG_ID = 0;
@@ -863,6 +863,9 @@ void Engine::run()
         lpv_cpu_data[i].atlas_offset = glm::vec3(x, y, z);
     }
 
+    std::vector<LightProbeVolume> lpv_gpu_data = calculate_light_probe_binding(lpv_cpu_data, lpv_atlas);
+    Buffer lpv_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, lpv_gpu_data.data(), lpv_gpu_data.size() * sizeof(LightProbeVolume));
+
     immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
                      {
                          transition_images(cmd, images_to_transition);
@@ -1068,6 +1071,7 @@ void Engine::run()
             frame_context.debug_proj = frame_context.proj;
         }
 
+        // TODO: freezing matrices currently broken
         // Update camera
         camera.update(delta_time);
         if (!freeze_matrices)
@@ -1211,6 +1215,7 @@ void Engine::run()
         auto depth_pyramid = graph.import_image(depth_pyramid_image, depth_pyramid_descriptor_handle);
         auto spd_counter = graph.import_buffer(spd_counter_buffer, -1);
         auto late_pass_candidates = graph.import_buffer(late_pass_candidates_buffer, -1);
+        auto lpv = graph.import_buffer(lpv_buffer, -1);
 
         // Record command buffer
         VkCommandBuffer cmd = frame.command_buffer;
@@ -2005,6 +2010,7 @@ void Engine::run()
                     VkDeviceAddress meshlet_indices_buffer;
                     VkDeviceAddress material_buffer;
                     VkDeviceAddress global_buffer;
+                    VkDeviceAddress lpv_buffer;
                     glm::vec3 camera_pos;
                     uint32_t visbuffer_id;
                     glm::vec2 screen_extent;
@@ -2024,6 +2030,7 @@ void Engine::run()
                 data.meshlet_indices_buffer = meshlet_indices_buffer.address;
                 data.material_buffer = material_buffer.address;
                 data.global_buffer = get_buffer_address(graph, global_buffer, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
+                data.lpv_buffer = lpv_buffer.address;
                 data.camera_pos = camera.position;
                 data.visbuffer_id = get_image_id(graph, vbuffer);
                 data.screen_extent = glm::vec2(swapchain.extent.width, swapchain.extent.height);
@@ -2169,6 +2176,7 @@ void Engine::run()
     destroy_buffer(allocator, meshlet_indices_buffer);
     destroy_buffer(allocator, spd_counter_buffer);
     destroy_buffer(allocator, late_pass_candidates_buffer);
+    destroy_buffer(allocator, lpv_buffer);
 
     destroy_image(device, allocator, depth_pyramid_image);
     destroy_image(device, allocator, lpv_atlas);
