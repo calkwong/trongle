@@ -1382,7 +1382,7 @@ std::vector<Image> load_exr_images(
     return images;
 }
 
-Image load_exr_image_array(
+Image build_probe_atlas(
     VkDevice device,
     VkQueue queue,
     VkFence fence,
@@ -1565,16 +1565,12 @@ Image load_exr_image_array(
         }
     }
 
-    image = create_image_array(
+    image = create_3d_image(
         device,
         allocator,
-        { raw_images[0].ktx_info[0].m_orig_width, raw_images[0].ktx_info[0].m_orig_height, 1 },
+        { raw_images[0].ktx_info[0].m_orig_width, raw_images[0].ktx_info[0].m_orig_height, static_cast<uint32_t>(file_names.size()) },
         raw_images[0].format,
-        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        static_cast<uint32_t>(file_names.size()),
-        VK_IMAGE_ASPECT_COLOR_BIT,
-        0,
-        mipmap
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
     );
 
     auto flush_uploads = [&]()
@@ -1618,9 +1614,9 @@ Image load_exr_image_array(
             copy.bufferImageHeight = 0;
             copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
             copy.imageSubresource.mipLevel = upload_info.mips;
-            copy.imageSubresource.baseArrayLayer = i;
+            copy.imageSubresource.baseArrayLayer = 0;
             copy.imageSubresource.layerCount = 1;
-            copy.imageOffset = VkOffset3D{ 0, 0, 0 };
+            copy.imageOffset = VkOffset3D{ 0, 0, i };
             copy.imageExtent = upload_info.extent;
 
             info.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2;

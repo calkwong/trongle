@@ -612,3 +612,45 @@ VkImageView create_image_view(VkDevice device, const Image& image, VkImageViewTy
 
     return image_view;
 }
+
+Image create_3d_image(VkDevice device, VmaAllocator allocator, VkExtent3D extent, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect /*= VK_IMAGE_ASPECT_COLOR_BIT*/, VmaAllocationCreateFlags flags /*= 0 */)
+{
+    Image image{};
+    image.extent = extent;
+    image.format = format;
+
+    VkImageCreateInfo img_info{};
+    img_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    img_info.imageType = VK_IMAGE_TYPE_3D;
+    img_info.format = format;
+    img_info.extent = extent;
+    img_info.mipLevels = 1;
+    img_info.arrayLayers = 1;
+    img_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    img_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    img_info.usage = usage;
+
+    VmaAllocationCreateInfo alloc_info{};
+    alloc_info.flags = flags;
+    alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+    alloc_info.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+    VK_CHECK(vmaCreateImage(allocator, &img_info, &alloc_info, &image.image, &image.allocation, nullptr));
+
+    VkImageViewCreateInfo img_view_info{};
+    img_view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    img_view_info.image = image.image;
+    img_view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    img_view_info.format = format;
+    VkImageSubresourceRange subresource_range{};
+    subresource_range.aspectMask = aspect;
+    subresource_range.baseMipLevel = 0;
+    subresource_range.levelCount = VK_REMAINING_MIP_LEVELS;
+    subresource_range.baseArrayLayer = 0;
+    subresource_range.layerCount = VK_REMAINING_ARRAY_LAYERS;
+    img_view_info.subresourceRange = subresource_range;
+
+    image.view = create_image_view(device, image, VK_IMAGE_VIEW_TYPE_3D, 0, 1);
+
+    return image;
+}

@@ -73,8 +73,8 @@ std::vector<Image> load_exr_images(
     bool mipmap = false
 );
 
-// Packs directory of images into a single texture array
-Image load_exr_image_array(
+// Packs directory of probe atlas into a 3d texture
+Image build_probe_atlas(
     VkDevice device,
     VkQueue queue,
     VkFence fence,

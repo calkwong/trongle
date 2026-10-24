@@ -133,3 +133,4 @@ uint32_t get_image_mip_level(VkExtent2D image_extent);
 void generate_mipmaps(VkCommandBuffer cmd, VkImage image, VkExtent3D extent, uint32_t layer_count = 1);
 
 VkImageView create_image_view(VkDevice device, const Image& image, VkImageViewType view_type, uint32_t base_mip, uint32_t mip_level_count, VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
+Image create_3d_image(VkDevice device, VmaAllocator allocator, VkExtent3D extent, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT, VmaAllocationCreateFlags flags = 0);
