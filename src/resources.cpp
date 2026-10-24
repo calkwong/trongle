@@ -110,12 +110,14 @@ Image create_image(
     image.extent = extent;
     image.format = format;
 
+    auto mip_level = get_image_mip_level(extent.width, extent.height);
+
     VkImageCreateInfo img_info{ .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
     img_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     img_info.imageType = VK_IMAGE_TYPE_2D;
     img_info.format = format;
     img_info.extent = extent;
-    img_info.mipLevels = mipmapped ? get_image_mip_level(extent.width, extent.height) : 1;
+    img_info.mipLevels = mipmapped ? mip_level : 1;
     img_info.arrayLayers = 1;
     img_info.samples = VK_SAMPLE_COUNT_1_BIT;
     img_info.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -128,20 +130,7 @@ Image create_image(
 
     VK_CHECK(vmaCreateImage(allocator, &img_info, &alloc_info, &image.image, &image.allocation, nullptr));
 
-    VkImageViewCreateInfo img_view_info{};
-    img_view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    img_view_info.image = image.image;
-    img_view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    img_view_info.format = format;
-    VkImageSubresourceRange subresource_range{};
-    subresource_range.aspectMask = aspect;
-    subresource_range.baseMipLevel = 0;
-    subresource_range.levelCount = VK_REMAINING_MIP_LEVELS;
-    subresource_range.baseArrayLayer = 0;
-    subresource_range.layerCount = VK_REMAINING_ARRAY_LAYERS;
-    img_view_info.subresourceRange = subresource_range;
-
-    VK_CHECK(vkCreateImageView(device, &img_view_info, nullptr, &image.view));
+    image.view = create_image_view(device, image, VK_IMAGE_VIEW_TYPE_2D, 0, mipmapped ? mip_level : 1, aspect);
 
     return image;
 }
@@ -162,12 +151,14 @@ Image create_image_array(
     image.extent = extent;
     image.format = format;
 
+    auto mip_level = get_image_mip_level(extent.width, extent.height);
+
     VkImageCreateInfo img_info{ .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
     img_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     img_info.imageType = VK_IMAGE_TYPE_2D;
     img_info.format = format;
     img_info.extent = extent;
-    img_info.mipLevels = mipmapped ? get_image_mip_level(extent.width, extent.height) : 1;
+    img_info.mipLevels = mipmapped ? mip_level : 1;
     img_info.arrayLayers = layer_count;
     img_info.samples = VK_SAMPLE_COUNT_1_BIT;
     img_info.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -180,20 +171,7 @@ Image create_image_array(
 
     VK_CHECK(vmaCreateImage(allocator, &img_info, &alloc_info, &image.image, &image.allocation, nullptr));
 
-    VkImageViewCreateInfo img_view_info{};
-    img_view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    img_view_info.image = image.image;
-    img_view_info.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-    img_view_info.format = format;
-    VkImageSubresourceRange subresource_range{};
-    subresource_range.aspectMask = aspect;
-    subresource_range.baseMipLevel = 0;
-    subresource_range.levelCount = VK_REMAINING_MIP_LEVELS;
-    subresource_range.baseArrayLayer = 0;
-    subresource_range.layerCount = VK_REMAINING_ARRAY_LAYERS;
-    img_view_info.subresourceRange = subresource_range;
-
-    VK_CHECK(vkCreateImageView(device, &img_view_info, nullptr, &image.view));
+    image.view = create_image_view(device, image, VK_IMAGE_VIEW_TYPE_2D_ARRAY, 0, mipmapped ? mip_level : 1, aspect);
 
     return image;
 }
@@ -213,11 +191,13 @@ Image create_cubemap(
     image.extent = extent;
     image.format = format;
 
+    auto mip_level = get_image_mip_level(extent.width, extent.height);
+
     VkImageCreateInfo img_info{ .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
     img_info.imageType = VK_IMAGE_TYPE_2D;
     img_info.format = format;
     img_info.extent = extent;
-    img_info.mipLevels = mipmapped ? get_image_mip_level(extent.width, extent.height) : 1;
+    img_info.mipLevels = mipmapped ? mip_level : 1;
     img_info.arrayLayers = 6;
     img_info.samples = VK_SAMPLE_COUNT_1_BIT;
     img_info.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -231,20 +211,7 @@ Image create_cubemap(
 
     VK_CHECK(vmaCreateImage(allocator, &img_info, &alloc_info, &image.image, &image.allocation, nullptr));
 
-    VkImageViewCreateInfo img_view_info{};
-    img_view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    img_view_info.image = image.image;
-    img_view_info.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
-    img_view_info.format = format;
-    VkImageSubresourceRange subresource_range{};
-    subresource_range.aspectMask = aspect;
-    subresource_range.baseMipLevel = 0;
-    subresource_range.levelCount = VK_REMAINING_MIP_LEVELS;
-    subresource_range.baseArrayLayer = 0;
-    subresource_range.layerCount = VK_REMAINING_ARRAY_LAYERS;
-    img_view_info.subresourceRange = subresource_range;
-
-    VK_CHECK(vkCreateImageView(device, &img_view_info, nullptr, &image.view));
+    image.view = create_image_view(device, image, VK_IMAGE_VIEW_TYPE_CUBE, 0, mipmapped ? mip_level : 1, aspect);
 
     return image;
 }
@@ -535,16 +502,10 @@ uint32_t get_image_mip_level(uint32_t width, uint32_t height)
     return static_cast<uint32_t>(std::floor(std::log2(extent))) + 1;
 }
 
-uint32_t get_image_mip_level(VkExtent2D image_extent)
-{
-    auto extent = image_extent.width > image_extent.height ? image_extent.width : image_extent.height;
-    return static_cast<uint32_t>(std::floor(std::log2(extent))) + 1;
-}
-
 void generate_mipmaps(VkCommandBuffer cmd, VkImage image, VkExtent3D extent, uint32_t layer_count /*= 1*/)
 {
     VkExtent2D current_extent = VkExtent2D{ extent.width, extent.height };
-    int mip_levels = get_image_mip_level(current_extent);
+    int mip_levels = get_image_mip_level(extent.width, extent.height);
 
     for (int mip = 0; mip < mip_levels; mip++)
     {

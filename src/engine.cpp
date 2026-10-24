@@ -573,8 +573,7 @@ void Engine::run()
     auto get_depth_pyramid_image_count = [&](const Image& image) -> uint32_t
     {
         const auto& depth_pyramid_extent = image.extent;
-        // TODO: get_image_mip_level helper
-        return static_cast<uint32_t>(glm::floor(glm::log2(static_cast<float>(glm::max(depth_pyramid_extent.width, depth_pyramid_extent.height))))) + 1;
+        return get_image_mip_level(depth_pyramid_extent.width, depth_pyramid_extent.height);
     };
 
     // Reserves 11 descriptor handles to support up to 2048x2048

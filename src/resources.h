@@ -129,7 +129,6 @@ void transition_images(VkCommandBuffer cmd, std::vector<VkImage>& images, std::v
 void copy_image(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent2D src_extent, VkExtent2D dst_extent);
 
 uint32_t get_image_mip_level(uint32_t width, uint32_t height);
-uint32_t get_image_mip_level(VkExtent2D image_extent);
 void generate_mipmaps(VkCommandBuffer cmd, VkImage image, VkExtent3D extent, uint32_t layer_count = 1);
 
 VkImageView create_image_view(VkDevice device, const Image& image, VkImageViewType view_type, uint32_t base_mip, uint32_t mip_level_count, VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
