@@ -10,6 +10,7 @@
 #include "rendergraph.h"
 #include "sync.h"
 #include "config.h"
+#include "cs2.h"
 
 #include <volk.h>
 #include <vk_mem_alloc.h>
@@ -31,6 +32,7 @@
 #include <glm/ext/vector_uint2.hpp>
 #include <glm/ext/vector_float2.hpp>
 #include <glm/ext/matrix_clip_space.hpp>
+#include <glm/ext/vector_uint3.hpp>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
@@ -44,6 +46,8 @@
 #include <dlfcn.h>
 #include <string>
 #include <random>
+#include <cstdio>
+#include <charconv>
 
 #define MAX_TIMESTAMP_QUERIES 20
 #define MAX_MESH_PIPELINE_QUERIES 2
@@ -431,6 +435,60 @@ void Engine::run()
         assert(0 && "load_gltf failed");
     }
 
+    std::vector<Entity> lpv_key_values = parse_and_extract_lpvs("default_ents.vents");
+
+    struct LpvData
+    {
+        glm::vec3 box_maxs;
+        glm::vec3 box_mins;
+        glm::vec3 origin;
+        uint32_t handshake;
+        glm::uvec3 light_probe_size;
+        uint32_t array_index;
+        glm::uvec3 light_probe_atlas;
+    };
+
+    // Parsing lpv data from map entities
+    std::vector<LpvData> lpv_data(lpv_key_values.size());
+    auto parse_float3 = [&](const std::string& s, glm::vec3& out) -> bool
+    {
+        float x, y, z;
+        if (std::sscanf(s.c_str(), " [ %f , %f , %f ]", &x, &y, &z) != 3)
+            return false;
+        out = { x, y, z };
+        return true;
+    };
+
+    for (auto i = 0; i < lpv_key_values.size(); i++)
+    {
+        auto& lpv_map = lpv_key_values[i];
+
+        glm::vec3 box_maxs{};
+        glm::vec3 box_mins{};
+        glm::vec3 origin{};
+        parse_float3(lpv_map["box_maxs"], box_maxs);
+        parse_float3(lpv_map["box_mins"], box_mins);
+        parse_float3(lpv_map["origin"], origin);
+
+        lpv_data[i].box_maxs = box_maxs;
+        lpv_data[i].box_mins = box_mins;
+        lpv_data[i].origin = origin;
+        std::from_chars(lpv_map["handshake"].data(), lpv_map["handshake"].data() + lpv_map["handshake"].size(), lpv_data[i].handshake);
+
+        uint32_t x, y, z;
+        std::from_chars(lpv_map["light_probe_size_x"].data(), lpv_map["light_probe_size_x"].data() + lpv_map["light_probe_size_x"].size(), x);
+        std::from_chars(lpv_map["light_probe_size_y"].data(), lpv_map["light_probe_size_y"].data() + lpv_map["light_probe_size_y"].size(), y);
+        std::from_chars(lpv_map["light_probe_size_z"].data(), lpv_map["light_probe_size_z"].data() + lpv_map["light_probe_size_z"].size(), z);
+        lpv_data[i].light_probe_size = glm::uvec3(x, y, z);
+
+        std::from_chars(lpv_map["array_index"].data(), lpv_map["array_index"].data() + lpv_map["array_index"].size(), lpv_data[i].array_index);
+
+        std::from_chars(lpv_map["light_probe_atlas_x"].data(), lpv_map["light_probe_atlas_x"].data() + lpv_map["light_probe_atlas_x"].size(), x);
+        std::from_chars(lpv_map["light_probe_atlas_y"].data(), lpv_map["light_probe_atlas_y"].data() + lpv_map["light_probe_atlas_y"].size(), y);
+        std::from_chars(lpv_map["light_probe_atlas_z"].data(), lpv_map["light_probe_atlas_z"].data() + lpv_map["light_probe_atlas_z"].size(), z);
+        lpv_data[i].light_probe_atlas = glm::uvec3(x, y, z);
+    }
+
 #if STRESS_TEST == 0
     for (const auto& node : asset_loader.parent_nodes)
     {
@@ -813,6 +871,7 @@ void Engine::run()
         }
     }
 
+    // TODO: this likely needs to be a 3D texture
     Image lpv_atlas = load_exr_image_array(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, "../assets/de_dust2_lpv_atlas/");
     auto lpv_atlas_handle = image_manager.register_sampled_image(device, lpv_atlas.view, VK_IMAGE_LAYOUT_GENERAL);
 

@@ -9,6 +9,7 @@ target_sources(engine PRIVATE
   camera.cpp
   rendergraph.cpp
   sync.cpp
+  cs2.cpp
 )
 
 set_target_properties(engine PROPERTIES CXX_STANDARD 20)
