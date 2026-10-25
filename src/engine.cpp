@@ -51,6 +51,7 @@
 
 #define MAX_TIMESTAMP_QUERIES 20
 #define MAX_MESH_PIPELINE_QUERIES 2
+#define LOCAL_LIGHTS 0
 
 const char* ASSET_NAME = "Sponza/Sponza.gltf";
 // const char* ASSET_NAME = "chinesedragon.gltf";
@@ -874,6 +875,7 @@ void Engine::run()
     std::vector<LightProbeVolume> lpv_gpu_data = calculate_light_probe_binding(lpv_cpu_data, lpv_atlas);
     Buffer lpv_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, lpv_gpu_data.data(), lpv_gpu_data.size() * sizeof(LightProbeVolume));
 
+#if LOCAL_LIGHTS == 1
     std::mt19937 mt(42);
     std::uniform_real_distribution<float> pos(-1.0f, 1.0f);
     std::uniform_real_distribution<float> color(0.f, 1.0f);
@@ -892,6 +894,7 @@ void Engine::run()
     }
 
     Buffer light_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, light_data.data(), MAX_POINT_LIGHTS * sizeof(PointLight));
+#endif
 
     immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
                      {
@@ -1195,8 +1198,6 @@ void Engine::run()
                                      vkCmdDispatch(cmd, 1, 1, FROXELS_Z);
                                  }
                              });
-
-
         }
 
         // TODO: freezing matrices currently broken
@@ -1380,6 +1381,7 @@ void Engine::run()
             }
         );
 
+#if LOCAL_LIGHTS == 1
         graph.add_pass(
             Pass("Light culling")
                 .write_buffer(froxel_offset_buffer, AccessType::ComputeShaderWrite)
@@ -1414,6 +1416,7 @@ void Engine::run()
                 vkCmdDispatch(cmd, 1, 1, 6);
             }
         );
+#endif
 
         graph.add_pass(
             Pass("Compute cull mesh early")
@@ -2213,7 +2216,9 @@ void Engine::run()
                 data.material_buffer = material_buffer.address;
                 data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
                 data.lpv_buffer = lpv_buffer.address;
+#if LOCAL_LIGHTS == 1
                 data.light_buffer = light_buffer.address;
+#endif
                 data.froxel_offset_list = get_buffer_address(graph, froxel_offset_buffer);
                 data.froxel_item_list = get_buffer_address(graph, froxel_item_buffer);
                 data.light_dir = sunlight_dir;
@@ -2371,7 +2376,9 @@ void Engine::run()
     destroy_buffer(allocator, late_pass_candidates_buffer);
     destroy_buffer(allocator, froxels_buffer);
     destroy_buffer(allocator, lpv_buffer);
+#if LOCAL_LIGHTS == 1
     destroy_buffer(allocator, light_buffer);
+#endif
     destroy_buffer(allocator, global_buffer);
 
     destroy_image(device, allocator, depth_pyramid_image);
