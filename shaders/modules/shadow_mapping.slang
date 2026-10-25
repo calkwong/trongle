@@ -24,28 +24,28 @@ public float calculate_shadow(float3 world_pos, uint shadowmap_id, GlobalData* g
 
     float current_depth = ndc.z;
 
-	if (current_depth < 0.0) // necessary
+    // Anything beyond far plane is considered lit
+    if (current_depth < 0.0)
         return 1.0;
 
-	float2 uv = ndc.xy * 0.5 + 0.5;
-	uv.y = 1.0 - uv.y;
+    float2 uv = ndc.xy * 0.5 + 0.5;
+    uv.y = 1.0 - uv.y;
 
-	float2 offset = float2(1.0) / float2(SHADOWMAP_EXTENT);
+    float2 offset = float2(1.0) / float2(SHADOWMAP_EXTENT);
 
-	float sum = 0.0;
-	float closest_depth = 0.0;
+    float sum = 0.0;
     SamplerComparisonState samp = get_sampler<SamplerComparisonState>(SHADOW_SAMPLER);
 
     // TODO: bias + better sampling
-	for (int y = -1; y <= 1; y++)
-	{
-		for (int x = -1; x <= 1; x++)
-		{
-			float2 sample_uv = float2(uv.x + x * offset.x, uv.y + y * offset.y);
-			sum += get_nonuniform_sampled_image<Texture2D>(shadowmap_id + cascade_index).SampleCmpLevelZero(samp, sample_uv, current_depth).r;
-		}
-	}
+    for (int y = -1; y <= 1; y++)
+    {
+        for (int x = -1; x <= 1; x++)
+        {
+            float2 sample_uv = float2(uv.x + x * offset.x, uv.y + y * offset.y);
+            sum += get_nonuniform_sampled_image<Texture2D>(shadowmap_id + cascade_index).SampleCmpLevelZero(samp, sample_uv, current_depth).r;
+        }
+    }
 
-	sum /= 9.0;
-	return sum;
+    sum /= 9.0;
+    return sum;
 }

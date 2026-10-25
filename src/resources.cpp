@@ -357,7 +357,12 @@ VkSampler create_sampler(VkDevice device, VkFilter filter, VkSamplerMipmapMode m
     info.addressModeW = address;
 
     if (address == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER)
+    {
+        assert(0 && "What border color?");
+
+        // Fallback for release mode just in case
         info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    }
 
     info.maxLod = VK_LOD_CLAMP_NONE;
     info.compareEnable = compare_enable;

@@ -91,14 +91,6 @@ void main(
     float prev = WaveShuffle(current_split, lane == 0 ? 0 : lane - 1);
     float last_split = lane == 0 ? 0.0 : prev;
 
-    printf("near: %f", near);
-    printf("far: %f", far);
-    printf("range: %f", range);
-    printf("ratio: %f", ratio);
-    printf("lambda: %f", lambda);
-    printf("last_split: %f", last_split);
-
-
     float3 center = float3(0.0);
     for (int corner_i = 0; corner_i < 4; corner_i++)
     {

@@ -502,7 +502,7 @@ void Engine::run()
     samplers.emplace_back(create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT));
     samplers.emplace_back(create_depth_reduce_sampler(device));
     samplers.emplace_back(create_sampler(device, VK_FILTER_NEAREST, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE));
-    samplers.emplace_back(create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, true));
+    samplers.emplace_back(create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, true));
     samplers.emplace_back(create_sampler(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE));
 
     for (const auto& samp : samplers)
@@ -2460,7 +2460,7 @@ void Engine::init_descriptors()
 {
     uint32_t buffer_count = 10;
     uint32_t image_count = MAX_DESCRIPTORS_IMAGE_COUNT;
-    uint32_t sampler_count = 5;
+    uint32_t sampler_count = MAX_DESCRIPTORS_SAMPLER_COUNT;
 
     std::array<VkDescriptorPoolSize, 4> pool_sizes{
         VkDescriptorPoolSize{ .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = buffer_count },

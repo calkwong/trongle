@@ -7,6 +7,7 @@
 #define MAX_MESH_TRIS 126
 
 #define MAX_DESCRIPTORS_IMAGE_COUNT 2000
+#define MAX_DESCRIPTORS_SAMPLER_COUNT 10
 
 // Check limit: VkPhysicalDeviceMeshShaderPropertiesEXT -> maxMeshWorkGroupCount
 #define MAX_MESHLETS_DRAW 4194304
