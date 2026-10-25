@@ -1065,14 +1065,48 @@ void Engine::run()
                     depth_pyramid_image = create_image(device, allocator, depth_pyramid_extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 0, true);
                     image_manager.update(device, depth_pyramid_descriptor_handle, depth_pyramid_image.view, VK_IMAGE_LAYOUT_GENERAL);
                     update_depth_pyramid(depth_pyramid_image, depth_pyramid_image_views, depth_pyramid_first_mip);
+
                     skip_occlusion = true;
+                    frame_context.proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
+                    frame_context.debug_proj = frame_context.proj;
+
                     immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
                                      {
                                          stage_barrier(cmd, depth_pyramid_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, 0, 0, 0);
-                                     });
 
-                    frame_context.proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
-                    frame_context.debug_proj = frame_context.proj;
+                                         std::array<VkDescriptorSet, 3> sets{ buffer_set, image_set, sampler_set };
+                                         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
+
+                                         {
+                                             struct FroxelsPushConstants
+                                             {
+                                                 float4x4 inverse_proj;
+                                                 VkDeviceAddress froxels_buffer;
+                                                 glm::vec2 screen_size;
+                                                 glm::vec2 froxel_dim;
+                                                 float near_z;
+                                                 float far_z;
+                                                 uint32_t depth_slices;
+                                             };
+
+                                             FroxelsPushConstants data{};
+                                             data.inverse_proj = glm::inverse(frame_context.proj);
+                                             data.froxels_buffer = froxels_buffer.address;
+                                             data.screen_size = glm::vec2(swapchain.extent.width, swapchain.extent.height);
+                                             auto froxel_x = glm::ceil(static_cast<float>(swapchain.extent.width) / FROXELS_X);
+                                             auto froxel_y = glm::ceil(static_cast<float>(swapchain.extent.height) / FROXELS_Y);
+                                             data.froxel_dim = glm::vec2(froxel_x, froxel_y);
+                                             // TODO: We can inflate near plane otherwise we get lots of intersections close to near plane
+                                             // Setting a limit on far plane is also an option - need to modify line_intersection_to_z_plane on shader side
+                                             data.near_z = camera.near;
+                                             data.far_z = camera.far;
+                                             data.depth_slices = FROXELS_Z;
+
+                                             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, froxels_pipeline);
+                                             vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(FroxelsPushConstants), &data);
+                                             vkCmdDispatch(cmd, 1, 1, FROXELS_Z);
+                                         }
+                                     });
                 }
                 break;
             case SDL_EVENT_KEY_DOWN:
@@ -1119,14 +1153,50 @@ void Engine::run()
             depth_pyramid_image = create_image(device, allocator, depth_pyramid_extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 0, true);
             image_manager.update(device, depth_pyramid_descriptor_handle, depth_pyramid_image.view, VK_IMAGE_LAYOUT_GENERAL);
             update_depth_pyramid(depth_pyramid_image, depth_pyramid_image_views, depth_pyramid_first_mip);
+
             skip_occlusion = true;
+            frame_context.proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
+            frame_context.debug_proj = frame_context.proj;
+
             immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
                              {
                                  stage_barrier(cmd, depth_pyramid_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, 0, 0, 0);
+
+                                 std::array<VkDescriptorSet, 3> sets{ buffer_set, image_set, sampler_set };
+                                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
+
+                                 {
+                                     struct FroxelsPushConstants
+                                     {
+                                         float4x4 inverse_proj;
+                                         VkDeviceAddress froxels_buffer;
+                                         glm::vec2 screen_size;
+                                         glm::vec2 froxel_dim;
+                                         float near_z;
+                                         float far_z;
+                                         uint32_t depth_slices;
+                                     };
+
+                                     FroxelsPushConstants data{};
+                                     data.inverse_proj = glm::inverse(frame_context.proj);
+                                     data.froxels_buffer = froxels_buffer.address;
+                                     data.screen_size = glm::vec2(swapchain.extent.width, swapchain.extent.height);
+                                     auto froxel_x = glm::ceil(static_cast<float>(swapchain.extent.width) / FROXELS_X);
+                                     auto froxel_y = glm::ceil(static_cast<float>(swapchain.extent.height) / FROXELS_Y);
+                                     data.froxel_dim = glm::vec2(froxel_x, froxel_y);
+                                     // TODO: We can inflate near plane otherwise we get lots of intersections close to near plane
+                                     // Setting a limit on far plane is also an option - need to modify line_intersection_to_z_plane on shader side
+                                     data.near_z = camera.near;
+                                     data.far_z = camera.far;
+                                     data.depth_slices = FROXELS_Z;
+
+                                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, froxels_pipeline);
+                                     vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(FroxelsPushConstants), &data);
+                                     vkCmdDispatch(cmd, 1, 1, FROXELS_Z);
+                                 }
                              });
 
-            frame_context.proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
-            frame_context.debug_proj = frame_context.proj;
+
         }
 
         // TODO: freezing matrices currently broken
