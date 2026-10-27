@@ -746,6 +746,7 @@ void Engine::run()
     VkPipeline cull_shadow_pipeline{};
     VkPipeline cull_shadow_meshlet_pipeline{};
     VkPipeline depth_pipeline{};
+    VkPipeline depth_masked_pipeline{};
     VkPipeline exr_to_cubemap_pipeline{};
     VkPipeline envmap_pipeline{};
     VkPipeline froxels_pipeline{};
@@ -766,6 +767,7 @@ void Engine::run()
         auto cull_shadow_program = load_shader_program("cull_shadow.slang", device);
         auto cull_shadow_meshlet_program = load_shader_program("cull_shadow_meshlet.slang", device);
         auto depth_program = load_shader_program("depth.slang", device);
+        auto depth_masked_program = load_shader_program("depth.slang", device);
         auto exr_to_cubemap_program = load_shader_program("exr_to_cubemap.slang", device);
         auto envmap_program = load_shader_program("envmap.slang", device);
         auto froxels_program = load_shader_program("froxels.slang", device);
@@ -822,8 +824,22 @@ void Engine::run()
                 nullptr,
                 &pipeline_layout,
                 {},
-                {},
+                { 1 },
                 GraphicsPipelineConfig{ .cull_mode = VK_CULL_MODE_FRONT_BIT, .depth_clamp = VK_TRUE }
+            )
+        );
+
+        replace_pipeline(
+            depth_masked_pipeline,
+            create_graphics_pipeline(
+                device,
+                &depth_masked_program,
+                { VK_SHADER_STAGE_MESH_BIT_EXT, VK_SHADER_STAGE_FRAGMENT_BIT },
+                nullptr,
+                &pipeline_layout,
+                {},
+                { 0 },
+                GraphicsPipelineConfig{ .cull_mode = VK_CULL_MODE_NONE, .depth_clamp = VK_TRUE }
             )
         );
 
@@ -1696,8 +1712,6 @@ void Engine::run()
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_pipeline);
                 vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch), 1, 0);
 
-                data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer) + sizeof(uint32_t) * MESHLET_DRAW_MASKED_OFFSET;
-                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_masked_pipeline);
                 vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch) * 2, 1, 0);
 
@@ -1987,8 +2001,6 @@ void Engine::run()
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_pipeline);
                 vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch), 1, 0);
 
-                data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer) + sizeof(uint32_t) * MESHLET_DRAW_MASKED_OFFSET;
-                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_masked_pipeline);
                 vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch) * 2, 1, 0);
 
@@ -2179,8 +2191,6 @@ void Engine::run()
                         scissor.extent.height = SHADOWMAP_EXTENT;
                         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, depth_pipeline);
-
                         struct PushData
                         {
                             VkDeviceAddress global_buffer;
@@ -2190,6 +2200,7 @@ void Engine::run()
                             VkDeviceAddress prefix_sum_buffer;
                             VkDeviceAddress meshlet_indices_buffer;
                             VkDeviceAddress meshlet_draw_buffer;
+                            VkDeviceAddress material_buffer;
                             uint32_t cascade_index;
                         };
 
@@ -2201,10 +2212,17 @@ void Engine::run()
                         data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
                         data.meshlet_indices_buffer = meshlet_indices_buffer.address;
                         data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
+                        data.material_buffer = material_buffer.address;
                         data.cascade_index = cascade_index;
 
                         vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
+
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, depth_pipeline);
                         vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch), 1, 0);
+
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, depth_masked_pipeline);
+                        vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch) * 2, 1, 0);
+
                         vkCmdEndRendering(cmd);
                     }
                 );

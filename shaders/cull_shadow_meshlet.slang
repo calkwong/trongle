@@ -73,8 +73,17 @@ void main(
     if (!partially_inside_cascade(center_ws, radius, pc.cascade_index))
         return;
 
+    bool masked = o.masked == 1;
     uint count;
-    InterlockedAdd(pc.dispatch_buffer[1].x, 1, count);
-
-    pc.meshlet_draw_buffer[count] = index;
+    uint masked_count;
+    if (masked)
+    {
+        InterlockedAdd(pc.dispatch_buffer[2].x, 1, masked_count);
+        pc.meshlet_draw_buffer[MESHLET_DRAW_MASKED_OFFSET + masked_count] = index;
+    }
+    else
+    {
+        InterlockedAdd(pc.dispatch_buffer[1].x, 1, count);
+        pc.meshlet_draw_buffer[count] = index;
+    }
 }

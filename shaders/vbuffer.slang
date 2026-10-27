@@ -50,7 +50,11 @@ void mesh_main(
     out primitives PerPrimitive prims[MAX_MESH_TRIS],
 )
 {
-    uint index = pc.meshlet_draw_buffer[wg_id.x];
+    uint index;
+    if (OPAQUE == 1)
+        index = pc.meshlet_draw_buffer[wg_id.x];
+    else
+        index = pc.meshlet_draw_buffer[MESHLET_DRAW_MASKED_OFFSET + wg_id.x];
 
     uint prefix_sum_idx = prefix_sum_binary_search(pc.prefix_sum_buffer, 0, index);
     PrefixSumData prefix_sum_data = pc.prefix_sum_buffer.prefix_sums[0].data[prefix_sum_idx];

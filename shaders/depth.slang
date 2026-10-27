@@ -8,6 +8,8 @@ import prefix_sum;
 struct Interp
 {
     float4 position : SV_Position;
+    float2 uv;
+    nointerpolation uint material_id;
 };
 
 struct PushConstants
@@ -19,11 +21,15 @@ struct PushConstants
     PrefixSums* prefix_sum_buffer;
     uint* meshlet_indices_buffer;
     uint* meshlet_draw_buffer;
+    MaterialData* material_buffer;
     uint cascade_index;
 };
 
 [[vk::push_constant]]
 PushConstants pc;
+
+[vk::constant_id(0)]
+const int OPAQUE = 1;
 
 #define WG_SIZE_X 64
 
@@ -37,7 +43,11 @@ void mesh_main(
     out indices uint3 tris[MAX_MESH_TRIS],
 )
 {
-    uint index = pc.meshlet_draw_buffer[wg_id.x];
+    uint index;
+    if (OPAQUE == 1)
+        index = pc.meshlet_draw_buffer[wg_id.x];
+    else
+        index = pc.meshlet_draw_buffer[MESHLET_DRAW_MASKED_OFFSET + wg_id.x];
 
     uint prefix_sum_idx = prefix_sum_binary_search(pc.prefix_sum_buffer, pc.cascade_index, index);
     PrefixSumData prefix_sum_data = pc.prefix_sum_buffer.prefix_sums[pc.cascade_index].data[prefix_sum_idx];
@@ -77,6 +87,8 @@ void mesh_main(
         float3 pos = float3(v.px, v.py, v.pz);
         float4 world_pos = float4(rotate_quat(pos, o.orientation) * o.scale + o.translation, 1.0);
         verts[i].position = mul(pc.global_buffer.shadow_matrices[pc.cascade_index], world_pos);
+        verts[i].uv = float2(v.uv_x, v.uv_y);
+        verts[i].material_id = o.material_id;
     }
 
     for (uint i = t_index; i < triangle_count; i += WG_SIZE_X)
@@ -91,4 +103,24 @@ void mesh_main(
 
         tris[i] = uint3(idx0, idx1, idx2);
     }
+}
+
+[shader("pixel")]
+void ps_main(
+    Interp in
+)
+{
+   	if (OPAQUE == 0)
+	{
+	    SamplerState samp = get_sampler<SamplerState>(LINEAR_SAMPLER);
+
+		MaterialData m = pc.material_buffer[in.material_id];
+
+		float4 albedo = m.base_color_factor;
+		if (m.diffuse_id != 0)
+		    albedo *= get_sampled_image<Texture2D>(m.diffuse_id).Sample(samp, in.uv);
+
+		if (albedo.a < 0.5)
+			discard;
+	}
 }
