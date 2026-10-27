@@ -38,7 +38,6 @@ struct Node;
 struct MeshData;
 struct GltfMesh;
 struct Meshlet;
-struct LpvData;
 
 struct EngineStats
 {
@@ -109,5 +108,4 @@ public:
     void destroy_imgui();
     void run();
     void register_object(const Node& node, const glm::mat4& top_matrix, const std::vector<Node>& children, const std::vector<GltfMesh>& meshes);
-    void register_cs2_object(const Node& node, const glm::mat4& top_matrix, const std::vector<Node>& children, const std::vector<GltfMesh>& mesh_assets, std::vector<LpvData>& lpv_data);
 };

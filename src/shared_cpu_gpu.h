@@ -57,7 +57,6 @@ PUBLIC_ACCESS struct ObjectData
     uint32_t mesh_id;
     uint32_t material_id;
     uint32_t masked;
-    uint32_t probe_id;
 };
 
 PUBLIC_ACCESS struct MaterialData
@@ -148,15 +147,6 @@ PUBLIC_ACCESS struct GlobalData
 
     // Shadow frustums are fit to a sphere
     float shadow_radius[SUN_CASCADE_COUNT];
-};
-
-PUBLIC_ACCESS struct LightProbeVolume
-{
-    float4x4 world_to_local_volume_normalized;
-    float4 border_min;
-    float4 border_max;
-    float4 atlas_scale;
-    float4 atlas_offset;
 };
 
 PUBLIC_ACCESS struct FroxelAABB

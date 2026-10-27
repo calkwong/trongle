@@ -10,7 +10,6 @@
 #include "rendergraph.h"
 #include "sync.h"
 #include "config.h"
-#include "cs2.h"
 
 #include <volk.h>
 #include <vk_mem_alloc.h>
@@ -47,22 +46,18 @@
 #include <dlfcn.h>
 #include <string>
 #include <random>
-#include <cstdio>
-#include <charconv>
 #include <string_view>
-#include <limits>
 
 #define MAX_TIMESTAMP_QUERIES 20
 #define MAX_MESH_PIPELINE_QUERIES 2
 #define LOCAL_LIGHTS 0
 
-// const char* ASSET_NAME = "Sponza/Sponza.gltf";
+const char* ASSET_NAME = "Sponza/Sponza.gltf";
 // const char* ASSET_NAME = "chinesedragon.gltf";
 // const char* ASSET_NAME = "sphere.gltf";
-const char* ASSET_NAME = "de_dust2/de_dust2.gltf";
+// const char* ASSET_NAME = "de_dust2/de_dust2.gltf";
 // const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
 int DEBUG_ID = 0;
-int DEBUG_PROBE = 0;
 
 namespace
 {
@@ -439,79 +434,17 @@ void Engine::run()
         assert(0 && "load_gltf failed");
     }
 
-    // Update descriptors
+    // Register material textures
     for (const auto& image : asset_loader.images)
     {
         image_manager.register_sampled_image(device, image.view, VK_IMAGE_LAYOUT_GENERAL);
     }
 
-    std::vector<Entity> lpv_key_values = parse_and_extract_lpvs("default_ents.vents");
-
-    // Parsing lpv data from map entities
-    std::vector<LpvData> lpv_cpu_data(lpv_key_values.size());
-
-    // Parses float 3 and applies source 2 scaling from inches to metres
-    auto parse_float3 = [&](const std::string& s, glm::vec3& out) -> bool
-    {
-        float x, y, z;
-        if (std::sscanf(s.c_str(), " [ %f , %f , %f ]", &x, &y, &z) != 3)
-            return false;
-        out = glm::vec3(x, y, z);
-        return true;
-    };
-
-    auto parse_indoor_outdoor_level = [&](std::string_view s, int& out)
-    {
-        // Remove quotations
-        s.remove_prefix(1);
-        s.remove_suffix(1);
-        std::from_chars(s.data(), s.data() + s.size(), out);
-    };
-
-    for (auto i = 0; i < lpv_key_values.size(); i++)
-    {
-        auto& lpv_map = lpv_key_values[i];
-
-        glm::vec3 box_maxs{};
-        glm::vec3 box_mins{};
-        glm::vec3 origin{};
-        parse_float3(lpv_map["box_maxs"], box_maxs);
-        parse_float3(lpv_map["box_mins"], box_mins);
-        parse_float3(lpv_map["origin"], origin);
-
-        lpv_cpu_data[i].box_maxs = glm::vec3(-box_mins.y, box_maxs.z, -box_mins.x) * glm::vec3(SOURCE_UNIT_SCALE);
-        lpv_cpu_data[i].box_mins = glm::vec3(-box_maxs.y, box_mins.z, -box_maxs.x) * glm::vec3(SOURCE_UNIT_SCALE);
-        lpv_cpu_data[i].box_center = (box_maxs + box_mins) / glm::vec3(2.0);
-        lpv_cpu_data[i].origin = convert_from_s2(origin) * glm::vec3(SOURCE_UNIT_SCALE);
-
-        uint32_t x, y, z;
-        std::from_chars(lpv_map["light_probe_size_x"].data(), lpv_map["light_probe_size_x"].data() + lpv_map["light_probe_size_x"].size(), x);
-        std::from_chars(lpv_map["light_probe_size_y"].data(), lpv_map["light_probe_size_y"].data() + lpv_map["light_probe_size_y"].size(), y);
-        std::from_chars(lpv_map["light_probe_size_z"].data(), lpv_map["light_probe_size_z"].data() + lpv_map["light_probe_size_z"].size(), z);
-        lpv_cpu_data[i].atlas_size = glm::vec3(x, y, z);
-
-        std::from_chars(lpv_map["light_probe_atlas_x"].data(), lpv_map["light_probe_atlas_x"].data() + lpv_map["light_probe_atlas_x"].size(), x);
-        std::from_chars(lpv_map["light_probe_atlas_y"].data(), lpv_map["light_probe_atlas_y"].data() + lpv_map["light_probe_atlas_y"].size(), y);
-        std::from_chars(lpv_map["light_probe_atlas_z"].data(), lpv_map["light_probe_atlas_z"].data() + lpv_map["light_probe_atlas_z"].size(), z);
-        lpv_cpu_data[i].atlas_offset = glm::vec3(x, y, z);
-
-        parse_indoor_outdoor_level(lpv_map["indoor_outdoor_level"], lpv_cpu_data[i].indoor_outdoor_level);
-        lpv_cpu_data[i].shader_index = i;
-    }
-
-    Image lpv_atlas = build_probe_atlas(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, "../assets/de_dust2_lpv_atlas/");
-    auto lpv_atlas_handle = image_manager.register_sampled_image(device, lpv_atlas.view, VK_IMAGE_LAYOUT_GENERAL);
-    std::vector<LightProbeVolume> lpv_gpu_data = calculate_light_probe_binding(lpv_cpu_data, lpv_atlas);
-
 #if STRESS_TEST == 0
     for (const auto& node : asset_loader.parent_nodes)
     {
-        register_cs2_object(node, glm::mat4(1.0), asset_loader.children_nodes, asset_loader.meshes, lpv_cpu_data);
+        register_object(node, glm::mat4(1.0), asset_loader.children_nodes, asset_loader.meshes);
     }
-    // for (const auto& node : asset_loader.parent_nodes)
-    // {
-    //     register_object(node, glm::mat4(1.0), asset_loader.children_nodes, asset_loader.meshes);
-    // }
 #else
     for (const auto& node : asset_loader.parent_nodes)
     {
@@ -618,23 +551,6 @@ void Engine::run()
     depth_pyramid_extent.height = nearest_pow2(swapchain.extent.height);
     depth_pyramid_extent.depth = 1;
     Image depth_pyramid_image = create_image(device, allocator, depth_pyramid_extent, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 0, true);
-
-    {
-        std::vector<VkImage> color_images = { depth_pyramid_image.image };
-        std::vector<VkImage> depth_images{};
-        for (const auto& image : shadowmap_images)
-        {
-            depth_images.push_back(image.image);
-        }
-
-        immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
-                         {
-                             vkCmdFillBuffer(cmd, spd_counter_buffer.buffer, 0, VK_WHOLE_SIZE, 0);
-                             vkCmdFillBuffer(cmd, late_pass_candidates_buffer.buffer, 0, VK_WHOLE_SIZE, 0);
-                             transition_images(cmd, color_images, depth_images);
-                         });
-    }
-
     const auto depth_pyramid_descriptor_handle = image_manager.register_image(device, depth_pyramid_image.view, VK_IMAGE_LAYOUT_GENERAL);
 
     // Returns depth pyramid mip levels for next PoT
@@ -926,8 +842,6 @@ void Engine::run()
         }
     }
 
-    Buffer lpv_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, lpv_gpu_data.data(), lpv_gpu_data.size() * sizeof(LightProbeVolume));
-
 #if LOCAL_LIGHTS == 1
     std::mt19937 mt(42);
     std::uniform_real_distribution<float> pos(-1.0f, 1.0f);
@@ -951,15 +865,26 @@ void Engine::run()
 
     Image brdf_lut_image = create_image(device, allocator, VkExtent3D{ 128, 128, 1 }, VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR | VK_IMAGE_USAGE_2_STORAGE_BIT_KHR);
     auto brdf_lut_id = image_manager.register_image(device, brdf_lut_image.view, VK_IMAGE_LAYOUT_GENERAL);
+
+    Image lpv_atlas = build_probe_atlas(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, "../assets/de_dust2_lpv_atlas/");
+
     images_to_transition.push_back(brdf_lut_image.image);
+    images_to_transition.push_back(depth_pyramid_image.image);
+    std::vector<VkImage> depth_images{};
+    for (const auto& image : shadowmap_images)
+    {
+        depth_images.push_back(image.image);
+    }
 
     // TODO: Convert this to an one off rendergraph
     immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
                      {
-                         transition_images(cmd, images_to_transition);
-
                          std::array<VkDescriptorSet, 3> sets{ buffer_set, image_set, sampler_set };
                          vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
+
+                         vkCmdFillBuffer(cmd, spd_counter_buffer.buffer, 0, VK_WHOLE_SIZE, 0);
+                         vkCmdFillBuffer(cmd, late_pass_candidates_buffer.buffer, 0, VK_WHOLE_SIZE, 0);
+                         transition_images(cmd, images_to_transition, depth_images);
 
                          // BRDF LUT
                          {
@@ -1107,8 +1032,7 @@ void Engine::run()
 #if STRESS_TEST == 1
     bool b_shadows = false;
 #else
-    // bool b_shadows = true;
-    bool b_shadows = false;
+    bool b_shadows = true;
 #endif
 
     bool skip_occlusion = true;
@@ -1316,10 +1240,6 @@ void Engine::run()
         VK_CHECK_SWAPCHAIN(acquire_result);
         VK_CHECK(vkResetFences(device, 1, &frame.fence));
 
-        // auto* mapped_global_buffer = static_cast<GlobalData*>(global_buffer.info.pMappedData);
-        // GlobalData glob_data{};
-        // mapped_global_buffer[frame_number % FRAMES_IN_FLIGHT] = glob_data;
-
         // Get query pool results
         auto timestamp_results_size = timestamp_results.size();
         auto mesh_pipeline_results_size = mesh_pipeline_results.size();
@@ -1379,7 +1299,6 @@ void Engine::run()
         ImGui::Checkbox("Freeze camera", &freeze_matrices);
         ImGui::Checkbox("Shadows", &b_shadows);
         ImGui::SliderInt("Debug", &DEBUG_ID, 0, MAX_DEBUG_ID);
-        ImGui::SliderInt("Debug probe", &DEBUG_PROBE, 0, 42);
         ImGui::SliderFloat("Azimuth", &azimuth, 0.0, 360.0);
         ImGui::SliderFloat("Elevation", &elevation, 0.0, 90.0);
 
@@ -1426,7 +1345,6 @@ void Engine::run()
         auto depth_pyramid = graph.import_image(depth_pyramid_image, depth_pyramid_descriptor_handle);
         auto spd_counter = graph.import_buffer(spd_counter_buffer, -1);
         auto late_pass_candidates = graph.import_buffer(late_pass_candidates_buffer, -1);
-        auto lpv = graph.import_buffer(lpv_buffer, -1);
         auto globals = graph.import_buffer(global_buffer, -1);
 
         // Record command buffer
@@ -1469,7 +1387,6 @@ void Engine::run()
                 {
                     float4x4 view;
                     VkDeviceAddress froxels_buffer;
-                    VkDeviceAddress lpv_buffer;
                     VkDeviceAddress light_buffer;
                     VkDeviceAddress froxel_offset_list;
                     VkDeviceAddress froxel_item_list;
@@ -1480,7 +1397,6 @@ void Engine::run()
                 PushData data{};
                 data.view = frame_context.view;
                 data.froxels_buffer = froxels_buffer.address;
-                data.lpv_buffer = lpv_buffer.address;
                 data.light_buffer = light_buffer.address;
                 data.froxel_offset_list = get_buffer_address(graph, froxel_offset_buffer);
                 data.froxel_item_list = get_buffer_address(graph, froxel_item_buffer);
@@ -2285,7 +2201,6 @@ void Engine::run()
                     VkDeviceAddress meshlet_indices_buffer;
                     VkDeviceAddress material_buffer;
                     VkDeviceAddress global_buffer;
-                    VkDeviceAddress lpv_buffer;
                     VkDeviceAddress light_buffer;
                     VkDeviceAddress froxel_offset_list;
                     VkDeviceAddress froxel_item_list;
@@ -2315,7 +2230,6 @@ void Engine::run()
                 data.meshlet_indices_buffer = meshlet_indices_buffer.address;
                 data.material_buffer = material_buffer.address;
                 data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
-                data.lpv_buffer = lpv_buffer.address;
 #if LOCAL_LIGHTS == 1
                 data.light_buffer = light_buffer.address;
 #endif
@@ -2332,14 +2246,12 @@ void Engine::run()
                 data.debug_id = DEBUG_ID;
                 data.output_id = get_image_id(graph, draw_image);
                 data.envmap_id = first_envmap_handle;
-                data.lpv_atlas_id = lpv_atlas_handle;
                 data.depth_id = get_image_id(graph, depth_image);
                 data.brdf_lut_id = brdf_lut_id;
                 data.near = camera.near;
                 const float ratio = camera.far / camera.near;
                 data.scale = static_cast<float>(FROXELS_Z) / glm::log(ratio);
                 data.bias = static_cast<float>(FROXELS_Z) * glm::log(camera.near) / glm::log(ratio);
-                data.debug_probe = DEBUG_PROBE;
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, lighting_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
@@ -2485,7 +2397,6 @@ void Engine::run()
     destroy_buffer(allocator, spd_counter_buffer);
     destroy_buffer(allocator, late_pass_candidates_buffer);
     destroy_buffer(allocator, froxels_buffer);
-    destroy_buffer(allocator, lpv_buffer);
 #if LOCAL_LIGHTS == 1
     destroy_buffer(allocator, light_buffer);
 #endif
@@ -2652,85 +2563,6 @@ void Engine::destroy_imgui()
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
     vkDestroyDescriptorPool(device, imgui_pool, nullptr);
-}
-
-void Engine::register_cs2_object(const Node& node, const glm::mat4& top_matrix, const std::vector<Node>& children, const std::vector<GltfMesh>& mesh_assets, std::vector<LpvData>& lpv_data)
-{
-    auto world_matrix = top_matrix * node.world_transform;
-
-    if (node.mesh_index != -1)
-    {
-        for (const auto& mesh : mesh_assets[node.mesh_index].mesh)
-        {
-            ObjectData obj{};
-
-            glm::vec3 translation{};
-            glm::vec3 scale{};
-            glm::vec4 rotation{};
-
-            decompose_transform(world_matrix, translation, scale, rotation);
-
-            // TODO: handle non uniform scaling
-            obj.translation = translation;
-            obj.scale = glm::max(glm::max(scale.x, scale.y), scale.z);
-            obj.orientation = rotation;
-            obj.mesh_id = static_cast<uint32_t>(meshes.size());
-            obj.material_id = mesh.material_id;
-            obj.masked = mesh.masked;
-
-            // TODO: env combined probe shader id
-            int best_priority = -2;
-            float shortest_dist = std::numeric_limits<float>::max();
-            uint32_t probe_id = -1;
-
-            auto distance_squared = [&](glm::vec3 a, glm::vec3 b) -> float
-            {
-                glm::vec3 d = a - b;
-                return glm::dot(d, d);
-            };
-
-            for (uint32_t i = 0; i < lpv_data.size(); i++)
-            {
-                const auto& lpv = lpv_data[i];
-                auto mesh_ws = glm::vec3(world_matrix * glm::vec4(mesh.center, 1.0));
-                bool inside = glm::all(glm::lessThan(mesh_ws, lpv.box_maxs)) && glm::all(glm::greaterThan(mesh_ws, lpv.box_mins));
-
-                if (inside)
-                {
-                    probe_id = lpv.shader_index;
-                    best_priority = lpv.indoor_outdoor_level;
-                    break;
-                }
-                else
-                {
-                    auto dist = distance_squared(mesh_ws, lpv.box_center);
-                    if (dist < shortest_dist)
-                    {
-                        shortest_dist = dist;
-                        probe_id = lpv.shader_index;
-                        best_priority = lpv.indoor_outdoor_level;
-                    }
-                }
-            }
-            obj.probe_id = probe_id;
-            renderables.push_back(obj);
-
-            auto& m = meshes.emplace_back(
-                MeshData{
-                    .center = mesh.center,
-                    .radius = mesh.radius,
-                    .lod_count = mesh.lod_count }
-            );
-
-            memcpy(&m.mesh_lods, &mesh.mesh_lods, sizeof(mesh.mesh_lods));
-        }
-    }
-
-    for (auto i = 0; i < node.child_count; i++)
-    {
-        const auto& child = children[node.first_child];
-        register_cs2_object(child, top_matrix, children, mesh_assets, lpv_data);
-    }
 }
 
 int main()

@@ -8,7 +8,6 @@ struct PushConstants
 {
     float4x4 view;
     FroxelAABB* froxels_buffer;
-    LightProbeVolume* lpv_buffer;
     PointLight* light_buffer;
     FroxelOffset* froxel_offset_list;
     uint* froxel_item_list;

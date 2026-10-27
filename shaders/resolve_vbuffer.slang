@@ -4,7 +4,6 @@ import util;
 import barycentrics;
 import pbr;
 import shadow_mapping;
-import lighting_lpv;
 
 struct PushConstants
 {
@@ -15,7 +14,6 @@ struct PushConstants
     uint32_t* meshlet_indices_buffer;
     MaterialData* material_buffer;
     GlobalData* global_buffer;
-    LightProbeVolume* lpv_buffer;
     PointLight* light_buffer;
     FroxelOffset* froxel_offset_list;
     uint* froxel_item_list;
@@ -28,13 +26,11 @@ struct PushConstants
     uint debug_id;
     uint output_id;
     uint envmap_id;
-    uint lpv_atlas_id;
     uint depth_id;
     uint brdf_lut_id;
     float near;
     float scale;
     float bias;
-    uint debug_probe;
 }
 
 [[vk::push_constant]]
@@ -250,15 +246,13 @@ void main(uint3 global_id: SV_DispatchThreadID)
         out_color.xyz *= shadow_factor;
     }
 
-#if 1
+#if 0
     SamplerState cube_samp = get_sampler<SamplerState>(CUBE_SAMPLER); // Also doubles as linear clamp
     // TODO: mip based on roughness
     float mip = 0.0;
-    // let probe_id = pc.debug_probe;
-    let probe_id = obj.probe_id;
     float3 source_N = float3(-N.z, -N.x, N.y);
 
-    TextureCube envmap = get_nonuniform_sampled_image<TextureCube>(pc.envmap_id + probe_id);
+    TextureCube envmap = get_nonuniform_sampled_image<TextureCube>(pc.envmap_id);
     int envmap_width;
     int envmap_height;
     int envmap_mips;
@@ -269,9 +263,10 @@ void main(uint3 global_id: SV_DispatchThreadID)
     float2 env = get_sampled_image<Texture2D>(pc.brdf_lut_id).SampleLevel(cube_samp, float2(brdf_data.NoV, perceptual_roughness), 0.0).rg;
     float3 F = F_SchlickRoughness(brdf_data.NoV, brdf_data.f0, roughness);
     float3 FssEss = F * env.x + env.y;
-    float3 indirect_specular = get_nonuniform_sampled_image<TextureCube>(pc.envmap_id + probe_id).SampleLevel(cube_samp, N, prefiltered_mip).rgb * FssEss;
+    float3 indirect_specular = envmap.SampleLevel(cube_samp, N, prefiltered_mip).rgb * FssEss;
     // TODO: pi or not?
-    float3 indirect_diffuse = SampleLightProbeIrradiance(pc.lpv_buffer, world_pos, source_N, pc.lpv_atlas_id, probe_id) * albedo.xyz;
+    // float3 indirect_diffuse = SampleLightProbeIrradiance(pc.lpv_buffer, world_pos, source_N, pc.lpv_atlas_id, probe_id) * albedo.xyz;
+    float3 indirect_diffuse = float3(0.0);
     float3 ambient = indirect_diffuse + indirect_specular;
     out_color.xyz += ambient;
 #else
