@@ -613,9 +613,6 @@ void Engine::run()
         shadowmap_descriptor_handles[i] = image_manager.register_image(device, shadowmap_images[i].view, VK_IMAGE_LAYOUT_GENERAL);
     }
 
-    Image brdf_lut_image = create_image(device, allocator, VkExtent3D{ 128, 128, 1 }, VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR | VK_IMAGE_USAGE_2_STORAGE_BIT_KHR);
-    auto brdf_lut_id = image_manager.register_image(device, brdf_lut_image.view, VK_IMAGE_LAYOUT_GENERAL);
-
     VkExtent3D depth_pyramid_extent{};
     depth_pyramid_extent.width = nearest_pow2(swapchain.extent.width);
     depth_pyramid_extent.height = nearest_pow2(swapchain.extent.height);
@@ -873,7 +870,6 @@ void Engine::run()
     }
 
     std::vector<VkImage> images_to_transition{};
-    images_to_transition.push_back(brdf_lut_image.image);
 
     // Cubemaps with mipmaps so we can create prefiltered envmaps
     auto first_cubemap_handle = static_cast<uint32_t>(image_manager.infos.size());
@@ -953,6 +949,10 @@ void Engine::run()
     Buffer light_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, light_data.data(), MAX_POINT_LIGHTS * sizeof(PointLight));
 #endif
 
+    Image brdf_lut_image = create_image(device, allocator, VkExtent3D{ 128, 128, 1 }, VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR | VK_IMAGE_USAGE_2_STORAGE_BIT_KHR);
+    auto brdf_lut_id = image_manager.register_image(device, brdf_lut_image.view, VK_IMAGE_LAYOUT_GENERAL);
+    images_to_transition.push_back(brdf_lut_image.image);
+
     // TODO: Convert this to an one off rendergraph
     immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
                      {
@@ -973,11 +973,11 @@ void Engine::run()
                              data.image_size = glm::vec2(brdf_lut_image.extent.width, brdf_lut_image.extent.height);
                              data.brdf_lut_id = brdf_lut_id;
 
-                             vkCmdBindPipeline(imm_buf, VK_PIPELINE_BIND_POINT_COMPUTE, brdf_lut_pipeline);
-                             vkCmdPushConstants(imm_buf, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, brdf_lut_pipeline);
+                             vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                              auto wg_x = get_group_count(brdf_lut_image.extent.width, 32);
                              auto wg_y = get_group_count(brdf_lut_image.extent.height, 32);
-                             vkCmdDispatch(imm_buf, wg_x, wg_y, 1);
+                             vkCmdDispatch(cmd, wg_x, wg_y, 1);
                          }
 
                          // Froxels
@@ -1107,7 +1107,8 @@ void Engine::run()
 #if STRESS_TEST == 1
     bool b_shadows = false;
 #else
-    bool b_shadows = true;
+    // bool b_shadows = true;
+    bool b_shadows = false;
 #endif
 
     bool skip_occlusion = true;
@@ -2299,6 +2300,7 @@ void Engine::run()
                     uint32_t envmap_id;
                     uint32_t lpv_atlas_id;
                     uint32_t depth_id;
+                    uint32_t brdf_lut_id;
                     float near;
                     float scale;
                     float bias;
@@ -2332,6 +2334,7 @@ void Engine::run()
                 data.envmap_id = first_envmap_handle;
                 data.lpv_atlas_id = lpv_atlas_handle;
                 data.depth_id = get_image_id(graph, depth_image);
+                data.brdf_lut_id = brdf_lut_id;
                 data.near = camera.near;
                 const float ratio = camera.far / camera.near;
                 data.scale = static_cast<float>(FROXELS_Z) / glm::log(ratio);

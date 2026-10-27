@@ -37,6 +37,7 @@ public static const uint DEPTH_REDUCE = 1;
 public static const uint NEAREST_SAMPLER = 2;
 public static const uint SHADOW_SAMPLER = 3;
 public static const uint CUBE_SAMPLER = 4;
+public static const uint LINEAR_CLAMP_SAMPLER = 4;
 
 public T get_sampler<T>(uint handle)
     where T : IOpaqueDescriptor

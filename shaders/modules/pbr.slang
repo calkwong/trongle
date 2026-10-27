@@ -32,6 +32,11 @@ public float F_Schlick(float u, float f0, float f90)
     return f0 + (f90 - f0) * pow(1.0 - u, 5.0);
 }
 
+public float3 F_SchlickRoughness(float u, float3 f0, float roughness)
+{
+	return f0 + (max(float3(1.0 - roughness), f0) - f0) * pow(1.0 - u, 5.0);
+}
+
 // TODO: verify
 public float get_square_falloff_attenuation(float3 distance, float radius)
 {

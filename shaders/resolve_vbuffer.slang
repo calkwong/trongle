@@ -30,6 +30,7 @@ struct PushConstants
     uint envmap_id;
     uint lpv_atlas_id;
     uint depth_id;
+    uint brdf_lut_id;
     float near;
     float scale;
     float bias;
@@ -250,14 +251,33 @@ void main(uint3 global_id: SV_DispatchThreadID)
     }
 
 #if 1
-    SamplerState cube_samp = get_sampler<SamplerState>(CUBE_SAMPLER);
+    SamplerState cube_samp = get_sampler<SamplerState>(CUBE_SAMPLER); // Also doubles as linear clamp
     // TODO: mip based on roughness
     float mip = 0.0;
     // let probe_id = pc.debug_probe;
     let probe_id = obj.probe_id;
     float3 source_N = float3(-N.z, -N.x, N.y);
-    float3 indirect_specular = get_nonuniform_sampled_image<TextureCube>(pc.envmap_id + obj.probe_id).SampleLevel(cube_samp, N, mip).rgb;
-    float3 indirect_diffuse = SampleLightProbeIrradiance(pc.lpv_buffer, world_pos, source_N, pc.lpv_atlas_id, probe_id);
+
+    TextureCube envmap = get_nonuniform_sampled_image<TextureCube>(pc.envmap_id + probe_id);
+    int envmap_width;
+    int envmap_height;
+    int envmap_mips;
+    // TODO: verify the extent is for a single face
+    envmap.GetDimensions(0, envmap_width, envmap_height, envmap_mips);
+    float prefiltered_mip = float(envmap_mips) * perceptual_roughness;
+
+    float2 env = get_sampled_image<Texture2D>(pc.brdf_lut_id).SampleLevel(cube_samp, float2(brdf_data.NoV, perceptual_roughness), 0.0).rg;
+    float3 F = F_SchlickRoughness(brdf_data.NoV, brdf_data.f0, roughness);
+    float3 FssEss = F * env.x + env.y;
+    float3 indirect_specular = get_nonuniform_sampled_image<TextureCube>(pc.envmap_id + probe_id).SampleLevel(cube_samp, N, prefiltered_mip).rgb * FssEss;
+    // TODO: pi or not?
+    float3 indirect_diffuse = SampleLightProbeIrradiance(pc.lpv_buffer, world_pos, source_N, pc.lpv_atlas_id, probe_id) * albedo.xyz;
+    float3 ambient = indirect_diffuse + indirect_specular;
+    out_color.xyz += ambient;
+#else
+    float3 indirect_specular = float3(0);
+    float3 indirect_diffuse = float3(0);
+    out_color.xyz += albedo.xyz * 0.1;
 #endif
 
 // LOCAL LIGHTS
@@ -287,9 +307,6 @@ void main(uint3 global_id: SV_DispatchThreadID)
         out_color.xyz += eval_brdf(brdf_data, albedo.xyz, roughness, metallic) * light_color * attenuation * brdf_data.NoL;
     }
 #endif
-
-    // TODO: indirect lighting
-    out_color.xyz += albedo.xyz * 0.1;
 
     // TODO: gradient noise from http://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare
     out_color.xyz = tonemap(out_color.xyz);
