@@ -48,6 +48,7 @@ enum Debug : uint
     TangentSign,
     Metallic,
     Roughness,
+    AO,
     Uv,
     Shadow,
     Triangles,
@@ -228,6 +229,13 @@ void main(uint3 global_id: SV_DispatchThreadID)
     perceptual_roughness = max(perceptual_roughness, 0.045);
     float roughness = perceptual_roughness * perceptual_roughness;
 
+    float ao = 1.0;
+    // Occlusion strength ignored
+    if (m.occlusion_id != INVALID_ID)
+    {
+        ao = get_nonuniform_sampled_image<Texture2D>(m.occlusion_id).SampleGrad(samp, uv, uv_ddx, uv_ddy).r;
+    }
+
     float3 L = pc.light_dir;
     float3 H = normalize(L + V);
     float3 light_color = float3(1.0, 0.73046076, 0.5088813);
@@ -318,6 +326,11 @@ void main(uint3 global_id: SV_DispatchThreadID)
     case Debug::Roughness:
     {
         out_color = float4(float3(perceptual_roughness), 1.0);
+        break;
+    }
+    case Debug::AO:
+    {
+        out_color = float4(float3(ao), 1.0);
         break;
     }
     case Debug::Uv:
