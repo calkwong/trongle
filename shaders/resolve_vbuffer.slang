@@ -253,10 +253,10 @@ void main(uint3 global_id: SV_DispatchThreadID)
     SamplerState cube_samp = get_sampler<SamplerState>(CUBE_SAMPLER);
     // TODO: mip based on roughness
     float mip = 0.0;
-    float3 indirect_specular = get_nonuniform_sampled_image<TextureCube>(pc.envmap_id + obj.probe_id).SampleLevel(cube_samp, N, mip).rgb;
     // let probe_id = pc.debug_probe;
     let probe_id = obj.probe_id;
     float3 source_N = float3(-N.z, -N.x, N.y);
+    float3 indirect_specular = get_nonuniform_sampled_image<TextureCube>(pc.envmap_id + obj.probe_id).SampleLevel(cube_samp, N, mip).rgb;
     float3 indirect_diffuse = SampleLightProbeIrradiance(pc.lpv_buffer, world_pos, source_N, pc.lpv_atlas_id, probe_id);
 #endif
 

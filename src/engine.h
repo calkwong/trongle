@@ -25,17 +25,12 @@ struct FrameData
 
 struct FrameContext
 {
-    // These will be frozen when freeze_matrices is true
     glm::mat4 view;
     glm::mat4 proj;
     glm::mat4 view_proj;
 
     glm::mat4 prev_view;
     glm::mat4 prev_view_proj;
-
-    glm::mat4 debug_view;
-    glm::mat4 debug_proj;
-    glm::mat4 debug_view_proj;
 };
 
 struct ObjectData;

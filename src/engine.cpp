@@ -431,7 +431,6 @@ void Engine::run()
     camera.near = 0.01f;
 
     frame_context.proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
-    frame_context.debug_proj = frame_context.proj;
 
     AssetLoader asset_loader{ .device = device, .allocator = allocator };
     bool loaded = asset_loader.load_gltf(graphics_queue, imm_fence, imm_pool, imm_buf, ASSET_NAME, static_cast<uint32_t>(image_manager.infos.size()));
@@ -1153,7 +1152,6 @@ void Engine::run()
 
                     skip_occlusion = true;
                     frame_context.proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
-                    frame_context.debug_proj = frame_context.proj;
 
                     immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
                                      {
@@ -1241,7 +1239,6 @@ void Engine::run()
 
             skip_occlusion = true;
             frame_context.proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
-            frame_context.debug_proj = frame_context.proj;
 
             immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
                              {
@@ -1291,11 +1288,6 @@ void Engine::run()
             frame_context.prev_view_proj = frame_context.view_proj;
             frame_context.view = camera.get_view_matrix();
             frame_context.view_proj = frame_context.proj * frame_context.view;
-        }
-        else
-        {
-            frame_context.debug_view = camera.get_view_matrix();
-            frame_context.debug_view_proj = frame_context.debug_proj * frame_context.debug_view;
         }
 
         float az = glm::radians(azimuth);
@@ -1730,7 +1722,7 @@ void Engine::run()
                 };
 
                 PushData data{};
-                data.view_proj = !freeze_matrices ? frame_context.view_proj : frame_context.debug_view_proj;
+                data.view_proj = frame_context.proj * camera.get_view_matrix();
                 data.vertex_buffer = vertex_buffer.address;
                 data.object_buffer = object_buffer.address;
                 data.material_buffer = material_buffer.address;
@@ -1752,43 +1744,51 @@ void Engine::run()
             }
         );
 
-        graph.add_pass(
-            Pass("Hiz")
-                .read_image(depth_image, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
-                .write_image(depth_pyramid, AccessType::ComputeShaderWrite)
-                .write_buffer(spd_counter, AccessType::ComputeShaderWrite),
-            [&]()
-            {
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 8);
-                struct PushData
+        if (!freeze_matrices)
+        {
+            graph.add_pass(
+                Pass("Hiz")
+                    .read_image(depth_image, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                    .write_image(depth_pyramid, AccessType::ComputeShaderWrite)
+                    .write_buffer(spd_counter, AccessType::ComputeShaderWrite),
+                [&]()
                 {
-                    VkDeviceAddress spd_counter_buffer;
-                    glm::vec2 rcp_resolution; // extent of depth buffer
-                    uint32_t mips;
-                    uint32_t num_wgs;
-                    uint32_t src_id; // depth texture to sample
-                    uint32_t dst_id; // mip level 0 of hi-z we write to, offset accordingly!
-                };
+                    vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 8);
+                    struct PushData
+                    {
+                        VkDeviceAddress spd_counter_buffer;
+                        glm::vec2 rcp_resolution; // extent of depth buffer
+                        uint32_t mips;
+                        uint32_t num_wgs;
+                        uint32_t src_id; // depth texture to sample
+                        uint32_t dst_id; // mip level 0 of hi-z we write to, offset accordingly!
+                    };
 
-                auto width = next_pow2(swapchain.extent.width);
-                auto height = next_pow2(swapchain.extent.height);
-                auto group_count_x = get_group_count(width, 64);
-                auto group_count_y = get_group_count(height, 64);
+                    auto width = next_pow2(swapchain.extent.width);
+                    auto height = next_pow2(swapchain.extent.height);
+                    auto group_count_x = get_group_count(width, 64);
+                    auto group_count_y = get_group_count(height, 64);
 
-                PushData data{};
-                data.spd_counter_buffer = spd_counter_buffer.address;
-                data.rcp_resolution = glm::vec2(1.0) / glm::vec2(swapchain.extent.width, swapchain.extent.height);
-                data.mips = get_depth_pyramid_image_count(depth_pyramid_image);
-                data.num_wgs = group_count_x * group_count_y;
-                data.src_id = get_image_id(graph, depth_image);
-                data.dst_id = depth_pyramid_first_mip;
+                    PushData data{};
+                    data.spd_counter_buffer = spd_counter_buffer.address;
+                    data.rcp_resolution = glm::vec2(1.0) / glm::vec2(swapchain.extent.width, swapchain.extent.height);
+                    data.mips = get_depth_pyramid_image_count(depth_pyramid_image);
+                    data.num_wgs = group_count_x * group_count_y;
+                    data.src_id = get_image_id(graph, depth_image);
+                    data.dst_id = depth_pyramid_first_mip;
 
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hiz_pipeline);
-                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
-                vkCmdDispatch(cmd, group_count_x, group_count_y, 1);
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 9);
-            }
-        );
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hiz_pipeline);
+                    vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                    vkCmdDispatch(cmd, group_count_x, group_count_y, 1);
+                    vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 9);
+                }
+            );
+        }
+        else
+        {
+            vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 8);
+            vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 9);
+        }
 
         skip_occlusion = false;
 
@@ -2019,7 +2019,7 @@ void Engine::run()
                 };
 
                 PushData data{};
-                data.view_proj = !freeze_matrices ? frame_context.view_proj : frame_context.debug_view_proj;
+                data.view_proj = frame_context.proj * camera.get_view_matrix();
                 data.vertex_buffer = vertex_buffer.address;
                 data.object_buffer = object_buffer.address;
                 data.material_buffer = material_buffer.address;
@@ -2306,7 +2306,7 @@ void Engine::run()
                 };
 
                 PushData data{};
-                data.view_proj = frame_context.view_proj;
+                data.view_proj = frame_context.proj * camera.get_view_matrix();
                 data.vertex_buffer = vertex_buffer.address;
                 data.object_buffer = object_buffer.address;
                 data.meshlet_buffer = meshlet_buffer.address;
@@ -2344,43 +2344,51 @@ void Engine::run()
             }
         );
 
-        graph.add_pass(
-            Pass("Hiz temporal")
-                .read_image(depth_image, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
-                .write_image(depth_pyramid, AccessType::ComputeShaderWrite)
-                .write_buffer(spd_counter, AccessType::ComputeShaderWrite),
-            [&]()
-            {
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 16);
-                struct PushData
+        if (!freeze_matrices)
+        {
+            graph.add_pass(
+                Pass("Hiz temporal")
+                    .read_image(depth_image, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                    .write_image(depth_pyramid, AccessType::ComputeShaderWrite)
+                    .write_buffer(spd_counter, AccessType::ComputeShaderWrite),
+                [&]()
                 {
-                    VkDeviceAddress spd_counter_buffer;
-                    glm::vec2 rcp_resolution; // extent of depth buffer
-                    uint32_t mips;
-                    uint32_t num_wgs;
-                    uint32_t src_id; // depth texture to sample
-                    uint32_t dst_id; // mip level 0 of hi-z we write to, offset accordingly!
-                };
+                    vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 16);
+                    struct PushData
+                    {
+                        VkDeviceAddress spd_counter_buffer;
+                        glm::vec2 rcp_resolution; // extent of depth buffer
+                        uint32_t mips;
+                        uint32_t num_wgs;
+                        uint32_t src_id; // depth texture to sample
+                        uint32_t dst_id; // mip level 0 of hi-z we write to, offset accordingly!
+                    };
 
-                auto width = next_pow2(swapchain.extent.width);
-                auto height = next_pow2(swapchain.extent.height);
-                auto group_count_x = get_group_count(width, 64);
-                auto group_count_y = get_group_count(height, 64);
+                    auto width = next_pow2(swapchain.extent.width);
+                    auto height = next_pow2(swapchain.extent.height);
+                    auto group_count_x = get_group_count(width, 64);
+                    auto group_count_y = get_group_count(height, 64);
 
-                PushData data{};
-                data.spd_counter_buffer = spd_counter_buffer.address;
-                data.rcp_resolution = glm::vec2(1.0) / glm::vec2(swapchain.extent.width, swapchain.extent.height);
-                data.mips = get_depth_pyramid_image_count(depth_pyramid_image);
-                data.num_wgs = group_count_x * group_count_y;
-                data.src_id = get_image_id(graph, depth_image);
-                data.dst_id = depth_pyramid_first_mip;
+                    PushData data{};
+                    data.spd_counter_buffer = spd_counter_buffer.address;
+                    data.rcp_resolution = glm::vec2(1.0) / glm::vec2(swapchain.extent.width, swapchain.extent.height);
+                    data.mips = get_depth_pyramid_image_count(depth_pyramid_image);
+                    data.num_wgs = group_count_x * group_count_y;
+                    data.src_id = get_image_id(graph, depth_image);
+                    data.dst_id = depth_pyramid_first_mip;
 
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hiz_pipeline);
-                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
-                vkCmdDispatch(cmd, group_count_x, group_count_y, 1);
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 17);
-            }
-        );
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hiz_pipeline);
+                    vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                    vkCmdDispatch(cmd, group_count_x, group_count_y, 1);
+                    vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 17);
+                }
+            );
+        }
+        else
+        {
+            vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 16);
+            vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 17);
+        }
 
         graph.add_pass(
             Pass("Copy to swapchain")
@@ -2461,7 +2469,6 @@ void Engine::run()
         graph.reset();
 
         frame_number++;
-        // fmt::println("{} {} {}", camera.position[0], camera.position[1], camera.position[2]);
     }
 
     vkDeviceWaitIdle(device);

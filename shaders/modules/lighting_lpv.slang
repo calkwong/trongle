@@ -46,12 +46,12 @@ public float3 CalculateProbeSampleCoords(float4x4 world_to_local_volume_normaliz
 {
     float3 light_probe_local_pos = mul(world_to_local_volume_normalized, float4(frag_pos, 1.0)).xyz;
 
-    return float3(
-        1.0 - light_probe_local_pos.z,
-        1.0 - light_probe_local_pos.x,
-        light_probe_local_pos.y
-    );
-    // return light_probe_local_pos;
+    // return float3(
+    //     1.0 - light_probe_local_pos.z,
+    //     1.0 - light_probe_local_pos.x,
+    //     light_probe_local_pos.y
+    // );
+    return light_probe_local_pos;
 }
 
 public float3 CalculateProbeIndirectCoords(LightProbeVolume lpv, float3 indirect_coords)
@@ -96,5 +96,10 @@ public float3 GetSkyAmbientLighting(float3 direction)
 
 public float3 convert_to_s2(float3 v)
 {
-    return float3(-v.z, -v.x, v.y);
+    return float3(v.z, v.x, v.y);
+}
+
+public float3 convert_from_s2(float3 v)
+{
+    return float3(v.y, v.z, v.x);
 }
