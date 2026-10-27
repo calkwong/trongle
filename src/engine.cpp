@@ -45,12 +45,15 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <string>
-#include <random>
 #include <string_view>
 
 #define MAX_TIMESTAMP_QUERIES 20
 #define MAX_MESH_PIPELINE_QUERIES 2
 #define LOCAL_LIGHTS 0
+
+#if STRESS_TEST == 1 || LOCAL_LIGHTS == 1
+#include <random>
+#endif
 
 // const char* ASSET_NAME = "Sponza/Sponza.gltf";
 // const char* ASSET_NAME = "chinesedragon.gltf";

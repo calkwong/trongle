@@ -251,13 +251,6 @@ void main(uint3 global_id: SV_DispatchThreadID)
     perceptual_roughness = max(perceptual_roughness, 0.045);
     float roughness = perceptual_roughness * perceptual_roughness;
 
-    float ao = 1.0;
-    // Occlusion strength ignored
-    if (m.occlusion_id != INVALID_ID)
-    {
-        ao = get_nonuniform_sampled_image<Texture2D>(m.occlusion_id).SampleGrad(samp, uv, uv_ddx, uv_ddy).r;
-    }
-
     float3 L = pc.light_dir;
     float3 H = normalize(L + V);
     float3 light_color = float3(1.0, 0.73046076, 0.5088813);
@@ -284,12 +277,20 @@ void main(uint3 global_id: SV_DispatchThreadID)
     float3 radiance = envmap.SampleLevel(cube_samp, R, prefiltered_mip).rgb;
     float3 irradiance = evaluate_sh(pc.sh_buffer->r_coefficients, pc.sh_buffer->g_coefficients, pc.sh_buffer->b_coefficients, N);
     float3 ambient = eval_indirect_multiscattering(brdf_data, irradiance, radiance, env, albedo.xyz, perceptual_roughness, metallic);
-    out_color.xyz += ambient;
 #else
     float3 irradiance = float3(0);
     float3 radiance = float3(0);
-    out_color.xyz += albedo.xyz * 0.1;
+    float3 ambient = albedo.xyz * 0.1;
 #endif
+
+    float ao = 1.0;
+    // Occlusion strength ignored
+    if (m.occlusion_id != INVALID_ID)
+    {
+        ao = get_nonuniform_sampled_image<Texture2D>(m.occlusion_id).SampleGrad(samp, uv, uv_ddx, uv_ddy).r;
+        ambient *= ao;
+    }
+    out_color.xyz += ambient;
 
 // LOCAL LIGHTS
 #if 0
