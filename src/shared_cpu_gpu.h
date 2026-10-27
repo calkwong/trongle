@@ -56,7 +56,7 @@ PUBLIC_ACCESS struct ObjectData
 
     uint32_t mesh_id;
     uint32_t material_id;
-
+    uint32_t masked;
     uint32_t probe_id;
 };
 

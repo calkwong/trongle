@@ -740,6 +740,7 @@ void Engine::run()
     VkPipeline compact_dispatch_pipeline{};
     VkPipeline hiz_pipeline{};
     VkPipeline vbuffer_pipeline{};
+    VkPipeline vbuffer_masked_pipeline{};
     VkPipeline lighting_pipeline{};
     VkPipeline shadow_matrices_pipeline{};
     VkPipeline cull_shadow_pipeline{};
@@ -759,6 +760,7 @@ void Engine::run()
         auto compact_dispatch_program = load_shader_program("compact_dispatch.slang", device);
         auto hiz_program = load_shader_program("hiz_spd.slang", device);
         auto vbuffer_program = load_shader_program("vbuffer.slang", device);
+        auto vbuffer_masked_program = load_shader_program("vbuffer.slang", device);
         auto lighting_program = load_shader_program("resolve_vbuffer.slang", device);
         auto shadow_matrices_program = load_shader_program("shadow_matrices.slang", device);
         auto cull_shadow_program = load_shader_program("cull_shadow.slang", device);
@@ -792,7 +794,22 @@ void Engine::run()
                 { VK_SHADER_STAGE_MESH_BIT_EXT, VK_SHADER_STAGE_FRAGMENT_BIT },
                 nullptr,
                 &pipeline_layout,
-                { VK_FORMAT_R32G32_UINT }
+                { VK_FORMAT_R32G32_UINT },
+                { 1 }
+            )
+        );
+
+        replace_pipeline(
+            vbuffer_masked_pipeline,
+            create_graphics_pipeline(
+                device,
+                &vbuffer_masked_program,
+                { VK_SHADER_STAGE_MESH_BIT_EXT, VK_SHADER_STAGE_FRAGMENT_BIT },
+                nullptr,
+                &pipeline_layout,
+                { VK_FORMAT_R32G32_UINT },
+                { 0 },
+                GraphicsPipelineConfig{ .cull_mode = VK_CULL_MODE_NONE }
             )
         );
 
@@ -1359,7 +1376,7 @@ void Engine::run()
             shadowmaps[i] = graph.import_image(shadowmap_images[i], shadowmap_descriptor_handles[i]);
         }
 
-        auto dispatch_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(Dispatch) * 2, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
+        auto dispatch_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(Dispatch) * 3, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
         auto prefix_sum_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(PrefixSums), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
         auto meshlet_draw_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(uint32_t) * MAX_MESHLETS_DRAW, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
         auto froxel_offset_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(FroxelOffset) * TOTAL_FROXELS, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
@@ -1653,8 +1670,6 @@ void Engine::run()
                 scissor.extent.height = swapchain.extent.height;
                 vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_pipeline);
-
                 struct PushData
                 {
                     glm::mat4 view_proj;
@@ -1676,9 +1691,16 @@ void Engine::run()
                 data.meshlet_indices_buffer = meshlet_indices_buffer.address;
                 data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
                 data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
-
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
+
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_pipeline);
                 vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch), 1, 0);
+
+                data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer) + sizeof(uint32_t) * MESHLET_DRAW_MASKED_OFFSET;
+                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_masked_pipeline);
+                vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch) * 2, 1, 0);
+
                 vkCmdEndQuery(cmd, frame.query_pool_mesh_pipeline, 0);
                 vkCmdEndRendering(cmd);
                 vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 7);
@@ -1960,9 +1982,16 @@ void Engine::run()
                 data.meshlet_indices_buffer = meshlet_indices_buffer.address;
                 data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
                 data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
-
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
+
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_pipeline);
                 vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch), 1, 0);
+
+                data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer) + sizeof(uint32_t) * MESHLET_DRAW_MASKED_OFFSET;
+                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_masked_pipeline);
+                vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch) * 2, 1, 0);
+
                 vkCmdEndQuery(cmd, frame.query_pool_mesh_pipeline, 1);
                 vkCmdEndRendering(cmd);
                 vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 15);
@@ -2453,10 +2482,10 @@ void Engine::register_object(const Node& node, const glm::mat4& top_matrix, cons
             obj.translation = translation;
             obj.scale = glm::max(glm::max(scale.x, scale.y), scale.z);
             obj.orientation = rotation;
-            obj.material_id = mesh.material_id;
-
             // TODO: test req - do we need a mesh cache?
             obj.mesh_id = static_cast<uint32_t>(meshes.size());
+            obj.material_id = mesh.material_id;
+            obj.masked = mesh.masked;
 
             renderables.push_back(obj);
 
@@ -2585,9 +2614,9 @@ void Engine::register_cs2_object(const Node& node, const glm::mat4& top_matrix, 
             obj.translation = translation;
             obj.scale = glm::max(glm::max(scale.x, scale.y), scale.z);
             obj.orientation = rotation;
-            obj.material_id = mesh.material_id;
-
             obj.mesh_id = static_cast<uint32_t>(meshes.size());
+            obj.material_id = mesh.material_id;
+            obj.masked = mesh.masked;
 
             // TODO: env combined probe shader id
             int best_priority = -2;

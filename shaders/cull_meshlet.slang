@@ -4,6 +4,8 @@ import util;
 import prefix_sum;
 import culling;
 
+#include "../src/config.h"
+
 struct PushConstants
 {
     float4x4 view;
@@ -57,6 +59,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
 
     uint local_meshlet_id = index - (sum - meshlet_count);
     ObjectData o = pc.object_buffer[instance_id];
+    bool masked = (o.masked == 1);
 
     bool late = pc.late == 1;
     if (late)
@@ -109,9 +112,18 @@ void main(uint3 global_id: SV_DispatchThreadID)
     if (visible)
     {
         uint count;
-        InterlockedAdd(pc.dispatch_buffer[1].x, 1, count);
+        uint masked_count;
 
-        pc.meshlet_draw_buffer[count] = index;
+        if (masked)
+        {
+            InterlockedAdd(pc.dispatch_buffer[2].x, 1, masked_count);
+            pc.meshlet_draw_buffer[MESHLET_DRAW_MASKED_OFFSET + masked_count] = index;
+        }
+        else
+        {
+            InterlockedAdd(pc.dispatch_buffer[1].x, 1, count);
+            pc.meshlet_draw_buffer[count] = index;
+        }
 
         if (!late)
         {

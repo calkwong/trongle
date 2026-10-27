@@ -5,9 +5,12 @@ import prefix_sum;
 
 #include "../src/config.h"
 
+// Interpolants only for non opaque path cannot be conditionally toggled based on specialization constant
 struct Interp
 {
     float4 position : SV_Position;
+    float2 uv;
+    nointerpolation uint material_id;
     nointerpolation uint meshlet_id;
 };
 
@@ -30,6 +33,9 @@ struct PushConstants
 
 [[vk::push_constant]]
 PushConstants pc;
+
+[vk::constant_id(0)]
+const int OPAQUE = 1;
 
 #define WG_SIZE_X 64
 
@@ -89,6 +95,8 @@ void mesh_main(
         unpack_tbn(v.normal, uint(v.tangent), normal, tangent);
 
         verts[i].position = mul(pc.view_proj, world_pos);
+        verts[i].uv = float2(v.uv_x, v.uv_y);
+        verts[i].material_id = o.material_id;
         verts[i].meshlet_id = global_meshlet_id;
     }
 
@@ -116,5 +124,15 @@ void ps_main(
     out uint2 out_id: SV_Target0,
 )
 {
+    if (OPAQUE == 0)
+	{
+		MaterialData m = pc.material_buffer[in.material_id];
+		SamplerState samp = get_sampler<SamplerState>(LINEAR_SAMPLER);
+		float4 albedo = get_sampled_image<Texture2D>(m.diffuse_id).Sample(samp, in.uv);
+
+		if (albedo.a < 0.5)
+			discard;
+	}
+
     out_id = uint2(prim.data, in.meshlet_id);
 }

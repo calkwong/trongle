@@ -772,8 +772,6 @@ bool AssetLoader::load_gltf(
             mat_data.emissive_id = static_cast<uint32_t>(image_index) + texture_offset;
         }
 
-        // TODO: handle AlphaMode::Mask
-
         materials.push_back(mat_data);
     }
 
@@ -984,6 +982,7 @@ bool AssetLoader::load_gltf(
                     continue;
 
                 mesh_data.material_id = material_id;
+                mesh_data.masked = asset.materials[material_id].alphaMode == fastgltf::AlphaMode::Mask;
             }
             else
             {

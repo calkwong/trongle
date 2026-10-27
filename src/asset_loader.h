@@ -22,6 +22,7 @@ struct GltfPrimitive
 
     uint32_t lod_count;
     uint32_t material_id;
+    bool masked;
 };
 
 struct GltfMesh

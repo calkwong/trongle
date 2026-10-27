@@ -28,4 +28,8 @@ void main()
     pc.dispatch_buffer[1].x = 0;
     pc.dispatch_buffer[1].y = 1;
     pc.dispatch_buffer[1].z = 1;
+
+    pc.dispatch_buffer[2].x = 0;
+    pc.dispatch_buffer[2].y = 1;
+    pc.dispatch_buffer[2].z = 1;
 }
