@@ -77,10 +77,28 @@ void main(uint3 global_id: SV_DispatchThreadID)
     if (packed == 0xFFFFFFFFu && meshlet_id == 0xFFFFFFFFu)
     {
         float2 ndc = in_uv * 2.0 - 1.0;
-		ndc.y *= -1.0;
-		float3 dir = mul(pc.global_buffer.inverse_view_proj, float4(ndc, 0.0, 1.0)).xyz;
+        ndc.y *= -1.0;
+        float3 dir = mul(pc.global_buffer.inverse_view_proj, float4(ndc, 0.0, 1.0)).xyz;
         out_color = float4(get_nonuniform_sampled_image<TextureCube>(pc.envmap_id).SampleLevel(cube_samp, dir, 0.0).rgb, 1.0);
         out_color.xyz = tonemap(out_color.xyz);
+
+        if (pc.debug_id == Debug::Shadow)
+        {
+            SamplerState nearest_samp = get_sampler<SamplerState>(NEAREST_SAMPLER);
+
+            if (in_uv.x < 0.5 && in_uv.y < 0.5)
+            {
+                uint cascade = 0;
+                cascade = in_uv.x < 0.25 ? cascade : cascade + 1;
+                cascade = in_uv.y < 0.25 ? cascade : cascade + 2;
+
+                float2 shadow_uv = in_uv * 4.0;
+                shadow_uv = fmod(shadow_uv, float2(1.0));
+
+                out_color.xyz = get_nonuniform_sampled_image<Texture2D>(pc.shadowmap_id + cascade).SampleLevel(nearest_samp, shadow_uv, 0.0).rrr;
+            }
+        }
+
         out.Store(tex_coord, out_color);
         return;
     }
