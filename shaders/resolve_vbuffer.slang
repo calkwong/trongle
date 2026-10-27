@@ -155,16 +155,14 @@ void main(uint3 global_id: SV_DispatchThreadID)
     float3 n1 = rotate_quat(np1, obj.orientation);
     float3 n2 = rotate_quat(np2, obj.orientation);
 
-    float3 N = interpolate(bary, n0, n1, n2); // mikktspace
-    N = normalize(N);
+    float3 N = interpolate(bary, n0, n1, n2);
     N = is_back_face ? -N : N;
 
     float4 t0 = float4(rotate_quat(tp0.xyz, obj.orientation), tp0.w);
     float4 t1 = float4(rotate_quat(tp1.xyz, obj.orientation), tp1.w);
     float4 t2 = float4(rotate_quat(tp2.xyz, obj.orientation), tp2.w);
 
-    float4 T = interpolate(bary, t0, t1, t2); // mikktspace
-    // T.w is naturally flipped during tangent generation so mikktspace is consistent with glTF handedness
+    float4 T = interpolate(bary, t0, t1, t2);
     T.w = is_back_face ? -T.w : T.w;
 
     SamplerState samp = get_sampler<SamplerState>(LINEAR_SAMPLER);
