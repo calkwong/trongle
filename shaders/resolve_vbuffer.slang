@@ -298,7 +298,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
     {
     case Debug::Albedo:
     {
-        out_color = albedo;
+        out_color.xyz = linear_to_srgb(albedo.xyz);
         break;
     }
     case Debug::Normal:

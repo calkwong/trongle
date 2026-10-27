@@ -73,7 +73,7 @@ public float3 tangent_to_world_space_mikktspace(float3 sample, float4 T, float3 
     return normalize(T.xyz * sample.x + B * sample.y + N * sample.z);
 }
 
-// Optimized filmic operator by Jim Hejl and Richard Burgess-Dawson
+// Optimized filmic operator by Jim Hejl and Richard Burgess-Dawson, no gamma correction needed
 // http://filmicworlds.com/blog/filmic-tonemapping-operators/
 public float3 tonemap(float3 color)
 {
@@ -127,4 +127,14 @@ public float distance_squared(float3 a, float3 b)
 {
     float3 d = a - b;
     return dot(d, d);
+}
+
+public float3 srgb_to_linear(float3 c)
+{
+	return pow(c, float3(2.2));
+}
+
+public float3 linear_to_srgb(float3 c)
+{
+	return pow(c, float3(1.0 / 2.2));
 }
