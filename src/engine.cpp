@@ -614,6 +614,9 @@ void Engine::run()
         shadowmap_descriptor_handles[i] = image_manager.register_image(device, shadowmap_images[i].view, VK_IMAGE_LAYOUT_GENERAL);
     }
 
+    Image brdf_lut_image = create_image(device, allocator, VkExtent3D{ 128, 128, 1 }, VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR | VK_IMAGE_USAGE_2_STORAGE_BIT_KHR);
+    auto brdf_lut_id = image_manager.register_image(device, brdf_lut_image.view, VK_IMAGE_LAYOUT_GENERAL);
+
     VkExtent3D depth_pyramid_extent{};
     depth_pyramid_extent.width = nearest_pow2(swapchain.extent.width);
     depth_pyramid_extent.height = nearest_pow2(swapchain.extent.height);
@@ -751,6 +754,7 @@ void Engine::run()
     VkPipeline envmap_pipeline{};
     VkPipeline froxels_pipeline{};
     VkPipeline binning_pipeline{};
+    VkPipeline brdf_lut_pipeline{};
 
     std::vector<VkPipeline> pipelines{};
 
@@ -772,6 +776,7 @@ void Engine::run()
         auto envmap_program = load_shader_program("envmap.slang", device);
         auto froxels_program = load_shader_program("froxels.slang", device);
         auto binning_program = load_shader_program("binning.slang", device);
+        auto brdf_lut_program = load_shader_program("brdf_lut.slang", device);
 
         pipelines.clear();
 
@@ -855,6 +860,7 @@ void Engine::run()
         replace_pipeline(envmap_pipeline, create_compute_pipeline(device, &envmap_program, nullptr, &pipeline_layout));
         replace_pipeline(froxels_pipeline, create_compute_pipeline(device, &froxels_program, nullptr, &pipeline_layout));
         replace_pipeline(binning_pipeline, create_compute_pipeline(device, &binning_program, nullptr, &pipeline_layout));
+        replace_pipeline(brdf_lut_pipeline, create_compute_pipeline(device, &brdf_lut_program, nullptr, &pipeline_layout));
     };
 
     build_pipelines();
@@ -868,6 +874,7 @@ void Engine::run()
     }
 
     std::vector<VkImage> images_to_transition{};
+    images_to_transition.push_back(brdf_lut_image.image);
 
     // Cubemaps with mipmaps so we can create prefiltered envmaps
     auto first_cubemap_handle = static_cast<uint32_t>(image_manager.infos.size());
@@ -947,6 +954,7 @@ void Engine::run()
     Buffer light_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, light_data.data(), MAX_POINT_LIGHTS * sizeof(PointLight));
 #endif
 
+    // TODO: Convert this to an one off rendergraph
     immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
                      {
                          transition_images(cmd, images_to_transition);
@@ -954,6 +962,26 @@ void Engine::run()
                          std::array<VkDescriptorSet, 3> sets{ buffer_set, image_set, sampler_set };
                          vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
 
+                         // BRDF LUT
+                         {
+                             struct PushData
+                             {
+                                 glm::vec2 image_size;
+                                 uint32_t brdf_lut_id;
+                             };
+
+                             PushData data{};
+                             data.image_size = glm::vec2(brdf_lut_image.extent.width, brdf_lut_image.extent.height);
+                             data.brdf_lut_id = brdf_lut_id;
+
+                             vkCmdBindPipeline(imm_buf, VK_PIPELINE_BIND_POINT_COMPUTE, brdf_lut_pipeline);
+                             vkCmdPushConstants(imm_buf, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                             auto wg_x = get_group_count(brdf_lut_image.extent.width, 32);
+                             auto wg_y = get_group_count(brdf_lut_image.extent.height, 32);
+                             vkCmdDispatch(imm_buf, wg_x, wg_y, 1);
+                         }
+
+                         // Froxels
                          {
                              struct FroxelsPushConstants
                              {
@@ -984,29 +1012,31 @@ void Engine::run()
                              vkCmdDispatch(cmd, 1, 1, FROXELS_Z);
                          }
 
-                         struct CubemapPushData
                          {
-                             uint32_t src_id;
-                             uint32_t cubemap_id;
-                         };
+                             struct PushData
+                             {
+                                 uint32_t src_id;
+                                 uint32_t cubemap_id;
+                             };
 
-                         CubemapPushData data{};
-                         data.src_id = first_exr_handle;
-                         data.cubemap_id = first_cubemap_handle;
+                             PushData data{};
+                             data.src_id = first_exr_handle;
+                             data.cubemap_id = first_cubemap_handle;
 
-                         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, exr_to_cubemap_pipeline);
-                         for (auto i = 0; i < exr_envmaps.size(); i++)
-                         {
-                             auto& exr_envmap = exr_envmaps[i];
-                             auto& cubemap = cubemaps[i];
+                             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, exr_to_cubemap_pipeline);
+                             for (auto i = 0; i < exr_envmaps.size(); i++)
+                             {
+                                 auto& exr_envmap = exr_envmaps[i];
+                                 auto& cubemap = cubemaps[i];
 
-                             data.src_id = first_exr_handle + i;
-                             data.cubemap_id = first_cubemap_handle + i;
-                             vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(CubemapPushData), &data);
+                                 data.src_id = first_exr_handle + i;
+                                 data.cubemap_id = first_cubemap_handle + i;
+                                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
 
-                             auto wg_x = get_group_count(exr_envmaps[i].extent.width, 8);
-                             auto wg_y = get_group_count(exr_envmaps[i].extent.height, 8);
-                             vkCmdDispatch(cmd, wg_x, wg_y, 1);
+                                 auto wg_x = get_group_count(exr_envmaps[i].extent.width, 8);
+                                 auto wg_y = get_group_count(exr_envmaps[i].extent.height, 8);
+                                 vkCmdDispatch(cmd, wg_x, wg_y, 1);
+                             }
                          }
 
                          giga_barrier(cmd);
@@ -1018,38 +1048,39 @@ void Engine::run()
 
                          giga_barrier(cmd);
 
-                         struct EnvmapPushData
                          {
-                             uint32_t src_id;
-                             uint32_t envmap_id;
-                             float roughness;
-                         };
-
-                         // TODO: optimize, calling worst case wg size at the moment, also fix this in mew-engine
-                         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, envmap_pipeline);
-                         uint32_t counter = 0;
-                         for (auto i = 0; i < envmaps.size(); i++)
-                         {
-                             auto& envmap = envmaps[i];
-                             auto& cubemap = cubemaps[i];
-
-                             EnvmapPushData data{};
-                             data.src_id = first_cubemap_handle + i;
-
-                             auto mips = get_image_mip_level(envmap.extent.width, envmap.extent.height);
-                             auto current_extent = VkExtent2D{ envmap.extent.width, envmap.extent.height };
-                             for (uint32_t mip = 0; mip < mips; mip++)
+                             struct PushData
                              {
-                                 auto wg_x = get_group_count(current_extent.width, 8);
-                                 auto wg_y = get_group_count(current_extent.height, 8);
-                                 data.envmap_id = first_envmap_mip_handle + counter;
-                                 data.roughness = static_cast<float>(mip) / static_cast<float>(mips);
-                                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(EnvmapPushData), &data);
-                                 vkCmdDispatch(cmd, wg_x, wg_y, 1);
+                                 uint32_t src_id;
+                                 uint32_t envmap_id;
+                                 float roughness;
+                             };
 
-                                 counter++;
-                                 current_extent.width /= 2;
-                                 current_extent.height /= 2;
+                             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, envmap_pipeline);
+                             uint32_t counter = 0;
+                             for (auto i = 0; i < envmaps.size(); i++)
+                             {
+                                 auto& envmap = envmaps[i];
+                                 auto& cubemap = cubemaps[i];
+
+                                 PushData data{};
+                                 data.src_id = first_cubemap_handle + i;
+
+                                 auto mips = get_image_mip_level(envmap.extent.width, envmap.extent.height);
+                                 auto current_extent = VkExtent2D{ envmap.extent.width, envmap.extent.height };
+                                 for (uint32_t mip = 0; mip < mips; mip++)
+                                 {
+                                     auto wg_x = get_group_count(current_extent.width, 8);
+                                     auto wg_y = get_group_count(current_extent.height, 8);
+                                     data.envmap_id = first_envmap_mip_handle + counter;
+                                     data.roughness = static_cast<float>(mip) / static_cast<float>(mips);
+                                     vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                                     vkCmdDispatch(cmd, wg_x, wg_y, 1);
+
+                                     counter++;
+                                     current_extent.width /= 2;
+                                     current_extent.height /= 2;
+                                 }
                              }
                          }
                      });
@@ -2452,6 +2483,7 @@ void Engine::run()
 
     destroy_image(device, allocator, depth_pyramid_image);
     destroy_image(device, allocator, lpv_atlas);
+    destroy_image(device, allocator, brdf_lut_image);
     for (const auto& img : shadowmap_images)
     {
         destroy_image(device, allocator, img);
