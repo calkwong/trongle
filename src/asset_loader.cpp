@@ -978,6 +978,10 @@ bool AssetLoader::load_gltf(
                 // Only for Source 2 scenes
                 if (asset.materials[material_id].name.find("tools") != std::string::npos)
                     continue;
+                if (asset.materials[material_id].name.find("steam") != std::string::npos)
+                    continue;
+                if (asset.materials[material_id].name.find("dust_001") != std::string::npos)
+                    continue;
 
                 mesh_data.material_id = material_id;
             }

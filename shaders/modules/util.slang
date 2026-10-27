@@ -122,3 +122,9 @@ public uint get_cluster_index(float2 frag_coord, float2 pixels_per_cluster, uint
     uint2 clusters = uint2(floor(frag_coord / pixels_per_cluster));
     return clusters.x + FROXELS_X * clusters.y + slice * FROXELS_X * FROXELS_Y;
 }
+
+public float distance_squared(float3 a, float3 b)
+{
+    float3 d = a - b;
+    return dot(d, d);
+}

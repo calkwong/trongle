@@ -20,6 +20,7 @@
 #include <vector>
 #include <filesystem>
 #include <cassert>
+#include <algorithm>
 
 namespace
 {
@@ -118,17 +119,29 @@ std::vector<Entity> parse_and_extract_lpvs(std::string entity_file)
     return probes;
 }
 
-// S2V assigns each node the 'best' LPV - we will do a simple selection based on distance on the GPU instead, ignoring indoor/outdoor levels etc.
-// TODO: No sorting of light probes, test if sampling is still valid
 std::vector<LightProbeVolume> calculate_light_probe_binding(std::vector<LpvData>& lpv_cpu_data, const Image& lpv_atlas)
 {
     std::vector<LightProbeVolume> lpv_gpu_data{};
+
+    // Sort by indoor_outdoor_level, then by volume size
+    std::sort(lpv_cpu_data.begin(), lpv_cpu_data.end(), [&](const LpvData& a, const LpvData& b)
+              {
+                  if (a.indoor_outdoor_level != b.indoor_outdoor_level)
+                      return a.indoor_outdoor_level > b.indoor_outdoor_level;
+
+                  auto volume = [&](const LpvData& lpv)
+                  {
+                      const auto size = lpv.box_maxs - lpv.box_mins;
+                      return size[0] * size[1] * size[2];
+                  };
+
+                  return volume(a) < volume(b);
+              });
 
     for (const auto& lpv : lpv_cpu_data)
     {
         lpv_gpu_data.emplace_back(calculate_gpu_probe_data(lpv, lpv_atlas.extent.width, lpv_atlas.extent.height, lpv_atlas.extent.depth));
     }
-
 
     return lpv_gpu_data;
 }
@@ -148,7 +161,7 @@ LightProbeVolume calculate_gpu_probe_data(const LpvData& probe_data, uint32_t pr
     auto local_bb_size = probe_data.box_maxs - probe_data.box_mins;
 
     LightProbeVolume lpv{};
-    lpv.world_to_local_volume_normalized = world_to_local * glm::translate(glm::mat4(1.0f), -probe_data.box_mins) * glm::scale(glm::mat4(1.0f), glm::vec3(1.0) / local_bb_size);
+    lpv.world_to_local_volume_normalized = glm::scale(glm::mat4(1.0f), glm::vec3(1.0) / local_bb_size) * glm::translate(glm::mat4(1.0f), -probe_data.box_mins) * world_to_local;
     auto half = glm::vec3(0.5);
     auto depth_divide = glm::vec3(1.0, 1.0, 1.0 / 6.0);
 
@@ -159,10 +172,20 @@ LightProbeVolume calculate_gpu_probe_data(const LpvData& probe_data, uint32_t pr
     auto scale = probe_data.atlas_size / texture_dims;
     auto offset = probe_data.atlas_offset / texture_dims;
 
-    lpv.border_min = glm::vec4(border_min, 0);
-    lpv.border_max = glm::vec4(border_max, 0);
+    lpv.border_min = glm::vec4(border_min, 1.0);
+    lpv.border_max = glm::vec4(border_max, 1.0);
     lpv.atlas_scale = glm::vec4(scale, 0);
     lpv.atlas_offset = glm::vec4(offset, 0);
 
     return lpv;
+}
+
+glm::vec3 convert_to_s2(glm::vec3 v)
+{
+    return glm::vec3(-v.z, -v.x, v.y);
+}
+
+glm::vec3 convert_from_s2(glm::vec3 v)
+{
+    return glm::vec3(-v.y, v.z, -v.x);
 }

@@ -12,9 +12,9 @@ public struct LightProbeSample_t
 }
 
 // Replaces call to ComputeLightProbeShading
-public float3 SampleLightProbeIrradiance(LightProbeVolume* lpvs, float3 pos_ws, float3 normal, uint probe_id)
+public float3 SampleLightProbeIrradiance(LightProbeVolume* lpvs, float3 pos_ws, float3 normal, uint probe_tex_id, uint volume_id)
 {
-    LightProbeSample_t probe = SampleLightProbeVolumes(lpvs, pos_ws, normal, probe_id);
+    LightProbeSample_t probe = SampleLightProbeVolumes(lpvs, pos_ws, normal, probe_tex_id, volume_id);
 
     // Sky from above and its ground bounce from below, for what no volume covers
     float sky_weight = 1.0 - probe.coverage;
@@ -23,16 +23,15 @@ public float3 SampleLightProbeIrradiance(LightProbeVolume* lpvs, float3 pos_ws, 
     return probe.irradiance + GetSkyAmbientLighting(normal) * sky_weight;
 }
 
-public LightProbeSample_t SampleLightProbeVolumes(LightProbeVolume* lpvs, float3 pos_ws, float3 normal, uint probe_id)
+public LightProbeSample_t SampleLightProbeVolumes(LightProbeVolume* lpvs, float3 pos_ws, float3 normal, uint probe_tex_id, uint volume_id)
 {
     LightProbeSample_t probe;
     probe.irradiance = float3(0);
     probe.coverage = 0.0f;
 
     // Probe blending not currently supported
-    // TODO: look up froxel for our volume
-    uint n_volume = 0;
-    AddLightProbeVolume(probe, lpvs[n_volume], CalculateProbeSampleCoords(lpvs[n_volume].world_to_local_volume_normalized, pos_ws), normal, 1.0, probe_id);
+    uint n_volume = volume_id;
+    AddLightProbeVolume(probe, lpvs[n_volume], CalculateProbeSampleCoords(lpvs[n_volume].world_to_local_volume_normalized, pos_ws), normal, 1.0, probe_tex_id);
 
     return probe;
 }
@@ -46,7 +45,13 @@ public void AddLightProbeVolume(inout LightProbeSample_t probe, LightProbeVolume
 public float3 CalculateProbeSampleCoords(float4x4 world_to_local_volume_normalized, float3 frag_pos)
 {
     float3 light_probe_local_pos = mul(world_to_local_volume_normalized, float4(frag_pos, 1.0)).xyz;
-    return light_probe_local_pos;
+
+    return float3(
+        1.0 - light_probe_local_pos.z,
+        1.0 - light_probe_local_pos.x,
+        light_probe_local_pos.y
+    );
+    // return light_probe_local_pos;
 }
 
 public float3 CalculateProbeIndirectCoords(LightProbeVolume lpv, float3 indirect_coords)
@@ -87,4 +92,9 @@ public float3 SampleProbeAmbientCube(float3 indirect_sample_coords, float3 norma
 public float3 GetSkyAmbientLighting(float3 direction)
 {
     return float3(0.0);
+}
+
+public float3 convert_to_s2(float3 v)
+{
+    return float3(-v.z, -v.x, v.y);
 }

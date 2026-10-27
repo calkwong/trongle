@@ -1,5 +1,6 @@
 import bindings;
 import types;
+import util;
 
 #include "../src/config.h"
 
@@ -18,25 +19,12 @@ struct PushConstants
 [[vk::push_constant]]
 PushConstants pc;
 
-float distance_squared(float3 a, float3 b)
-{
-    float3 d = a - b;
-    return dot(d, d);
-}
-
 bool sphere_aabb_intersect(FroxelAABB aabb, float3 center_vs, float radius)
 {
     float3 closest = clamp(center_vs, aabb.min.xyz, aabb.max.xyz);
 
     float d = distance_squared(closest, center_vs);
     return d <= (radius * radius);
-}
-
-bool aabb_aabb_intersect(FroxelAABB a, FroxelAABB b)
-{
-    return (a.min.x <= b.max.x && a.max.x >= b.min.x)
-        && (a.min.y <= b.max.y && a.max.y >= b.min.y)
-        && (a.min.z <= b.max.z && a.max.z >= b.min.z);
 }
 
 #define WG_SIZE_Z 4

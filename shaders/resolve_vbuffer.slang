@@ -33,6 +33,7 @@ struct PushConstants
     float near;
     float scale;
     float bias;
+    uint debug_probe;
 }
 
 [[vk::push_constant]]
@@ -231,7 +232,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
 
     float3 L = pc.light_dir;
     float3 H = normalize(L + V);
-    float3 light_color = float3(5);
+    float3 light_color = float3(1.0, 0.73046076, 0.5088813);
 
     BRDFData brdf_data = prepare_brdf_data(N, L, V, albedo.xyz, roughness, metallic);
     out_color.xyz = eval_brdf(brdf_data, albedo.xyz, roughness, metallic) * light_color * brdf_data.NoL;
@@ -242,6 +243,18 @@ void main(uint3 global_id: SV_DispatchThreadID)
         out_color.xyz *= shadow_factor;
     }
 
+#if 1
+    SamplerState cube_samp = get_sampler<SamplerState>(CUBE_SAMPLER);
+    // TODO: mip based on roughness
+    float mip = 0.0;
+    float3 indirect_specular = get_nonuniform_sampled_image<TextureCube>(pc.envmap_id + obj.probe_id).SampleLevel(cube_samp, N, mip).rgb;
+    // let probe_id = pc.debug_probe;
+    let probe_id = obj.probe_id;
+    float3 source_N = float3(-N.z, -N.x, N.y);
+    float3 indirect_diffuse = SampleLightProbeIrradiance(pc.lpv_buffer, world_pos, source_N, pc.lpv_atlas_id, probe_id);
+#endif
+
+// LOCAL LIGHTS
 #if 0
     let frag_coord = tex_coord + float2(0.5);
     float depth = get_sampled_image<Texture2D>(pc.depth_id).Load(int3(tex_coord, 0)).r;
@@ -345,15 +358,11 @@ void main(uint3 global_id: SV_DispatchThreadID)
     }
     case Debug::IndirectSpecular:
     {
-        SamplerState cube_samp = get_sampler<SamplerState>(CUBE_SAMPLER);
-        uint offset = 0;
-        float mip = 0.0;
-        out_color.xyz = get_sampled_image<TextureCube>(pc.envmap_id + offset).SampleLevel(cube_samp, N, mip).rgb;
+        out_color.xyz = indirect_specular;
         break;
     }
     case Debug::IndirectDiffuse:
     {
-        float3 indirect_diffuse = SampleLightProbeIrradiance(pc.lpv_buffer, world_pos, N, pc.lpv_atlas_id);
         out_color.xyz = indirect_diffuse;
         break;
     }
