@@ -52,10 +52,10 @@
 #define MAX_MESH_PIPELINE_QUERIES 2
 #define LOCAL_LIGHTS 0
 
-const char* ASSET_NAME = "Sponza/Sponza.gltf";
+// const char* ASSET_NAME = "Sponza/Sponza.gltf";
 // const char* ASSET_NAME = "chinesedragon.gltf";
 // const char* ASSET_NAME = "sphere.gltf";
-// const char* ASSET_NAME = "de_dust2/de_dust2.gltf";
+const char* ASSET_NAME = "de_dust2/de_dust2.gltf";
 // const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
 int DEBUG_ID = 0;
 
@@ -529,6 +529,7 @@ void Engine::run()
     Buffer late_pass_candidates_buffer = create_buffer(device, allocator, (meshlet_offset + get_group_count(meshlet_bits, 32)) * sizeof(uint32_t), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT_KHR);
     Buffer froxels_buffer = create_buffer(device, allocator, sizeof(FroxelAABB) * FROXELS_X * FROXELS_Y * FROXELS_Z, 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT);
     Buffer global_buffer = create_buffer(device, allocator, sizeof(GlobalData) * FRAMES_IN_FLIGHT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT);
+    Buffer sh_buffer = create_buffer(device, allocator, sizeof(float) * 27, 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT);
 
     std::array<Image, SUN_CASCADE_COUNT> shadowmap_images{};
     std::array<uint32_t, SUN_CASCADE_COUNT> shadowmap_descriptor_handles{};
@@ -667,6 +668,7 @@ void Engine::run()
     VkPipeline froxels_pipeline{};
     VkPipeline binning_pipeline{};
     VkPipeline brdf_lut_pipeline{};
+    VkPipeline sh_pipeline{};
 
     std::vector<VkPipeline> pipelines{};
 
@@ -689,6 +691,7 @@ void Engine::run()
         auto froxels_program = load_shader_program("froxels.slang", device);
         auto binning_program = load_shader_program("binning.slang", device);
         auto brdf_lut_program = load_shader_program("brdf_lut.slang", device);
+        auto sh_program = load_shader_program("sh.slang", device);
 
         pipelines.clear();
 
@@ -773,13 +776,15 @@ void Engine::run()
         replace_pipeline(froxels_pipeline, create_compute_pipeline(device, &froxels_program, nullptr, &pipeline_layout));
         replace_pipeline(binning_pipeline, create_compute_pipeline(device, &binning_program, nullptr, &pipeline_layout));
         replace_pipeline(brdf_lut_pipeline, create_compute_pipeline(device, &brdf_lut_program, nullptr, &pipeline_layout));
+        replace_pipeline(sh_pipeline, create_compute_pipeline(device, &sh_program, nullptr, &pipeline_layout));
     };
 
     build_pipelines();
 
     // Initialize scene LPVs and envmaps
     auto first_exr_handle = static_cast<uint32_t>(image_manager.infos.size());
-    auto exr_envmaps = load_exr_images(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, "../assets/de_dust2_envmaps/", true);
+    // auto exr_envmaps = load_exr_images(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, "../assets/de_dust2_envmaps/", true);
+    auto exr_envmaps = load_exr_images(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, "../assets/de_dust2_skybox/", true);
     for (const auto& exr_envmap : exr_envmaps)
     {
         image_manager.register_sampled_image(device, exr_envmap.view, VK_IMAGE_LAYOUT_GENERAL);
@@ -886,7 +891,6 @@ void Engine::run()
                          vkCmdFillBuffer(cmd, late_pass_candidates_buffer.buffer, 0, VK_WHOLE_SIZE, 0);
                          transition_images(cmd, images_to_transition, depth_images);
 
-                         // BRDF LUT
                          {
                              struct PushData
                              {
@@ -905,9 +909,8 @@ void Engine::run()
                              vkCmdDispatch(cmd, wg_x, wg_y, 1);
                          }
 
-                         // Froxels
                          {
-                             struct FroxelsPushConstants
+                             struct PushData
                              {
                                  float4x4 inverse_proj;
                                  VkDeviceAddress froxels_buffer;
@@ -918,7 +921,7 @@ void Engine::run()
                                  uint32_t depth_slices;
                              };
 
-                             FroxelsPushConstants data{};
+                             PushData data{};
                              data.inverse_proj = glm::inverse(frame_context.proj);
                              data.froxels_buffer = froxels_buffer.address;
                              data.screen_size = glm::vec2(swapchain.extent.width, swapchain.extent.height);
@@ -932,7 +935,7 @@ void Engine::run()
                              data.depth_slices = FROXELS_Z;
 
                              vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, froxels_pipeline);
-                             vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(FroxelsPushConstants), &data);
+                             vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                              vkCmdDispatch(cmd, 1, 1, FROXELS_Z);
                          }
 
@@ -964,6 +967,22 @@ void Engine::run()
                          }
 
                          giga_barrier(cmd);
+
+                         {
+                             struct PushData
+                             {
+                                 VkDeviceAddress sh_buffer;
+                                 uint32_t cubemap_id;
+                             };
+
+                             PushData data{};
+                             data.sh_buffer = sh_buffer.address;
+                             data.cubemap_id = first_cubemap_handle;
+
+                             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, sh_pipeline);
+                             vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                             vkCmdDispatch(cmd, 1, 1, 1);
+                         }
 
                          for (const auto& cubemap : cubemaps)
                          {
@@ -1356,6 +1375,15 @@ void Engine::run()
 
         VK_CHECK(vkBeginCommandBuffer(cmd, &cmd_begin_info));
         vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 0);
+
+        auto* global_data = static_cast<GlobalData*>(global_buffer.info.pMappedData);
+        GlobalData data{};
+        data.view = frame_context.view;
+        data.view_proj = frame_context.view_proj;
+        data.inverse_view_proj = glm::inverse(data.view_proj);
+        data.previous_view = frame_context.prev_view;
+        data.previous_view_proj = frame_context.prev_view_proj;
+        global_data[frame_number % FRAMES_IN_FLIGHT] = data;
 
         std::array<VkDescriptorSet, 3> sets{ buffer_set, image_set, sampler_set };
 
@@ -2204,6 +2232,7 @@ void Engine::run()
                     VkDeviceAddress light_buffer;
                     VkDeviceAddress froxel_offset_list;
                     VkDeviceAddress froxel_item_list;
+                    VkDeviceAddress sh_buffer;
                     glm::vec3 light_dir;
                     uint32_t shadowmap_id; // Offset accordingly
                     glm::vec3 camera_pos;
@@ -2213,7 +2242,6 @@ void Engine::run()
                     uint32_t debug_id;
                     uint32_t output_id;
                     uint32_t envmap_id;
-                    uint32_t lpv_atlas_id;
                     uint32_t depth_id;
                     uint32_t brdf_lut_id;
                     float near;
@@ -2235,6 +2263,7 @@ void Engine::run()
 #endif
                 data.froxel_offset_list = get_buffer_address(graph, froxel_offset_buffer);
                 data.froxel_item_list = get_buffer_address(graph, froxel_item_buffer);
+                data.sh_buffer = sh_buffer.address;
                 data.light_dir = sunlight_dir;
                 data.shadowmap_id = b_shadows ? get_image_id(graph, shadowmaps[0]) : -1u;
                 data.camera_pos = camera.position;
@@ -2401,6 +2430,7 @@ void Engine::run()
     destroy_buffer(allocator, light_buffer);
 #endif
     destroy_buffer(allocator, global_buffer);
+    destroy_buffer(allocator, sh_buffer);
 
     destroy_image(device, allocator, depth_pyramid_image);
     destroy_image(device, allocator, lpv_atlas);

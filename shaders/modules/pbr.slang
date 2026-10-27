@@ -142,3 +142,22 @@ public float3 eval_specular_brdf(BRDFData brdf_data, float roughness, inout floa
 
     return D * V * F_out;
 }
+
+// https://www.jcgt.org/published/0008/01/03/paper.pdf
+// https://bruop.github.io/ibl/
+public float3 eval_indirect_multiscattering(BRDFData brdf_data, float3 irradiance, float3 radiance, float2 brdf_lut, float3 albedo, float perceptual_roughness, float metallic)
+{
+    float3 F = F_SchlickRoughness(brdf_data.NoV, brdf_data.f0, perceptual_roughness);
+
+	float3 FssEss = F * brdf_lut.x + brdf_lut.y;
+
+	float Ems = 1.0 - (brdf_lut.x + brdf_lut.y);
+	float3 F_avg = brdf_data.f0 + (1.0 - brdf_data.f0) / 21.0;
+	float3 FmsEms = Ems * FssEss * F_avg / (1.0 - F_avg * Ems);
+
+	// TODO: we're doing lambertian diffuse and weighing by 1-F here, need a second fresnel factor or switch to Fd_Burley?
+	// division by PI baked into irradiance/SH already
+	float3 diffuse = albedo * (1.0 - metallic) * float3(1.0 - 0.04);
+	float3 kD = diffuse * (1.0 - FssEss - FmsEms);
+	return FssEss * radiance + (FmsEms + kD) * irradiance;
+}

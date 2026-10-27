@@ -4,6 +4,7 @@ import util;
 import barycentrics;
 import pbr;
 import shadow_mapping;
+import sh_util;
 
 struct PushConstants
 {
@@ -17,6 +18,7 @@ struct PushConstants
     PointLight* light_buffer;
     FroxelOffset* froxel_offset_list;
     uint* froxel_item_list;
+    SH* sh_buffer;
     float3 light_dir;
     uint shadowmap_id;
     float3 camera_pos;
@@ -50,8 +52,8 @@ enum Debug : uint
     Shadow,
     Triangles,
     Meshlets,
-    IndirectSpecular,
-    IndirectDiffuse
+    Radiance,
+    Irradiance
 };
 
 #define CS2 1
@@ -69,9 +71,16 @@ void main(uint3 global_id: SV_DispatchThreadID)
     uint packed = vbuffer.Load(int3(tex_coord, 0)).r;
     uint meshlet_id = vbuffer.Load(int3(tex_coord, 0)).g;
 
-    float4 out_color = float4(0, 0, 0, 1);
+    float2 in_uv = (float2(tex_coord) + float2(0.5)) / pc.screen_extent;
+    float4 out_color;
+    SamplerState cube_samp = get_sampler<SamplerState>(CUBE_SAMPLER);
     if (packed == 0xFFFFFFFFu && meshlet_id == 0xFFFFFFFFu)
     {
+        float2 ndc = in_uv * 2.0 - 1.0;
+		ndc.y *= -1.0;
+		float3 dir = mul(pc.global_buffer.inverse_view_proj, float4(ndc, 0.0, 1.0)).xyz;
+        out_color = float4(get_nonuniform_sampled_image<TextureCube>(pc.envmap_id).SampleLevel(cube_samp, dir, 0.0).rgb, 1.0);
+        out_color.xyz = tonemap(out_color.xyz);
         out.Store(tex_coord, out_color);
         return;
     }
@@ -121,8 +130,6 @@ void main(uint3 global_id: SV_DispatchThreadID)
     float4 p0 = mul(pc.view_proj, float4(wp0, 1.0));
     float4 p1 = mul(pc.view_proj, float4(wp1, 1.0));
     float4 p2 = mul(pc.view_proj, float4(wp2, 1.0));
-
-    float2 in_uv = (float2(tex_coord) + float2(0.5)) / pc.screen_extent;
 
     // we want y up here, not y with top left origin
     float2 pNdc = in_uv * 2.0 - 1.0;
@@ -246,32 +253,23 @@ void main(uint3 global_id: SV_DispatchThreadID)
         out_color.xyz *= shadow_factor;
     }
 
-#if 0
-    SamplerState cube_samp = get_sampler<SamplerState>(CUBE_SAMPLER); // Also doubles as linear clamp
-    // TODO: mip based on roughness
-    float mip = 0.0;
-    float3 source_N = float3(-N.z, -N.x, N.y);
-
+#if 1
     TextureCube envmap = get_nonuniform_sampled_image<TextureCube>(pc.envmap_id);
     int envmap_width;
     int envmap_height;
     int envmap_mips;
-    // TODO: verify the extent is for a single face
     envmap.GetDimensions(0, envmap_width, envmap_height, envmap_mips);
     float prefiltered_mip = float(envmap_mips) * perceptual_roughness;
+    float3 R = reflect(-V, N);
 
     float2 env = get_sampled_image<Texture2D>(pc.brdf_lut_id).SampleLevel(cube_samp, float2(brdf_data.NoV, perceptual_roughness), 0.0).rg;
-    float3 F = F_SchlickRoughness(brdf_data.NoV, brdf_data.f0, roughness);
-    float3 FssEss = F * env.x + env.y;
-    float3 indirect_specular = envmap.SampleLevel(cube_samp, N, prefiltered_mip).rgb * FssEss;
-    // TODO: pi or not?
-    // float3 indirect_diffuse = SampleLightProbeIrradiance(pc.lpv_buffer, world_pos, source_N, pc.lpv_atlas_id, probe_id) * albedo.xyz;
-    float3 indirect_diffuse = float3(0.0);
-    float3 ambient = indirect_diffuse + indirect_specular;
+    float3 radiance = envmap.SampleLevel(cube_samp, R, prefiltered_mip).rgb;
+    float3 irradiance = evaluate_sh(pc.sh_buffer->r_coefficients, pc.sh_buffer->g_coefficients, pc.sh_buffer->b_coefficients, N);
+    float3 ambient = eval_indirect_multiscattering(brdf_data, irradiance, radiance, env, albedo.xyz, perceptual_roughness, metallic);
     out_color.xyz += ambient;
 #else
-    float3 indirect_specular = float3(0);
-    float3 indirect_diffuse = float3(0);
+    float3 irradiance = float3(0);
+    float3 radiance = float3(0);
     out_color.xyz += albedo.xyz * 0.1;
 #endif
 
@@ -379,14 +377,14 @@ void main(uint3 global_id: SV_DispatchThreadID)
         out_color.xyz = float3(float(mhash & 255), float((mhash >> 8) & 255), float((mhash >> 16) & 255)) / 255.0;
         break;
     }
-    case Debug::IndirectSpecular:
+    case Debug::Radiance:
     {
-        out_color.xyz = indirect_specular;
+        out_color.xyz = linear_to_srgb(radiance);
         break;
     }
-    case Debug::IndirectDiffuse:
+    case Debug::Irradiance:
     {
-        out_color.xyz = indirect_diffuse;
+        out_color.xyz = linear_to_srgb(irradiance);
         break;
     }
     default:

@@ -138,3 +138,12 @@ public float3 linear_to_srgb(float3 c)
 {
 	return pow(c, float3(1.0 / 2.2));
 }
+
+public float3 reconstruct_world_pos(float depth, float4x4 inverse_view_proj, float2 uv_pos)
+{
+	float2 ndc = uv_pos * 2.0 - 1.0;
+	ndc.y *= -1.0;
+	float4 world_pos = mul(inverse_view_proj, float4(ndc, depth, 1.0));
+
+	return world_pos.xyz / world_pos.w;
+}

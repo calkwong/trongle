@@ -142,6 +142,11 @@ PUBLIC_ACCESS struct PrefixSums
 
 PUBLIC_ACCESS struct GlobalData
 {
+    float4x4 view;
+    float4x4 view_proj;
+    float4x4 inverse_view_proj;
+    float4x4 previous_view;
+    float4x4 previous_view_proj;
     float4x4 shadow_matrices[SUN_CASCADE_COUNT];
     float4x4 shadow_views[SUN_CASCADE_COUNT];
 
