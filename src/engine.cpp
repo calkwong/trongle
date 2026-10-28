@@ -33,6 +33,7 @@
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/vector_uint3.hpp>
 #include <glm/vector_relational.hpp>
+#include <glm/ext/matrix_transform.hpp>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
@@ -55,6 +56,16 @@
 #include <random>
 #endif
 
+#if STRESS_TEST == 1
+bool b_shadows = false;
+#else
+bool b_shadows = true;
+#endif
+float shadow_draw_distance = SHADOW_DRAW_DISTANCE;
+bool b_taa = false;
+bool b_taa_first_frame = true;
+bool skip_occlusion = true;
+
 // const char* ASSET_NAME = "Sponza/Sponza.gltf";
 // const char* ASSET_NAME = "chinesedragon.gltf";
 // const char* ASSET_NAME = "sphere.gltf";
@@ -64,6 +75,22 @@ int DEBUG_ID = 0;
 
 namespace
 {
+float Halton(uint32_t i, uint32_t b)
+{
+    float f = 1.0f;
+    float r = 0.0f;
+
+    while (i > 0)
+    {
+        f /= static_cast<float>(b);
+        r = r + f * static_cast<float>(i % b);
+        auto ratio = static_cast<float>(i) / static_cast<float>(b);
+        i = static_cast<uint32_t>(glm::floor(ratio));
+    }
+
+    return r;
+}
+
 // Taken directly from https://github.com/zeux/niagara/blob/master/src/scene.cpp
 void decompose_transform(const glm::mat4& m, glm::vec3& t, glm::vec3& s, glm::vec4& rotation)
 {
@@ -672,6 +699,8 @@ void Engine::run()
     VkPipeline binning_pipeline{};
     VkPipeline brdf_lut_pipeline{};
     VkPipeline sh_pipeline{};
+    VkPipeline taa_pipeline{};
+    VkPipeline tonemap_pipeline{};
 
     std::vector<VkPipeline> pipelines{};
 
@@ -695,6 +724,8 @@ void Engine::run()
         auto binning_program = load_shader_program("binning.slang", device);
         auto brdf_lut_program = load_shader_program("brdf_lut.slang", device);
         auto sh_program = load_shader_program("sh.slang", device);
+        auto taa_program = load_shader_program("taa.slang", device);
+        auto tonemap_program = load_shader_program("tonemap.slang", device);
 
         pipelines.clear();
 
@@ -780,6 +811,8 @@ void Engine::run()
         replace_pipeline(binning_pipeline, create_compute_pipeline(device, &binning_program, nullptr, &pipeline_layout));
         replace_pipeline(brdf_lut_pipeline, create_compute_pipeline(device, &brdf_lut_program, nullptr, &pipeline_layout));
         replace_pipeline(sh_pipeline, create_compute_pipeline(device, &sh_program, nullptr, &pipeline_layout));
+        replace_pipeline(taa_pipeline, create_compute_pipeline(device, &taa_program, nullptr, &pipeline_layout));
+        replace_pipeline(tonemap_pipeline, create_compute_pipeline(device, &tonemap_program, nullptr, &pipeline_layout));
     };
 
     build_pipelines();
@@ -1051,13 +1084,6 @@ void Engine::run()
     std::array<uint64_t, MAX_TIMESTAMP_QUERIES> timestamp_results{};
     std::array<uint64_t, MAX_MESH_PIPELINE_QUERIES> mesh_pipeline_results{};
 
-#if STRESS_TEST == 1
-    bool b_shadows = false;
-#else
-    bool b_shadows = true;
-#endif
-    float shadow_draw_distance = SHADOW_DRAW_DISTANCE;
-    bool skip_occlusion = true;
     float azimuth = 0.0f;
     float elevation = 80.0f;
 
@@ -1097,6 +1123,7 @@ void Engine::run()
                     image_manager.update(device, depth_pyramid_descriptor_handle, depth_pyramid_image.view, VK_IMAGE_LAYOUT_GENERAL);
                     update_depth_pyramid(depth_pyramid_image, depth_pyramid_image_views, depth_pyramid_first_mip);
 
+                    b_taa_first_frame = true;
                     skip_occlusion = true;
                     frame_context.proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
 
@@ -1108,7 +1135,7 @@ void Engine::run()
                                          vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
 
                                          {
-                                             struct FroxelsPushConstants
+                                             struct PushData
                                              {
                                                  float4x4 inverse_proj;
                                                  VkDeviceAddress froxels_buffer;
@@ -1119,7 +1146,7 @@ void Engine::run()
                                                  uint32_t depth_slices;
                                              };
 
-                                             FroxelsPushConstants data{};
+                                             PushData data{};
                                              data.inverse_proj = glm::inverse(frame_context.proj);
                                              data.froxels_buffer = froxels_buffer.address;
                                              data.screen_size = glm::vec2(swapchain.extent.width, swapchain.extent.height);
@@ -1133,7 +1160,7 @@ void Engine::run()
                                              data.depth_slices = FROXELS_Z;
 
                                              vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, froxels_pipeline);
-                                             vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(FroxelsPushConstants), &data);
+                                             vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                                              vkCmdDispatch(cmd, 1, 1, FROXELS_Z);
                                          }
                                      });
@@ -1184,6 +1211,7 @@ void Engine::run()
             image_manager.update(device, depth_pyramid_descriptor_handle, depth_pyramid_image.view, VK_IMAGE_LAYOUT_GENERAL);
             update_depth_pyramid(depth_pyramid_image, depth_pyramid_image_views, depth_pyramid_first_mip);
 
+            b_taa_first_frame = true;
             skip_occlusion = true;
             frame_context.proj = camera.set_perspective_matrix(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / swapchain.extent.height, camera.near);
 
@@ -1195,7 +1223,7 @@ void Engine::run()
                                  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
 
                                  {
-                                     struct FroxelsPushConstants
+                                     struct PushData
                                      {
                                          float4x4 inverse_proj;
                                          VkDeviceAddress froxels_buffer;
@@ -1206,7 +1234,7 @@ void Engine::run()
                                          uint32_t depth_slices;
                                      };
 
-                                     FroxelsPushConstants data{};
+                                     PushData data{};
                                      data.inverse_proj = glm::inverse(frame_context.proj);
                                      data.froxels_buffer = froxels_buffer.address;
                                      data.screen_size = glm::vec2(swapchain.extent.width, swapchain.extent.height);
@@ -1220,21 +1248,43 @@ void Engine::run()
                                      data.depth_slices = FROXELS_Z;
 
                                      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, froxels_pipeline);
-                                     vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(FroxelsPushConstants), &data);
+                                     vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                                      vkCmdDispatch(cmd, 1, 1, FROXELS_Z);
                                  }
                              });
         }
 
-        // TODO: freezing matrices currently broken
-        // Update camera
+        // Update scene
         camera.update(delta_time);
+
+        // TODO: move this out of render loop
+        std::array<glm::vec2, 8> jitter_offsets{};
+        for (int i = 0; i < jitter_offsets.size(); i++)
+        {
+            float halton_x = 2.0f * Halton(i + 1, 2) - 1.0f;
+            float halton_y = 2.0f * Halton(i + 1, 3) - 1.0f;
+
+            float x = halton_x / static_cast<float>(swapchain.extent.width);
+            float y = halton_y / static_cast<float>(swapchain.extent.height);
+            jitter_offsets[i] = glm::vec2(x, y);
+        }
+
         if (!freeze_matrices)
         {
             frame_context.prev_view = frame_context.view;
             frame_context.prev_view_proj = frame_context.view_proj;
             frame_context.view = camera.get_view_matrix();
-            frame_context.view_proj = frame_context.proj * frame_context.view;
+
+            if (b_taa)
+            {
+                auto idx = frame_number % 8;
+                frame_context.offset_projection = glm::translate(glm::mat4(1.0f), glm::vec3(jitter_offsets[idx].x, jitter_offsets[idx].y, 0.0));
+                frame_context.view_proj = frame_context.offset_projection * frame_context.proj * frame_context.view;
+            }
+            else
+            {
+                frame_context.view_proj = frame_context.proj * frame_context.view;
+            }
         }
 
         float az = glm::radians(azimuth);
@@ -1318,6 +1368,7 @@ void Engine::run()
         ImGui::Text("Triangles early:   %u", static_cast<unsigned int>(triangles_early));
         ImGui::Text("Triangles late:    %u", static_cast<unsigned int>(triangles_late));
         // ImGui::Text("Triangles:   %.1fM", static_cast<double>(triangles) * 1e-6);
+        ImGui::Checkbox("TAA", &b_taa);
         ImGui::Checkbox("Freeze camera", &freeze_matrices);
         ImGui::Checkbox("Shadows", &b_shadows);
         ImGui::SliderFloat("Shadow draw distance", &shadow_draw_distance, SHADOW_DRAW_DISTANCE, 400.0);
@@ -1351,6 +1402,7 @@ void Engine::run()
                 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
                 VK_IMAGE_ASPECT_DEPTH_BIT }
         );
+
         auto draw_image = graph.create_task_image(
             ImageResourceDesc{
                 VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
@@ -1358,6 +1410,21 @@ void Engine::run()
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                 VK_IMAGE_ASPECT_COLOR_BIT }
         );
+
+        std::array<uint32_t, 2> taa_images{};
+        for (auto& image : taa_images)
+        {
+            image = graph.create_task_image(
+                ImageResourceDesc{
+                    VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
+                    VK_FORMAT_R16G16B16A16_SFLOAT,
+                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                    VK_IMAGE_ASPECT_COLOR_BIT }
+            );
+        }
+        auto history_taa_image = taa_images[frame_number % 2];
+        auto current_taa_image = taa_images[(frame_number + 1) % 2];
+
         auto vbuffer = graph.create_task_image(
             ImageResourceDesc{
                 VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
@@ -1685,7 +1752,7 @@ void Engine::run()
                 };
 
                 PushData data{};
-                data.view_proj = frame_context.proj * camera.get_view_matrix();
+                data.view_proj = b_taa ? frame_context.offset_projection * frame_context.proj * camera.get_view_matrix() : frame_context.proj * camera.get_view_matrix();
                 data.vertex_buffer = vertex_buffer.address;
                 data.object_buffer = object_buffer.address;
                 data.material_buffer = material_buffer.address;
@@ -1982,7 +2049,7 @@ void Engine::run()
                 };
 
                 PushData data{};
-                data.view_proj = frame_context.proj * camera.get_view_matrix();
+                data.view_proj = b_taa ? frame_context.offset_projection * frame_context.proj * camera.get_view_matrix() : frame_context.proj * camera.get_view_matrix();
                 data.vertex_buffer = vertex_buffer.address;
                 data.object_buffer = object_buffer.address;
                 data.material_buffer = material_buffer.address;
@@ -2265,11 +2332,11 @@ void Engine::run()
                     float near;
                     float scale;
                     float bias;
-                    uint32_t debug_probe;
+                    uint32_t taa;
                 };
 
                 PushData data{};
-                data.view_proj = frame_context.proj * camera.get_view_matrix();
+                data.view_proj = b_taa ? frame_context.offset_projection * frame_context.proj * camera.get_view_matrix() : frame_context.proj * camera.get_view_matrix();
                 data.vertex_buffer = vertex_buffer.address;
                 data.object_buffer = object_buffer.address;
                 data.meshlet_buffer = meshlet_buffer.address;
@@ -2299,6 +2366,7 @@ void Engine::run()
                 const float ratio = camera.far / camera.near;
                 data.scale = static_cast<float>(FROXELS_Z) / glm::log(ratio);
                 data.bias = static_cast<float>(FROXELS_Z) * glm::log(camera.near) / glm::log(ratio);
+                data.taa = b_taa ? 1 : 0;
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, lighting_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
@@ -2352,13 +2420,100 @@ void Engine::run()
             vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 17);
         }
 
+        if (b_taa)
+        {
+            graph.add_pass(
+                Pass("TAA")
+                    .read_image(depth_image, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                    .read_image(draw_image, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                    .read_image(history_taa_image, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                    .write_image(current_taa_image, AccessType::ComputeShaderWrite),
+                [&]()
+                {
+                    struct PushData
+                    {
+                        glm::vec4 jitter_offset;
+                        VkDeviceAddress global_buffer;
+                        glm::vec2 screen_size;
+                        uint32_t current_id;
+                        uint32_t history_id;
+                        uint32_t resolve_id;
+                        uint32_t depth_id;
+                        // uint32_t velocity_id;
+                        uint32_t variance_clipping;
+                        uint32_t history_filter;
+                        uint32_t ycocg;
+                        uint32_t valid_history; // valid when first_frame==false
+                        uint32_t dynamic_blend;
+                    };
+
+                    PushData data{};
+                    auto jitter_count = jitter_offsets.size();
+                    auto current_jitter = jitter_offsets[frame_number % jitter_count];
+                    auto previous_jitter = jitter_offsets[(frame_number - 1) % jitter_count];
+                    data.jitter_offset = glm::vec4(current_jitter, previous_jitter);
+                    data.global_buffer = global_buffer.address;
+                    data.screen_size = glm::vec2(swapchain.extent.width, swapchain.extent.height);
+                    data.current_id = get_image_id(graph, draw_image);
+                    data.history_id = get_image_id(graph, history_taa_image);
+                    data.resolve_id = get_image_id(graph, current_taa_image);
+                    data.depth_id = get_image_id(graph, depth_image);
+                    data.variance_clipping = 1;
+                    data.history_filter = 1;
+                    data.ycocg = 1;
+                    data.valid_history = b_taa_first_frame ? 0 : 1;
+                    b_taa_first_frame = false;
+                    data.dynamic_blend = 1;
+
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, taa_pipeline);
+                    vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                    vkCmdDispatch(cmd, get_group_count(swapchain.extent.width, 8), get_group_count(swapchain.extent.height, 8), 1);
+                }
+            );
+
+            graph.add_pass(
+                Pass("Copy to history TAA & Tonemap")
+                    .read_image(current_taa_image, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                    .write_image(history_taa_image, AccessType::ComputeShaderWrite)
+                    .write_image(current_taa_image, AccessType::ComputeShaderWrite),
+                // .write_image(swapchain_image, AccessType::ComputeShaderWrite),
+                [&]()
+                {
+                    struct PushData
+                    {
+                        glm::vec2 screen_size;
+                        uint32_t src_id;
+                        uint32_t dst_id;
+                        uint32_t swapchain_id;
+                    };
+
+                    PushData data{};
+                    data.screen_size = glm::vec2(swapchain.extent.width, swapchain.extent.height);
+                    data.src_id = get_image_id(graph, current_taa_image);
+                    data.dst_id = get_image_id(graph, history_taa_image);
+                    // data.swapchain_id = get_image_id(graph, swapchain_image);
+
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, tonemap_pipeline);
+                    vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                    vkCmdDispatch(cmd, get_group_count(swapchain.extent.width, 8), get_group_count(swapchain.extent.height, 8), 1);
+                }
+            );
+        }
+
+        // TODO: descriptor handles for swapchain images
         graph.add_pass(
             Pass("Copy to swapchain")
-                .read_image(draw_image, AccessType::TransferRead)
+                .read_image(b_taa ? current_taa_image : draw_image, AccessType::TransferRead)
                 .write_image(swapchain_image, AccessType::TransferWrite),
             [&]()
             {
-                copy_image(cmd, get_image(graph, draw_image), get_image(graph, swapchain_image), swapchain.extent, swapchain.extent);
+                copy_image(
+                    cmd,
+                    get_image(graph, b_taa ? current_taa_image : draw_image),
+                    get_image(graph, swapchain_image),
+                    swapchain.extent,
+                    swapchain.extent
+                );
             }
         );
 

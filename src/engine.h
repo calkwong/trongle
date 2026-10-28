@@ -31,6 +31,8 @@ struct FrameContext
 
     glm::mat4 prev_view;
     glm::mat4 prev_view_proj;
+
+    glm::mat4 offset_projection;
 };
 
 struct ObjectData;
