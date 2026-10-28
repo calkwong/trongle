@@ -980,6 +980,8 @@ bool AssetLoader::load_gltf(
                     continue;
                 if (asset.materials[material_id].name.find("dust_001") != std::string::npos)
                     continue;
+                if (asset.materials[material_id].name.find("lightshaft") != std::string::npos)
+                    continue;
 
                 mesh_data.material_id = material_id;
                 mesh_data.masked = asset.materials[material_id].alphaMode == fastgltf::AlphaMode::Mask;

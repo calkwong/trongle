@@ -1056,7 +1056,7 @@ void Engine::run()
 #else
     bool b_shadows = true;
 #endif
-
+    float shadow_draw_distance = SHADOW_DRAW_DISTANCE;
     bool skip_occlusion = true;
     float azimuth = 0.0f;
     float elevation = 80.0f;
@@ -1320,9 +1320,24 @@ void Engine::run()
         // ImGui::Text("Triangles:   %.1fM", static_cast<double>(triangles) * 1e-6);
         ImGui::Checkbox("Freeze camera", &freeze_matrices);
         ImGui::Checkbox("Shadows", &b_shadows);
-        ImGui::SliderInt("Debug", &DEBUG_ID, 0, MAX_DEBUG_ID);
+        ImGui::SliderFloat("Shadow draw distance", &shadow_draw_distance, SHADOW_DRAW_DISTANCE, 400.0);
         ImGui::SliderFloat("Azimuth", &azimuth, 0.0, 360.0);
         ImGui::SliderFloat("Elevation", &elevation, 0.0, 90.0);
+        ImGui::SliderInt("Debug channels", &DEBUG_ID, 0, MAX_DEBUG_ID);
+        ImGui::Text("0:  Default");
+        ImGui::Text("1:  Albedo");
+        ImGui::Text("2:  Shading normal");
+        ImGui::Text("3:  Tangent");
+        ImGui::Text("4:  Tangent sign");
+        ImGui::Text("5:  Metallic");
+        ImGui::Text("6:  Roughness");
+        ImGui::Text("7:  AO");
+        ImGui::Text("8:  UV");
+        ImGui::Text("9:  Shadow cascades");
+        ImGui::Text("10: Triangles");
+        ImGui::Text("11: Meshlets");
+        ImGui::Text("12: Radiance");
+        ImGui::Text("13: Irradiance");
 
         ImGui::End();
         ImGui::Render();
@@ -2017,11 +2032,11 @@ void Engine::run()
                     };
                     PushData data{};
                     data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
-                    auto proj = glm::perspective(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / static_cast<float>(swapchain.extent.height), SHADOW_DRAW_DISTANCE, camera.near);
+                    auto proj = glm::perspective(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / static_cast<float>(swapchain.extent.height), shadow_draw_distance, camera.near);
                     data.inverse_view_proj = glm::inverse(proj * frame_context.view);
                     data.sunlight_dir = sunlight_dir;
                     data.shadow_near = camera.near;
-                    data.shadow_far = SHADOW_DRAW_DISTANCE;
+                    data.shadow_far = shadow_draw_distance;
                     data.lambda = 0.95;
 
                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, shadow_matrices_pipeline);
