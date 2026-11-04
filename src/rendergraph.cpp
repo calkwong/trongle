@@ -636,42 +636,32 @@ void Rendergraph::update_cached_resource_states()
     }
 }
 
-uint32_t get_image_id(const Rendergraph& graph, uint32_t handle)
+void Rendergraph::invalidate_imported_image(VkImage image)
 {
-    return graph.physical_images[handle].handle;
+    persistent_image_cache.erase(image);
 }
 
-VkImageView get_image_view(const Rendergraph& graph, uint32_t handle)
+uint32_t Rendergraph::image_id(uint32_t handle)
 {
-    return graph.physical_images[handle].view;
+    return physical_images[handle].handle;
 }
 
-VkImage get_image(const Rendergraph& graph, uint32_t handle)
+VkImageView Rendergraph::image_view(uint32_t handle)
 {
-    return graph.physical_images[handle].image;
+    return physical_images[handle].view;
 }
 
-VkDeviceAddress get_buffer_address(const Rendergraph& graph, uint32_t handle, uint32_t offset /*= 0*/)
+VkImage Rendergraph::image(uint32_t handle)
 {
-    return graph.physical_buffers[handle].address + offset;
+    return physical_images[handle].image;
 }
 
-VkBuffer get_buffer(const Rendergraph& graph, uint32_t handle)
+VkDeviceAddress Rendergraph::buffer_address(uint32_t handle, uint32_t offset /*= 0*/)
 {
-    return graph.physical_buffers[handle].buffer;
+    return physical_buffers[handle].address + offset;
 }
 
-VkDeviceSize get_buffer_size(const Rendergraph& graph, uint32_t handle)
+VkBuffer Rendergraph::buffer(uint32_t handle)
 {
-    return graph.physical_buffers[handle].size;
-}
-
-void invalidate_imported_image(Rendergraph& graph, VkImage image)
-{
-    graph.persistent_image_cache.erase(image);
-}
-
-void invalidate_imported_buffer(Rendergraph& graph, uint64_t address)
-{
-    graph.persistent_buffer_cache.erase(address);
+    return physical_buffers[handle].buffer;
 }

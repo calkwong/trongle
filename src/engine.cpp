@@ -45,6 +45,7 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <string>
+#include <memory>
 
 #define LOCAL_LIGHTS 0
 
@@ -403,9 +404,7 @@ void Engine::init_query_pool()
 void Engine::run()
 {
     // Init rendergraph
-    graph.device = device;
-    graph.allocator = allocator;
-    graph.image_manager = &image_manager;
+    graph = std::make_unique<Rendergraph>(device, allocator, &image_manager);
 
     VkPhysicalDeviceMeshShaderPropertiesEXT mesh_shader_properties{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT };
     VkPhysicalDeviceProperties2 properties2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
@@ -906,7 +905,7 @@ void Engine::run()
 
                     for (const auto& image : swapchain.images)
                     {
-                        invalidate_imported_image(graph, image);
+                        graph->invalidate_imported_image(image);
                     }
                     update_swapchain(swapchain, window, physical_device, device, surface);
 
@@ -992,7 +991,7 @@ void Engine::run()
         {
             for (const auto& image : swapchain.images)
             {
-                invalidate_imported_image(graph, image);
+                graph->invalidate_imported_image(image);
             }
             update_swapchain(swapchain, window, physical_device, device, surface);
             swapchain_dirty = false;
@@ -1089,8 +1088,8 @@ void Engine::run()
 
         if (frame_number >= FRAMES_IN_FLIGHT)
         {
-            graph.gpu_profiler.get_timestamp_results(device, frame.query_pool_timestamp, frame_index, timestamp_period);
-            graph.gpu_profiler.draw(frame_index);
+            graph->gpu_profiler.get_timestamp_results(device, frame.query_pool_timestamp, frame_index, timestamp_period);
+            graph->gpu_profiler.draw(frame_index);
         }
 
         ImGui::Begin("Settings");
@@ -1118,27 +1117,27 @@ void Engine::run()
         ImGui::End();
         ImGui::Render();
 
-        graph.gpu_profiler.reset(frame_index);
+        graph->gpu_profiler.reset(frame_index);
         vkResetQueryPool(device, frame.query_pool_timestamp, 0, MAX_TIMESTAMP_QUERIES);
         vkResetQueryPool(device, frame.query_pool_mesh_pipeline, 0, MAX_MESH_PIPELINE_QUERIES);
 
-        auto swapchain_image = graph.import_swapchain(swapchain.images[swapchain_image_idx], swapchain.image_views[swapchain_image_idx]);
+        auto swapchain_image = graph->import_swapchain(swapchain.images[swapchain_image_idx], swapchain.image_views[swapchain_image_idx]);
 
-        auto depth_image = graph.create_task_image(
+        auto depth_image = graph->create_task_image(
             ImageResourceDesc{
                 VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
                 VK_FORMAT_D32_SFLOAT,
                 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
                 VK_IMAGE_ASPECT_DEPTH_BIT }
         );
-        auto draw_image = graph.create_task_image(
+        auto draw_image = graph->create_task_image(
             ImageResourceDesc{
                 VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
                 VK_FORMAT_R16G16B16A16_SFLOAT,
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                 VK_IMAGE_ASPECT_COLOR_BIT }
         );
-        auto vbuffer = graph.create_task_image(
+        auto vbuffer = graph->create_task_image(
             ImageResourceDesc{
                 VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
                 VK_FORMAT_R32G32_UINT,
@@ -1149,20 +1148,20 @@ void Engine::run()
         std::array<uint32_t, SUN_CASCADE_COUNT> shadowmaps{};
         for (uint32_t i = 0; i < SUN_CASCADE_COUNT; i++)
         {
-            shadowmaps[i] = graph.import_image(shadowmap_images[i], shadowmap_descriptor_handles[i]);
+            shadowmaps[i] = graph->import_image(shadowmap_images[i], shadowmap_descriptor_handles[i]);
         }
 
-        auto dispatch_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(Dispatch) * 3, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
-        auto prefix_sum_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(PrefixSums), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
-        auto meshlet_draw_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(uint32_t) * MAX_MESHLETS_DRAW, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
-        auto froxel_offset_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(FroxelOffset) * TOTAL_FROXELS, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
-        auto froxel_item_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(uint32_t) * MAX_LIGHTS_PER_FROXEL * TOTAL_FROXELS, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
-        auto light_count_buffer = graph.create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(uint32_t), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
+        auto dispatch_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(Dispatch) * 3, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
+        auto prefix_sum_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(PrefixSums), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
+        auto meshlet_draw_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(uint32_t) * MAX_MESHLETS_DRAW, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
+        auto froxel_offset_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(FroxelOffset) * TOTAL_FROXELS, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
+        auto froxel_item_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(uint32_t) * MAX_LIGHTS_PER_FROXEL * TOTAL_FROXELS, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
+        auto light_count_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(uint32_t), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
 
-        auto depth_pyramid = graph.import_image(depth_pyramid_image, depth_pyramid_descriptor_handle);
-        auto spd_counter = graph.import_buffer(spd_counter_buffer, -1);
-        auto late_pass_candidates = graph.import_buffer(late_pass_candidates_buffer, -1);
-        auto globals = graph.import_buffer(global_buffer, -1);
+        auto depth_pyramid = graph->import_image(depth_pyramid_image, depth_pyramid_descriptor_handle);
+        auto spd_counter = graph->import_buffer(spd_counter_buffer, -1);
+        auto late_pass_candidates = graph->import_buffer(late_pass_candidates_buffer, -1);
+        auto globals = graph->import_buffer(global_buffer, -1);
 
         // Record command buffer
         VkCommandBuffer cmd = frame.command_buffer;
@@ -1187,19 +1186,19 @@ void Engine::run()
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
 
-        graph.add_pass(
+        graph->add_pass(
             Pass("Zero buffers early")
                 .write_buffer(prefix_sum_buffer, AccessType::TransferWrite),
             [&]()
             {
                 // TODO: likely more efficient on compute - we only need to zero 4 values (1 in each PrefixSums sector)
-                vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, VK_WHOLE_SIZE, 0);
-                vkCmdFillBuffer(cmd, get_buffer(graph, light_count_buffer), 0, VK_WHOLE_SIZE, 0);
+                vkCmdFillBuffer(cmd, graph->buffer(prefix_sum_buffer), 0, VK_WHOLE_SIZE, 0);
+                vkCmdFillBuffer(cmd, graph->buffer(light_count_buffer), 0, VK_WHOLE_SIZE, 0);
             }
         );
 
 #if LOCAL_LIGHTS == 1
-        graph.add_pass(
+        graph->add_pass(
             Pass("Light culling")
                 .write_buffer(froxel_offset_buffer, AccessType::ComputeShaderWrite)
                 .write_buffer(froxel_item_buffer, AccessType::ComputeShaderWrite)
@@ -1221,9 +1220,9 @@ void Engine::run()
                 data.view = frame_context.view;
                 data.froxels_buffer = froxels_buffer.address;
                 data.light_buffer = light_buffer.address;
-                data.froxel_offset_list = get_buffer_address(graph, froxel_offset_buffer);
-                data.froxel_item_list = get_buffer_address(graph, froxel_item_buffer);
-                data.light_count_buffer = get_buffer_address(graph, light_count_buffer);
+                data.froxel_offset_list = graph->buffer_address(froxel_offset_buffer);
+                data.froxel_item_list = graph->buffer_address(froxel_item_buffer);
+                data.light_count_buffer = graph->buffer_address(light_count_buffer);
                 data.light_count = MAX_POINT_LIGHTS;
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, binning_pipeline);
@@ -1233,7 +1232,7 @@ void Engine::run()
         );
 #endif
 
-        graph.add_pass(
+        graph->add_pass(
             Pass("Compute cull mesh early")
                 .read_image(depth_pyramid, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                 .write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite)
@@ -1275,7 +1274,7 @@ void Engine::run()
                 data.prev_view = frame_context.prev_view;
                 data.mesh_buffer = mesh_buffer.address;
                 data.object_buffer = object_buffer.address;
-                data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
+                data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
                 data.late_pass_candidates_buffer = late_pass_candidates_buffer.address;
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
                 data.depth_pyramid_extent = glm::vec2(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height);
@@ -1297,7 +1296,7 @@ void Engine::run()
             }
         );
 
-        graph.add_pass(
+        graph->add_pass(
             Pass("Compact dispatch early")
                 .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
                 .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite),
@@ -1311,8 +1310,8 @@ void Engine::run()
                 };
 
                 PushData data{};
-                data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
-                data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
+                data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
+                data.dispatch_buffer = graph->buffer_address(dispatch_buffer);
                 data.prefix_sum_idx = 0;
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compact_dispatch_pipeline);
@@ -1321,7 +1320,7 @@ void Engine::run()
             }
         );
 
-        graph.add_pass(
+        graph->add_pass(
             Pass("Compute cull meshlets early")
                 .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
                 .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
@@ -1366,9 +1365,9 @@ void Engine::run()
                 data.prev_view = frame_context.prev_view;
                 data.meshlet_buffer = meshlet_buffer.address;
                 data.object_buffer = object_buffer.address;
-                data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
-                data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
-                data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
+                data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
+                data.meshlet_draw_buffer = graph->buffer_address(meshlet_draw_buffer);
+                data.dispatch_buffer = graph->buffer_address(dispatch_buffer);
                 data.late_pass_candidates_buffer = late_pass_candidates_buffer.address + meshlet_offset * sizeof(uint32_t);
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
                 data.depth_pyramid_extent = glm::vec2(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height);
@@ -1384,11 +1383,11 @@ void Engine::run()
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_meshlet_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
-                vkCmdDispatchIndirect(cmd, get_buffer(graph, dispatch_buffer), 0);
+                vkCmdDispatchIndirect(cmd, graph->buffer(dispatch_buffer), 0);
             }
         );
 
-        graph.add_pass(
+        graph->add_pass(
             Pass("Vbuffer early")
                 .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
                 .read_buffer(prefix_sum_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
@@ -1404,14 +1403,14 @@ void Engine::run()
                 clear_value.color.uint32[3] = 0;
 
                 VkRenderingAttachmentInfo rendering_attachment_info = VkRenderingAttachmentInfo{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
-                rendering_attachment_info.imageView = get_image_view(graph, vbuffer);
+                rendering_attachment_info.imageView = graph->image_view(vbuffer);
                 rendering_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
                 rendering_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
                 rendering_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
                 rendering_attachment_info.clearValue = clear_value;
 
                 VkRenderingAttachmentInfo depth_attachment_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
-                depth_attachment_info.imageView = get_image_view(graph, depth_image);
+                depth_attachment_info.imageView = graph->image_view(depth_image);
                 depth_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
                 depth_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
                 depth_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -1461,15 +1460,15 @@ void Engine::run()
                 data.material_buffer = material_buffer.address;
                 data.meshlet_buffer = meshlet_buffer.address;
                 data.meshlet_indices_buffer = meshlet_indices_buffer.address;
-                data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
-                data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
+                data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
+                data.meshlet_draw_buffer = graph->buffer_address(meshlet_draw_buffer);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_pipeline);
-                vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch), 1, 0);
+                vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch), 1, 0);
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_masked_pipeline);
-                vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch) * 2, 1, 0);
+                vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch) * 2, 1, 0);
 
                 vkCmdEndQuery(cmd, frame.query_pool_mesh_pipeline, 0);
                 vkCmdEndRendering(cmd);
@@ -1478,7 +1477,7 @@ void Engine::run()
 
         if (!freeze_matrices)
         {
-            graph.add_pass(
+            graph->add_pass(
                 Pass("Hiz")
                     .read_image(depth_image, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                     .write_image(depth_pyramid, AccessType::ComputeShaderWrite)
@@ -1505,7 +1504,7 @@ void Engine::run()
                     data.rcp_resolution = glm::vec2(1.0) / glm::vec2(swapchain.extent.width, swapchain.extent.height);
                     data.mips = get_depth_pyramid_image_count(depth_pyramid_image);
                     data.num_wgs = group_count_x * group_count_y;
-                    data.src_id = get_image_id(graph, depth_image);
+                    data.src_id = graph->image_id(depth_image);
                     data.dst_id = depth_pyramid_first_mip;
 
                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hiz_pipeline);
@@ -1517,7 +1516,7 @@ void Engine::run()
 
         skip_occlusion = false;
 
-        graph.add_pass(
+        graph->add_pass(
             Pass("Compute cull mesh late")
                 .read_image(depth_pyramid, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                 .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
@@ -1560,7 +1559,7 @@ void Engine::run()
                 data.prev_view = frame_context.prev_view;
                 data.mesh_buffer = mesh_buffer.address;
                 data.object_buffer = object_buffer.address;
-                data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
+                data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
                 data.late_pass_candidates_buffer = late_pass_candidates_buffer.address;
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
                 data.depth_pyramid_extent = glm::vec2(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height);
@@ -1582,7 +1581,7 @@ void Engine::run()
             }
         );
 
-        graph.add_pass(
+        graph->add_pass(
             Pass("Compact dispatch late")
                 .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
                 .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite),
@@ -1596,8 +1595,8 @@ void Engine::run()
                 };
 
                 PushData data{};
-                data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
-                data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
+                data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
+                data.dispatch_buffer = graph->buffer_address(dispatch_buffer);
                 data.prefix_sum_idx = 0;
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compact_dispatch_pipeline);
@@ -1606,7 +1605,7 @@ void Engine::run()
             }
         );
 
-        graph.add_pass(
+        graph->add_pass(
             Pass("Compute cull meshlets late")
                 .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
                 .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
@@ -1651,9 +1650,9 @@ void Engine::run()
                 data.prev_view = frame_context.prev_view;
                 data.meshlet_buffer = meshlet_buffer.address;
                 data.object_buffer = object_buffer.address;
-                data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
-                data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
-                data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
+                data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
+                data.meshlet_draw_buffer = graph->buffer_address(meshlet_draw_buffer);
+                data.dispatch_buffer = graph->buffer_address(dispatch_buffer);
                 data.late_pass_candidates_buffer = late_pass_candidates_buffer.address + meshlet_offset * sizeof(uint32_t);
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
                 data.depth_pyramid_extent = glm::vec2(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height);
@@ -1669,11 +1668,11 @@ void Engine::run()
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_meshlet_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
-                vkCmdDispatchIndirect(cmd, get_buffer(graph, dispatch_buffer), 0);
+                vkCmdDispatchIndirect(cmd, graph->buffer(dispatch_buffer), 0);
             }
         );
 
-        graph.add_pass(
+        graph->add_pass(
             Pass("Vbuffer late")
                 .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
                 .read_buffer(prefix_sum_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
@@ -1685,13 +1684,13 @@ void Engine::run()
             [&]()
             {
                 VkRenderingAttachmentInfo rendering_attachment_info = VkRenderingAttachmentInfo{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
-                rendering_attachment_info.imageView = get_image_view(graph, vbuffer);
+                rendering_attachment_info.imageView = graph->image_view(vbuffer);
                 rendering_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
                 rendering_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
                 rendering_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 
                 VkRenderingAttachmentInfo depth_attachment_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
-                depth_attachment_info.imageView = get_image_view(graph, depth_image);
+                depth_attachment_info.imageView = graph->image_view(depth_image);
                 depth_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
                 depth_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
                 depth_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -1743,15 +1742,15 @@ void Engine::run()
                 data.material_buffer = material_buffer.address;
                 data.meshlet_buffer = meshlet_buffer.address;
                 data.meshlet_indices_buffer = meshlet_indices_buffer.address;
-                data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
-                data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
+                data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
+                data.meshlet_draw_buffer = graph->buffer_address(meshlet_draw_buffer);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_pipeline);
-                vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch), 1, 0);
+                vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch), 1, 0);
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_masked_pipeline);
-                vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch) * 2, 1, 0);
+                vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch) * 2, 1, 0);
 
                 vkCmdEndQuery(cmd, frame.query_pool_mesh_pipeline, 1);
                 vkCmdEndRendering(cmd);
@@ -1760,17 +1759,17 @@ void Engine::run()
 
         if (b_shadows)
         {
-            graph.add_pass(
+            graph->add_pass(
                 Pass("Zero buffers for shadow pass")
                     .write_buffer(prefix_sum_buffer, AccessType::TransferWrite),
                 [&]()
                 {
                     // We can get away with only zeroing the first counter as other 'sectors' of PrefixSums are unused up to this point
-                    vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, sizeof(uint64_t), 0);
+                    vkCmdFillBuffer(cmd, graph->buffer(prefix_sum_buffer), 0, sizeof(uint64_t), 0);
                 }
             );
 
-            graph.add_pass(
+            graph->add_pass(
                 Pass("Generate shadow matrices")
                     .write_buffer(globals, AccessType::ComputeShaderWrite),
                 [&]()
@@ -1785,7 +1784,7 @@ void Engine::run()
                         float lambda;
                     };
                     PushData data{};
-                    data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_index));
+                    data.global_buffer = graph->buffer_address(globals, sizeof(GlobalData) * (frame_index));
                     auto proj = glm::perspective(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / static_cast<float>(swapchain.extent.height), shadow_draw_distance, camera.near);
                     data.inverse_view_proj = glm::inverse(proj * frame_context.view);
                     data.sunlight_dir = sunlight_dir;
@@ -1799,7 +1798,7 @@ void Engine::run()
                 }
             );
 
-            graph.add_pass(
+            graph->add_pass(
                 Pass("Cull shadow instances")
                     .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
                     .read_buffer(globals, AccessType::ComputeShaderReadOther)
@@ -1819,10 +1818,10 @@ void Engine::run()
                     };
 
                     PushData data{};
-                    data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_index));
+                    data.global_buffer = graph->buffer_address(globals, sizeof(GlobalData) * (frame_index));
                     data.object_buffer = object_buffer.address;
                     data.mesh_buffer = mesh_buffer.address;
-                    data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
+                    data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
                     data.camera_pos = camera.position;
                     data.count = static_cast<uint32_t>(renderables.size());
                     data.shadowmap_height = SHADOWMAP_EXTENT;
@@ -1837,7 +1836,7 @@ void Engine::run()
 
             for (uint32_t cascade_index = 0; cascade_index < SUN_CASCADE_COUNT; cascade_index++)
             {
-                graph.add_pass(
+                graph->add_pass(
                     Pass("Compact dispatch for cascade " + std::to_string(cascade_index + 1))
                         .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
                         .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite),
@@ -1851,8 +1850,8 @@ void Engine::run()
                         };
 
                         PushData data{};
-                        data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
-                        data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
+                        data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
+                        data.dispatch_buffer = graph->buffer_address(dispatch_buffer);
                         data.prefix_sum_idx = cascade_index;
 
                         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compact_dispatch_pipeline);
@@ -1861,7 +1860,7 @@ void Engine::run()
                     }
                 );
 
-                graph.add_pass(
+                graph->add_pass(
                     Pass("Cull shadow meshlets")
                         .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
                         .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
@@ -1884,23 +1883,23 @@ void Engine::run()
                         };
 
                         PushData data{};
-                        data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_index));
+                        data.global_buffer = graph->buffer_address(globals, sizeof(GlobalData) * (frame_index));
                         data.object_buffer = object_buffer.address;
                         data.meshlet_buffer = meshlet_buffer.address;
-                        data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
-                        data.dispatch_buffer = get_buffer_address(graph, dispatch_buffer);
-                        data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
+                        data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
+                        data.dispatch_buffer = graph->buffer_address(dispatch_buffer);
+                        data.meshlet_draw_buffer = graph->buffer_address(meshlet_draw_buffer);
                         data.count = static_cast<uint32_t>(renderables.size());
                         data.shadowmap_height = SHADOWMAP_EXTENT;
                         data.cascade_index = cascade_index;
 
                         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_shadow_meshlet_pipeline);
                         vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
-                        vkCmdDispatchIndirect(cmd, get_buffer(graph, dispatch_buffer), 0);
+                        vkCmdDispatchIndirect(cmd, graph->buffer(dispatch_buffer), 0);
                     }
                 );
 
-                graph.add_pass(
+                graph->add_pass(
                     Pass("Shadowmap " + std::to_string(cascade_index + 1))
                         .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
                         .read_buffer(prefix_sum_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
@@ -1911,7 +1910,7 @@ void Engine::run()
                     [&, cascade_index]()
                     {
                         VkRenderingAttachmentInfo depth_attachment_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
-                        depth_attachment_info.imageView = get_image_view(graph, shadowmaps[cascade_index]);
+                        depth_attachment_info.imageView = graph->image_view(shadowmaps[cascade_index]);
                         depth_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
                         depth_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
                         depth_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -1953,23 +1952,23 @@ void Engine::run()
                         };
 
                         PushData data{};
-                        data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_index));
+                        data.global_buffer = graph->buffer_address(globals, sizeof(GlobalData) * (frame_index));
                         data.object_buffer = object_buffer.address;
                         data.vertex_buffer = vertex_buffer.address;
                         data.meshlet_buffer = meshlet_buffer.address;
-                        data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
+                        data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
                         data.meshlet_indices_buffer = meshlet_indices_buffer.address;
-                        data.meshlet_draw_buffer = get_buffer_address(graph, meshlet_draw_buffer);
+                        data.meshlet_draw_buffer = graph->buffer_address(meshlet_draw_buffer);
                         data.material_buffer = material_buffer.address;
                         data.cascade_index = cascade_index;
 
                         vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
 
                         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, depth_pipeline);
-                        vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch), 1, 0);
+                        vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch), 1, 0);
 
                         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, depth_masked_pipeline);
-                        vkCmdDrawMeshTasksIndirectEXT(cmd, get_buffer(graph, dispatch_buffer), sizeof(Dispatch) * 2, 1, 0);
+                        vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch) * 2, 1, 0);
 
                         vkCmdEndRendering(cmd);
                     }
@@ -1988,7 +1987,7 @@ void Engine::run()
         {
             lighting_pass.read_image(shadowmap, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
         }
-        graph.add_pass(
+        graph->add_pass(
             lighting_pass,
             [&]()
             {
@@ -2029,25 +2028,25 @@ void Engine::run()
                 data.meshlet_buffer = meshlet_buffer.address;
                 data.meshlet_indices_buffer = meshlet_indices_buffer.address;
                 data.material_buffer = material_buffer.address;
-                data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_index));
+                data.global_buffer = graph->buffer_address(globals, sizeof(GlobalData) * (frame_index));
 #if LOCAL_LIGHTS == 1
                 data.light_buffer = light_buffer.address;
 #endif
-                data.froxel_offset_list = get_buffer_address(graph, froxel_offset_buffer);
-                data.froxel_item_list = get_buffer_address(graph, froxel_item_buffer);
+                data.froxel_offset_list = graph->buffer_address(froxel_offset_buffer);
+                data.froxel_item_list = graph->buffer_address(froxel_item_buffer);
                 data.sh_buffer = sh_buffer.address;
                 data.light_dir = sunlight_dir;
-                data.shadowmap_id = b_shadows ? get_image_id(graph, shadowmaps[0]) : -1u;
+                data.shadowmap_id = b_shadows ? graph->image_id(shadowmaps[0]) : -1u;
                 data.camera_pos = camera.position;
-                data.visbuffer_id = get_image_id(graph, vbuffer);
+                data.visbuffer_id = graph->image_id(vbuffer);
                 data.screen_extent = glm::vec2(swapchain.extent.width, swapchain.extent.height);
                 auto cluster_x = glm::ceil(static_cast<float>(swapchain.extent.width) / FROXELS_X);
                 auto cluster_y = glm::ceil(static_cast<float>(swapchain.extent.height) / FROXELS_Y);
                 data.pixels_per_cluster = glm::vec2(cluster_x, cluster_y);
                 data.debug_id = DEBUG_ID;
-                data.output_id = get_image_id(graph, draw_image);
+                data.output_id = graph->image_id(draw_image);
                 // data.envmap_id = -1;
-                data.depth_id = get_image_id(graph, depth_image);
+                data.depth_id = graph->image_id(depth_image);
                 data.brdf_lut_id = brdf_lut_id;
                 data.near = camera.near;
                 const float ratio = camera.far / camera.near;
@@ -2062,7 +2061,7 @@ void Engine::run()
 
         if (!freeze_matrices)
         {
-            graph.add_pass(
+            graph->add_pass(
                 Pass("Hiz temporal")
                     .read_image(depth_image, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                     .write_image(depth_pyramid, AccessType::ComputeShaderWrite)
@@ -2089,7 +2088,7 @@ void Engine::run()
                     data.rcp_resolution = glm::vec2(1.0) / glm::vec2(swapchain.extent.width, swapchain.extent.height);
                     data.mips = get_depth_pyramid_image_count(depth_pyramid_image);
                     data.num_wgs = group_count_x * group_count_y;
-                    data.src_id = get_image_id(graph, depth_image);
+                    data.src_id = graph->image_id(depth_image);
                     data.dst_id = depth_pyramid_first_mip;
 
                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hiz_pipeline);
@@ -2099,17 +2098,17 @@ void Engine::run()
             );
         }
 
-        graph.add_pass(
+        graph->add_pass(
             Pass("Copy to swapchain")
                 .read_image(draw_image, AccessType::TransferRead)
                 .write_image(swapchain_image, AccessType::TransferWrite),
             [&]()
             {
-                copy_image(cmd, get_image(graph, draw_image), get_image(graph, swapchain_image), swapchain.extent, swapchain.extent);
+                copy_image(cmd, graph->image(draw_image), graph->image(swapchain_image), swapchain.extent, swapchain.extent);
             }
         );
 
-        graph.add_pass(
+        graph->add_pass(
             Pass("ImGui")
                 .write_image(swapchain_image, AccessType::ColorAttachmentReadWrite),
             [&]()
@@ -2135,8 +2134,8 @@ void Engine::run()
         );
 
         // Rendergraph compilation
-        graph.compile(cmd);
-        graph.execute(cmd, frame_index, frame.query_pool_timestamp);
+        graph->compile(cmd);
+        graph->execute(cmd, frame_index, frame.query_pool_timestamp);
 
         VK_CHECK(vkEndCommandBuffer(cmd));
 
@@ -2174,7 +2173,7 @@ void Engine::run()
         VkResult present_result = vkQueuePresentKHR(graphics_queue, &present_info);
         VK_CHECK_SWAPCHAIN(present_result);
 
-        graph.reset();
+        graph->reset();
 
         frame_number++;
     }
@@ -2219,7 +2218,7 @@ void Engine::run()
     }
 
     asset_loader.cleanup();
-    graph.cleanup();
+    graph->cleanup();
 }
 
 void Engine::register_object(const Node& node, const glm::mat4& top_matrix, const std::vector<Node>& children, const std::vector<GltfMesh>& mesh_assets)

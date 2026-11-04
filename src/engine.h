@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <array>
 #include <vector>
+#include <memory>
 
 struct FrameData
 {
@@ -87,7 +88,7 @@ public:
 
     ImageManager image_manager;
 
-    Rendergraph graph;
+    std::unique_ptr<Rendergraph> graph;
 
     // Scene data
     std::vector<ObjectData> renderables;

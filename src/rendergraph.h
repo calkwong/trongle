@@ -181,8 +181,39 @@ struct Pass
 };
 
 // Immediate mode
-struct Rendergraph
+class Rendergraph
 {
+public:
+    Rendergraph(VkDevice device, VmaAllocator allocator, ImageManager* image_manager)
+        : device{ device }, allocator{ allocator }, image_manager{ image_manager }
+    {
+    }
+
+    Profiler gpu_profiler;
+
+    void add_pass(const Pass& pass, std::function<void()> execute);
+
+    // TODO: implement mapping buffer to descriptor
+    uint32_t create_task_buffer(BufferResourceDesc info);
+    uint32_t create_task_image(ImageResourceDesc info);
+
+    uint32_t import_buffer(Buffer buffer, uint32_t descriptor_handle);
+    uint32_t import_image(Image image, uint32_t descriptor_handle);
+    uint32_t import_swapchain(VkImage image, VkImageView view);
+
+    void compile(VkCommandBuffer cmd);
+    void execute(VkCommandBuffer cmd, uint32_t frame_index, VkQueryPool query_pool);
+    void reset();
+    void cleanup();
+
+    void invalidate_imported_image(VkImage image);
+    uint32_t image_id(uint32_t handle);
+    VkImageView image_view(uint32_t handle);
+    VkImage image(uint32_t handle);
+    VkDeviceAddress buffer_address(uint32_t handle, uint32_t offset = 0);
+    VkBuffer buffer(uint32_t handle);
+
+private:
     VkDevice device;
     VmaAllocator allocator;
     ImageManager* image_manager;
@@ -209,47 +240,14 @@ struct Rendergraph
     std::vector<FrameLocalAccessState<TrackedImage>> image_states;
     std::vector<FrameLocalAccessState<TrackedBuffer>> buffer_states;
 
-    Profiler gpu_profiler;
-
-    uint32_t create_task_image(ImageResourceDesc info);
-
-    // TODO: implement mapping buffer to descriptor
-    uint32_t create_task_buffer(BufferResourceDesc info);
-
-    // TODO: TEST REQUIRED
-    uint32_t import_image(Image image, uint32_t descriptor_handle);
-    uint32_t import_buffer(Buffer buffer, uint32_t descriptor_handle);
-
-    uint32_t import_swapchain(VkImage image, VkImageView view);
-
     // Grab an existing physical resource, or create one + assign bindless ID
     // Also assigns a slot in image/buffer_states for per pass update of FrameLocalAccessState
     void resolve_images();
     void resolve_buffers();
 
-    void add_pass(const Pass& pass, std::function<void()> execute);
-
     void update_cached_resource_states();
-
-    void compile(VkCommandBuffer cmd);
 
     // Automatic barriers - determines dependencies and updates FrameLocalAccessState to build per pass barrier
     // Assumes RW resources are W only; this may cause correctness issue when implementing pass reordering and/or pass merging
     void prepare_barriers();
-
-    void execute(VkCommandBuffer cmd, uint32_t frame_index, VkQueryPool query_pool);
-    void reset();
-    void cleanup();
 };
-
-// Returns the bindless descriptor handle
-uint32_t get_image_id(const Rendergraph& graph, uint32_t handle);
-
-VkImageView get_image_view(const Rendergraph& graph, uint32_t handle);
-VkImage get_image(const Rendergraph& graph, uint32_t handle);
-VkDeviceAddress get_buffer_address(const Rendergraph& graph, uint32_t handle, uint32_t offset = 0);
-VkBuffer get_buffer(const Rendergraph& graph, uint32_t handle);
-VkDeviceSize get_buffer_size(const Rendergraph& graph, uint32_t handle);
-
-void invalidate_imported_image(Rendergraph& graph, VkImage image);
-void invalidate_imported_buffer(Rendergraph& graph, uint64_t address);
