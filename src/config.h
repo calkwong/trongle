@@ -1,5 +1,7 @@
 #pragma once
 
+// TODO: minimize including this header everywhere to reduce build time
+
 #define FRAMES_IN_FLIGHT 2
 
 #define MAX_LOD 8

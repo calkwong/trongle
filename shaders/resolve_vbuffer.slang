@@ -56,7 +56,8 @@ enum Debug : uint
     Irradiance
 };
 
-#define CS2 1
+#define GI 0
+#define LOCAL_LIGHTS 0
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
@@ -198,34 +199,6 @@ void main(uint3 global_id: SV_DispatchThreadID)
         albedo *= get_nonuniform_sampled_image<Texture2D>(m.diffuse_id).SampleGrad(samp, uv, uv_ddx, uv_ddy);
     }
 
-#if CS2 == 1
-    float metallic = m.metallic_factor;
-    float perceptual_roughness = m.roughness_factor;
-
-    float4 normal_roughness;
-
-    // Normal roughness texture
-    if (m.normal_id != INVALID_ID)
-    {
-        normal_roughness = get_nonuniform_sampled_image<Texture2D>(m.normal_id).SampleGrad(samp, uv, uv_ddx, uv_ddy);
-        float3 tangent_normal = decode_hemi_octahedron_normal(normal_roughness.rg);
-        N = tangent_to_world_space_mikktspace(tangent_normal, T, N);
-
-        perceptual_roughness *= normal_roughness.a;
-    }
-    else
-    {
-        N = normalize(N);
-    }
-
-    // Where metallic is stored varies based on material
-    // height.a: https://github.com/ValveResourceFormat/ValveResourceFormat/blob/86aae0564839303d53aa0b079e92103fe5ac5703/Renderer/Shaders/csgo_environment.frag.slang#L1053
-    // metallicTex.g: https://github.com/ValveResourceFormat/ValveResourceFormat/blob/master/Renderer/Shaders/complex.frag.slang
-    if (m.metal_roughness_id != INVALID_ID)
-    {
-        metallic *= get_nonuniform_sampled_image<Texture2D>(m.metal_roughness_id).SampleGrad(samp, uv, uv_ddx, uv_ddy).g;
-    }
-#else
     float3 normal;
     if (m.normal_id != INVALID_ID)
     {
@@ -246,14 +219,13 @@ void main(uint3 global_id: SV_DispatchThreadID)
         metallic *= metal_roughness.x;
         perceptual_roughness *= metal_roughness.y;
     }
-#endif
 
     perceptual_roughness = max(perceptual_roughness, 0.045);
     float roughness = perceptual_roughness * perceptual_roughness;
 
     float3 L = pc.light_dir;
     float3 H = normalize(L + V);
-    float3 light_color = float3(1.0, 0.73046076, 0.5088813);
+    float3 light_color = float3(1.0);
 
     BRDFData brdf_data = prepare_brdf_data(N, L, V, albedo.xyz, roughness, metallic);
     out_color.xyz = eval_brdf(brdf_data, albedo.xyz, roughness, metallic) * light_color * brdf_data.NoL;
@@ -264,7 +236,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
         out_color.xyz *= shadow_factor;
     }
 
-#if 1
+#if GI == 1
     TextureCube envmap = get_nonuniform_sampled_image<TextureCube>(pc.envmap_id);
     int envmap_width;
     int envmap_height;
@@ -292,8 +264,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
     }
     out_color.xyz += ambient;
 
-// LOCAL LIGHTS
-#if 0
+#if LOCAL_LIGHTS == 1
     let frag_coord = tex_coord + float2(0.5);
     float depth = get_sampled_image<Texture2D>(pc.depth_id).Load(int3(tex_coord, 0)).r;
     float view_z = linearize_depth(pc.near, depth);

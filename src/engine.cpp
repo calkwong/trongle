@@ -45,7 +45,6 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <string>
-#include <string_view>
 
 #define MAX_TIMESTAMP_QUERIES 20
 #define MAX_MESH_PIPELINE_QUERIES 2
@@ -55,10 +54,9 @@
 #include <random>
 #endif
 
-// const char* ASSET_NAME = "Sponza/Sponza.gltf";
+const char* ASSET_NAME = "Sponza/Sponza.gltf";
 // const char* ASSET_NAME = "chinesedragon.gltf";
 // const char* ASSET_NAME = "sphere.gltf";
-const char* ASSET_NAME = "de_dust2/de_dust2.gltf";
 // const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
 int DEBUG_ID = 0;
 
@@ -113,7 +111,6 @@ uint32_t nearest_pow2(uint32_t extent)
     return 1 << static_cast<uint32_t>(glm::floor(glm::log2(static_cast<float>(extent))));
 }
 
-// TODO: if extent is alr pow2?
 uint32_t next_pow2(uint32_t extent)
 {
     return nearest_pow2(extent) << 1;
@@ -784,72 +781,6 @@ void Engine::run()
 
     build_pipelines();
 
-    // Initialize scene LPVs and envmaps
-    auto first_exr_handle = static_cast<uint32_t>(image_manager.infos.size());
-    // auto exr_envmaps = load_exr_images(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, "../assets/de_dust2_envmaps/", true);
-    auto exr_envmaps = load_exr_images(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, "../assets/de_dust2_skybox/", true);
-    for (const auto& exr_envmap : exr_envmaps)
-    {
-        image_manager.register_sampled_image(device, exr_envmap.view, VK_IMAGE_LAYOUT_GENERAL);
-    }
-
-    std::vector<VkImage> images_to_transition{};
-
-    // Cubemaps with mipmaps so we can create prefiltered envmaps
-    auto first_cubemap_handle = static_cast<uint32_t>(image_manager.infos.size());
-    std::vector<Image> cubemaps(exr_envmaps.size());
-    for (auto& cubemap : cubemaps)
-    {
-        cubemap = create_cubemap(
-            device,
-            allocator,
-            VkExtent3D{ 256, 256, 1 },
-            VK_FORMAT_R16G16B16A16_SFLOAT,
-            VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR | VK_IMAGE_USAGE_2_STORAGE_BIT_KHR | VK_IMAGE_USAGE_2_TRANSFER_SRC_BIT_KHR | VK_IMAGE_USAGE_2_TRANSFER_DST_BIT_KHR,
-            VK_IMAGE_ASPECT_COLOR_BIT,
-            0,
-            true
-        );
-        images_to_transition.push_back(cubemap.image);
-    }
-    for (auto& cubemap : cubemaps)
-    {
-        image_manager.register_image(device, cubemap.view, VK_IMAGE_LAYOUT_GENERAL);
-    }
-
-    auto first_envmap_handle = static_cast<uint32_t>(image_manager.infos.size());
-    std::vector<Image> envmaps(exr_envmaps.size());
-    for (auto& envmap : envmaps)
-    {
-        envmap = create_cubemap(
-            device,
-            allocator,
-            VkExtent3D{ 256, 256, 1 },
-            VK_FORMAT_R16G16B16A16_SFLOAT,
-            VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR | VK_IMAGE_USAGE_2_STORAGE_BIT_KHR,
-            VK_IMAGE_ASPECT_COLOR_BIT,
-            0,
-            true
-        );
-        images_to_transition.push_back(envmap.image);
-    }
-    for (auto& envmap : envmaps)
-    {
-        image_manager.register_image(device, envmap.view, VK_IMAGE_LAYOUT_GENERAL);
-    }
-
-    auto first_envmap_mip_handle = static_cast<uint32_t>(image_manager.infos.size());
-    std::vector<VkImageView> envmap_mip_views{};
-    for (auto& envmap : envmaps)
-    {
-        auto mip = get_image_mip_level(envmap.extent.width, envmap.extent.height);
-        for (auto i = 0; i < mip; i++)
-        {
-            auto& view = envmap_mip_views.emplace_back(create_image_view(device, envmap, VK_IMAGE_VIEW_TYPE_CUBE, i, 1));
-            image_manager.register_image(device, view, VK_IMAGE_LAYOUT_GENERAL);
-        }
-    }
-
 #if LOCAL_LIGHTS == 1
     std::mt19937 mt(42);
     std::uniform_real_distribution<float> pos(-1.0f, 1.0f);
@@ -874,8 +805,7 @@ void Engine::run()
     Image brdf_lut_image = create_image(device, allocator, VkExtent3D{ 128, 128, 1 }, VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR | VK_IMAGE_USAGE_2_STORAGE_BIT_KHR);
     auto brdf_lut_id = image_manager.register_image(device, brdf_lut_image.view, VK_IMAGE_LAYOUT_GENERAL);
 
-    Image lpv_atlas = build_probe_atlas(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, "../assets/de_dust2_lpv_atlas/");
-
+    std::vector<VkImage> images_to_transition{};
     images_to_transition.push_back(brdf_lut_image.image);
     images_to_transition.push_back(depth_pyramid_image.image);
     std::vector<VkImage> depth_images{};
@@ -941,112 +871,7 @@ void Engine::run()
                              vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                              vkCmdDispatch(cmd, 1, 1, FROXELS_Z);
                          }
-
-                         {
-                             struct PushData
-                             {
-                                 uint32_t src_id;
-                                 uint32_t cubemap_id;
-                             };
-
-                             PushData data{};
-                             data.src_id = first_exr_handle;
-                             data.cubemap_id = first_cubemap_handle;
-
-                             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, exr_to_cubemap_pipeline);
-                             for (auto i = 0; i < exr_envmaps.size(); i++)
-                             {
-                                 auto& exr_envmap = exr_envmaps[i];
-                                 auto& cubemap = cubemaps[i];
-
-                                 data.src_id = first_exr_handle + i;
-                                 data.cubemap_id = first_cubemap_handle + i;
-                                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
-
-                                 auto wg_x = get_group_count(exr_envmaps[i].extent.width, 8);
-                                 auto wg_y = get_group_count(exr_envmaps[i].extent.height, 8);
-                                 vkCmdDispatch(cmd, wg_x, wg_y, 1);
-                             }
-                         }
-
-                         giga_barrier(cmd);
-
-                         {
-                             struct PushData
-                             {
-                                 VkDeviceAddress sh_buffer;
-                                 uint32_t cubemap_id;
-                             };
-
-                             PushData data{};
-                             data.sh_buffer = sh_buffer.address;
-                             data.cubemap_id = first_cubemap_handle;
-
-                             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, sh_pipeline);
-                             vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
-                             vkCmdDispatch(cmd, 1, 1, 1);
-                         }
-
-                         for (const auto& cubemap : cubemaps)
-                         {
-                             generate_mipmaps(cmd, cubemap.image, cubemap.extent, 6);
-                         }
-
-                         giga_barrier(cmd);
-
-                         {
-                             struct PushData
-                             {
-                                 uint32_t src_id;
-                                 uint32_t envmap_id;
-                                 float roughness;
-                             };
-
-                             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, envmap_pipeline);
-                             uint32_t counter = 0;
-                             for (auto i = 0; i < envmaps.size(); i++)
-                             {
-                                 auto& envmap = envmaps[i];
-                                 auto& cubemap = cubemaps[i];
-
-                                 PushData data{};
-                                 data.src_id = first_cubemap_handle + i;
-
-                                 auto mips = get_image_mip_level(envmap.extent.width, envmap.extent.height);
-                                 auto current_extent = VkExtent2D{ envmap.extent.width, envmap.extent.height };
-                                 for (uint32_t mip = 0; mip < mips; mip++)
-                                 {
-                                     auto wg_x = get_group_count(current_extent.width, 8);
-                                     auto wg_y = get_group_count(current_extent.height, 8);
-                                     data.envmap_id = first_envmap_mip_handle + counter;
-                                     data.roughness = static_cast<float>(mip) / static_cast<float>(mips);
-                                     vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
-                                     vkCmdDispatch(cmd, wg_x, wg_y, 1);
-
-                                     counter++;
-                                     current_extent.width /= 2;
-                                     current_extent.height /= 2;
-                                 }
-                             }
-                         }
                      });
-
-    // Destroy intermediate images and image views as they are no longer needed
-    for (const auto& exr_envmap : exr_envmaps)
-    {
-        destroy_image(device, allocator, exr_envmap);
-        image_manager.free_ids.push_back(first_exr_handle++);
-    }
-    for (const auto& cubemap : cubemaps)
-    {
-        destroy_image(device, allocator, cubemap);
-        image_manager.free_ids.push_back(first_cubemap_handle++);
-    }
-    for (const auto& envmap_mip_view : envmap_mip_views)
-    {
-        vkDestroyImageView(device, envmap_mip_view, nullptr);
-        image_manager.free_ids.push_back(first_envmap_mip_handle++);
-    }
 
     std::array<uint64_t, MAX_TIMESTAMP_QUERIES> timestamp_results{};
     std::array<uint64_t, MAX_MESH_PIPELINE_QUERIES> mesh_pipeline_results{};
@@ -2292,7 +2117,7 @@ void Engine::run()
                 data.pixels_per_cluster = glm::vec2(cluster_x, cluster_y);
                 data.debug_id = DEBUG_ID;
                 data.output_id = get_image_id(graph, draw_image);
-                data.envmap_id = first_envmap_handle;
+                // data.envmap_id = -1;
                 data.depth_id = get_image_id(graph, depth_image);
                 data.brdf_lut_id = brdf_lut_id;
                 data.near = camera.near;
@@ -2451,13 +2276,8 @@ void Engine::run()
     destroy_buffer(allocator, sh_buffer);
 
     destroy_image(device, allocator, depth_pyramid_image);
-    destroy_image(device, allocator, lpv_atlas);
     destroy_image(device, allocator, brdf_lut_image);
     for (const auto& img : shadowmap_images)
-    {
-        destroy_image(device, allocator, img);
-    }
-    for (const auto& img : envmaps)
     {
         destroy_image(device, allocator, img);
     }
