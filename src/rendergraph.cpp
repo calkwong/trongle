@@ -2,6 +2,8 @@
 #include "resources.h"
 #include "descriptors.h"
 #include "sync.h"
+#include "profiler.h"
+#include "common.h"
 
 #include <volk.h>
 #include <fmt/core.h>
@@ -105,6 +107,21 @@ bool BufferResourceDesc::operator==(const BufferResourceDesc& desc) const
 {
     return alloc_size == desc.alloc_size
         && usage == desc.usage;
+}
+
+Rendergraph::Rendergraph(VkDevice device, VmaAllocator allocator, ImageManager* image_manager)
+    : device{ device }, allocator{ allocator }, image_manager{ image_manager }
+{
+    VkQueryPoolCreateInfo query_pool_info{ .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
+
+    for (auto& frame : gpu_profiler.frames)
+    {
+        query_pool_info.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        query_pool_info.queryCount = MAX_TIMESTAMP_QUERIES;
+        VK_CHECK(vkCreateQueryPool(device, &query_pool_info, nullptr, &frame.query_pool));
+
+        vkResetQueryPool(device, frame.query_pool, 0, MAX_TIMESTAMP_QUERIES);
+    }
 }
 
 uint32_t Rendergraph::create_task_image(ImageResourceDesc desc)
@@ -443,6 +460,9 @@ void Rendergraph::cleanup()
             destroy_buffer(allocator, res.buffer);
         }
     }
+
+    for (const auto& frame : gpu_profiler.frames)
+        vkDestroyQueryPool(device, frame.query_pool, nullptr);
 }
 
 void Rendergraph::compile(VkCommandBuffer cmd)
@@ -547,7 +567,7 @@ void Rendergraph::prepare_barriers()
 #endif
 }
 
-void Rendergraph::execute(VkCommandBuffer cmd, uint32_t frame_index, VkQueryPool query_pool)
+void Rendergraph::execute(VkCommandBuffer cmd, uint32_t frame_index)
 {
     assert(barriers.size() == executes.size());
     assert(swapchain_index != -1u && !image_barriers.empty());
@@ -571,13 +591,13 @@ void Rendergraph::execute(VkCommandBuffer cmd, uint32_t frame_index, VkQueryPool
 
         vkCmdPipelineBarrier2(cmd, &info);
 
-        gpu_profiler.write_timestamp(cmd, query_pool, frame_index);
+        gpu_profiler.write_timestamp(cmd, frame_index);
         callback();
-        gpu_profiler.write_timestamp(cmd, query_pool, frame_index);
+        gpu_profiler.write_timestamp(cmd, frame_index);
     };
 
     // Recording GPU render time
-    gpu_profiler.write_timestamp(cmd, query_pool, frame_index);
+    gpu_profiler.write_timestamp(cmd, frame_index);
 
     for (auto i = 0; i < executes.size(); i++)
     {
@@ -604,7 +624,7 @@ void Rendergraph::execute(VkCommandBuffer cmd, uint32_t frame_index, VkQueryPool
     );
 #endif
 
-    gpu_profiler.write_timestamp(cmd, query_pool, frame_index);
+    gpu_profiler.write_timestamp(cmd, frame_index);
 }
 
 void Rendergraph::update_cached_resource_states()

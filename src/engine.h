@@ -20,8 +20,6 @@ struct FrameData
     VkCommandBuffer command_buffer;
     VkFence fence;
     VkSemaphore image_acquired_semaphore;
-    VkQueryPool query_pool_timestamp;
-    VkQueryPool query_pool_mesh_pipeline;
 };
 
 struct FrameContext
@@ -103,7 +101,6 @@ public:
     void cleanup();
     void init_commands();
     void init_sync();
-    void init_query_pool();
     void init_descriptors();
     void init_imgui();
     void destroy_imgui();

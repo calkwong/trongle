@@ -318,8 +318,6 @@ void Engine::cleanup()
         vkDestroyCommandPool(device, frame.command_pool, nullptr);
         vkDestroyFence(device, frame.fence, nullptr);
         vkDestroySemaphore(device, frame.image_acquired_semaphore, nullptr);
-        vkDestroyQueryPool(device, frame.query_pool_timestamp, nullptr);
-        vkDestroyQueryPool(device, frame.query_pool_mesh_pipeline, nullptr);
     }
 
     vkDestroyCommandPool(device, imm_pool, nullptr);
@@ -379,26 +377,6 @@ void Engine::init_sync()
 
     // Create immediate fence
     VK_CHECK(vkCreateFence(device, &fence_info, nullptr, &imm_fence));
-}
-
-void Engine::init_query_pool()
-{
-    VkQueryPoolCreateInfo query_pool_info{ .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
-
-    for (auto& frame : frames)
-    {
-        query_pool_info.queryType = VK_QUERY_TYPE_TIMESTAMP;
-        query_pool_info.queryCount = MAX_TIMESTAMP_QUERIES;
-        VK_CHECK(vkCreateQueryPool(device, &query_pool_info, nullptr, &frame.query_pool_timestamp));
-
-        query_pool_info.queryType = VK_QUERY_TYPE_MESH_PRIMITIVES_GENERATED_EXT;
-        query_pool_info.queryCount = MAX_MESH_PIPELINE_QUERIES;
-        query_pool_info.pipelineStatistics = VK_QUERY_PIPELINE_STATISTIC_MESH_SHADER_INVOCATIONS_BIT_EXT;
-        VK_CHECK(vkCreateQueryPool(device, &query_pool_info, nullptr, &frame.query_pool_mesh_pipeline));
-
-        vkResetQueryPool(device, frame.query_pool_timestamp, 0, MAX_TIMESTAMP_QUERIES);
-        vkResetQueryPool(device, frame.query_pool_mesh_pipeline, 0, MAX_MESH_PIPELINE_QUERIES);
-    }
 }
 
 void Engine::run()
@@ -1088,9 +1066,10 @@ void Engine::run()
 
         if (frame_number >= FRAMES_IN_FLIGHT)
         {
-            graph->gpu_profiler.get_timestamp_results(device, frame.query_pool_timestamp, frame_index, timestamp_period);
+            graph->gpu_profiler.get_timestamp_results(device, frame_index, timestamp_period);
             graph->gpu_profiler.draw(frame_index);
         }
+        graph->gpu_profiler.reset(device, frame_index);
 
         ImGui::Begin("Settings");
         ImGui::Checkbox("Freeze camera", &freeze_matrices);
@@ -1116,10 +1095,6 @@ void Engine::run()
 
         ImGui::End();
         ImGui::Render();
-
-        graph->gpu_profiler.reset(frame_index);
-        vkResetQueryPool(device, frame.query_pool_timestamp, 0, MAX_TIMESTAMP_QUERIES);
-        vkResetQueryPool(device, frame.query_pool_mesh_pipeline, 0, MAX_MESH_PIPELINE_QUERIES);
 
         auto swapchain_image = graph->import_swapchain(swapchain.images[swapchain_image_idx], swapchain.image_views[swapchain_image_idx]);
 
@@ -1423,7 +1398,6 @@ void Engine::run()
                 rendering_info.pDepthAttachment = &depth_attachment_info;
 
                 vkCmdBeginRendering(cmd, &rendering_info);
-                vkCmdBeginQuery(cmd, frame.query_pool_mesh_pipeline, 0, 0);
 
                 VkViewport viewport{};
                 viewport.x = 0;
@@ -1470,7 +1444,6 @@ void Engine::run()
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_masked_pipeline);
                 vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch) * 2, 1, 0);
 
-                vkCmdEndQuery(cmd, frame.query_pool_mesh_pipeline, 0);
                 vkCmdEndRendering(cmd);
             }
         );
@@ -1703,7 +1676,6 @@ void Engine::run()
                 rendering_info.pDepthAttachment = &depth_attachment_info;
 
                 vkCmdBeginRendering(cmd, &rendering_info);
-                vkCmdBeginQuery(cmd, frame.query_pool_mesh_pipeline, 1, 0);
 
                 VkViewport viewport{};
                 viewport.x = 0;
@@ -1752,7 +1724,6 @@ void Engine::run()
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_masked_pipeline);
                 vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch) * 2, 1, 0);
 
-                vkCmdEndQuery(cmd, frame.query_pool_mesh_pipeline, 1);
                 vkCmdEndRendering(cmd);
             }
         );
@@ -2135,7 +2106,7 @@ void Engine::run()
 
         // Rendergraph compilation
         graph->compile(cmd);
-        graph->execute(cmd, frame_index, frame.query_pool_timestamp);
+        graph->execute(cmd, frame_index);
 
         VK_CHECK(vkEndCommandBuffer(cmd));
 
@@ -2360,7 +2331,6 @@ int main()
     engine.init_vulkan();
     engine.init_commands();
     engine.init_sync();
-    engine.init_query_pool();
     engine.init_descriptors();
     engine.init_imgui();
 

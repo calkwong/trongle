@@ -184,10 +184,7 @@ struct Pass
 class Rendergraph
 {
 public:
-    Rendergraph(VkDevice device, VmaAllocator allocator, ImageManager* image_manager)
-        : device{ device }, allocator{ allocator }, image_manager{ image_manager }
-    {
-    }
+    Rendergraph(VkDevice device, VmaAllocator allocator, ImageManager* image_manager);
 
     Profiler gpu_profiler;
 
@@ -202,7 +199,7 @@ public:
     uint32_t import_swapchain(VkImage image, VkImageView view);
 
     void compile(VkCommandBuffer cmd);
-    void execute(VkCommandBuffer cmd, uint32_t frame_index, VkQueryPool query_pool);
+    void execute(VkCommandBuffer cmd, uint32_t frame_index);
     void reset();
     void cleanup();
 

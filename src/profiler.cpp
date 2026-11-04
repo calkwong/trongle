@@ -13,31 +13,35 @@ void Profiler::add_task(const std::string& task, uint32_t frame_index)
     frames[frame_index].tasks.push_back(task);
 }
 
-void Profiler::write_timestamp(VkCommandBuffer cmd, VkQueryPool query_pool, uint32_t frame_index)
+void Profiler::write_timestamp(VkCommandBuffer cmd, uint32_t frame_index)
 {
-    auto query = frames[frame_index].timestamps.size();
-    frames[frame_index].timestamps.push_back(query);
-    vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, query_pool, query);
+    auto& frame = frames[frame_index];
+    auto query = frame.timestamps.size();
+    frame.timestamps.push_back(query);
+    vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool, query);
 }
 
-void Profiler::reset(uint32_t frame_index)
+void Profiler::reset(VkDevice device, uint32_t frame_index)
 {
     auto& frame = frames[frame_index];
 
     frame.tasks.clear();
     frame.timestamps.clear();
     frame.profiled_times.clear();
+
+    vkResetQueryPool(device, frame.query_pool, 0, MAX_TIMESTAMP_QUERIES);
 }
 
-void Profiler::get_timestamp_results(VkDevice device, VkQueryPool query_pool, uint32_t frame_index, float timestamp_period)
+void Profiler::get_timestamp_results(VkDevice device, uint32_t frame_index, float timestamp_period)
 {
-    auto& timestamps = frames[frame_index].timestamps;
+    auto& frame = frames[frame_index];
+    auto& timestamps = frame.timestamps;
     auto timestamp_size = static_cast<uint32_t>(timestamps.size());
-    auto& profiled_times = frames[frame_index].profiled_times;
+    auto& profiled_times = frame.profiled_times;
 
     VK_CHECK(vkGetQueryPoolResults(
         device,
-        query_pool,
+        frame.query_pool,
         0,
         timestamp_size,
         timestamp_size * sizeof(uint64_t),
@@ -50,7 +54,7 @@ void Profiler::get_timestamp_results(VkDevice device, VkQueryPool query_pool, ui
     last_gpu_time = last_gpu_time * 0.95 + gpu_time * 0.05;
     profiled_times.push_back(last_gpu_time);
 
-    for (auto i = 0; i < frames[frame_index].tasks.size(); i++)
+    for (auto i = 0; i < frame.tasks.size(); i++)
     {
         profiled_times.push_back((timestamps[(i * 2) + 2] - timestamps[(i * 2) + 1]) * timestamp_period * 1e-6);
     }
