@@ -10,6 +10,8 @@ target_sources(engine PRIVATE
   rendergraph.cpp
   sync.cpp
   profiler.cpp
+  utils.cpp
+  device.cpp
 )
 
 set_target_properties(engine PROPERTIES CXX_STANDARD 20)

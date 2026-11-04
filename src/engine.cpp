@@ -10,6 +10,8 @@
 #include "rendergraph.h"
 #include "sync.h"
 #include "config.h"
+#include "utils.h"
+#include "device.h"
 
 #include <volk.h>
 #include <vk_mem_alloc.h>
@@ -59,225 +61,29 @@ const char* ASSET_NAME = "Sponza/Sponza.gltf";
 // const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
 int DEBUG_ID = 0;
 
-namespace
-{
-// Taken directly from https://github.com/zeux/niagara/blob/master/src/scene.cpp
-void decompose_transform(const glm::mat4& m, glm::vec3& t, glm::vec3& s, glm::vec4& rotation)
-{
-    t.x = m[3][0];
-    t.y = m[3][1];
-    t.z = m[3][2];
-
-    float det = glm::determinant(glm::mat3(m));
-    float sign = (det < 0.0f) ? -1.0f : 1.0f;
-
-    s.x = glm::sqrt(m[0][0] * m[0][0] + m[0][1] * m[0][1] + m[0][2] * m[0][2]) * sign;
-    s.y = glm::sqrt(m[1][0] * m[1][0] + m[1][1] * m[1][1] + m[1][2] * m[1][2]) * sign;
-    s.z = glm::sqrt(m[2][0] * m[2][0] + m[2][1] * m[2][1] + m[2][2] * m[2][2]) * sign;
-
-    float rsx = (s[0] == 0.f) ? 0.f : 1.f / s[0];
-    float rsy = (s[1] == 0.f) ? 0.f : 1.f / s[1];
-    float rsz = (s[2] == 0.f) ? 0.f : 1.f / s[2];
-
-    // mat = rotation * scale, we want a pure rotation matrix hence normalize axes
-    float r00 = m[0][0] * rsx, r10 = m[1][0] * rsy, r20 = m[2][0] * rsz;
-    float r01 = m[0][1] * rsx, r11 = m[1][1] * rsy, r21 = m[2][1] * rsz;
-    float r02 = m[0][2] * rsx, r12 = m[1][2] * rsy, r22 = m[2][2] * rsz;
-
-    // "branchless" version of Mike Day's matrix to quaternion conversion, no attempt was made to understand quats :)
-    int qc = r22 < 0 ? (r00 > r11 ? 0 : 1) : (r00 < -r11 ? 2 : 3);
-    float qs1 = qc & 2 ? -1.f : 1.f;
-    float qs2 = qc & 1 ? -1.f : 1.f;
-    float qs3 = (qc - 1) & 2 ? -1.f : 1.f;
-
-    float qt = 1.f - qs3 * r00 - qs2 * r11 - qs1 * r22;
-    float qs = 0.5f / glm::sqrt(qt);
-
-    rotation[qc ^ 0] = qs * qt;
-    rotation[qc ^ 1] = qs * (r01 + qs1 * r10);
-    rotation[qc ^ 2] = qs * (r20 + qs2 * r02);
-    rotation[qc ^ 3] = qs * (r12 + qs3 * r21);
-}
-
-uint32_t get_group_count(uint32_t size, uint32_t threads)
-{
-    return (size + threads - 1) / threads;
-}
-
-// TODO: if extent is alr pow2?
-uint32_t nearest_pow2(uint32_t extent)
-{
-    return 1 << static_cast<uint32_t>(glm::floor(glm::log2(static_cast<float>(extent))));
-}
-
-uint32_t next_pow2(uint32_t extent)
-{
-    return nearest_pow2(extent) << 1;
-}
-
-VkBool32 custom_debug_callback(
-    VkDebugUtilsMessageSeverityFlagBitsEXT message_severity,
-    VkDebugUtilsMessageTypeFlagsEXT message_type,
-    const VkDebugUtilsMessengerCallbackDataEXT* p_callback_data,
-    void* p_user_data
-)
-{
-    auto ms = vkb::to_string_message_severity(message_severity);
-    auto mt = vkb::to_string_message_type(message_type);
-    if (message_type & VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT)
-    {
-        if (strcmp(p_callback_data->pMessageIdName, "VUID-RuntimeSpirv-OpVariable-08746") == 0)
-            return VK_FALSE;
-        fmt::println("[{}: {}] - {}\n{}\n", ms, mt, p_callback_data->pMessageIdName, p_callback_data->pMessage);
-    }
-    else
-        fmt::println("[{}: {}]\n{}\n", ms, mt, p_callback_data->pMessage);
-
-    return VK_FALSE;
-}
-} // namespace
-
 void Engine::init_vulkan()
 {
     VK_CHECK(volkInitialize());
 
-    vkb::InstanceBuilder builder{};
-    auto inst_ret = builder.set_app_name("Untitled vulkan renderer")
-                        .request_validation_layers()
-                        .set_debug_callback(custom_debug_callback)
-                        .require_api_version(1, 4)
-                        .build();
-    if (!inst_ret)
-    {
-        fmt::println("Failed to create instance.");
-        std::abort();
-    }
-    vkb::Instance vkb_inst = inst_ret.value();
+    auto vkb_inst = create_instance();
     instance = vkb_inst.instance;
     debug_messenger = vkb_inst.debug_messenger;
-
     volkLoadInstance(instance);
 
-#ifndef _WIN32
-    if (dlopen("librenderdoc.so", RTLD_NOW | RTLD_NOLOAD))
-    {
-        SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
-    }
-    else
-    {
-        SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "wayland");
-    }
-#endif
-
-    // SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
-
-    SDL_SetHint(SDL_HINT_APP_ID, "trongle-engine");
-    SDL_Init(SDL_INIT_VIDEO);
     auto window_flags = static_cast<SDL_WindowFlags>(SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
     auto window_width = 1920u;
     auto window_height = 1080u;
-    window = SDL_CreateWindow("trongle", window_width, window_height, window_flags);
-    bool surface_result = SDL_Vulkan_CreateSurface(window, vkb_inst, nullptr, &surface);
-    if (!surface_result)
-    {
-        fmt::println("Failed to create window surface.");
-        std::abort();
-    }
+
+    window = create_window(instance, window_width, window_height, window_flags);
+    create_surface(window, instance, &surface);
     SDL_SetWindowRelativeMouseMode(window, relative_mouse_mode);
 
-    VkPhysicalDeviceVulkan14Features features_14{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES };
-
-    VkPhysicalDeviceVulkan13Features features_13{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
-    features_13.dynamicRendering = true;
-    features_13.synchronization2 = true;
-    // features_13.maintenance4 = true;
-
-    VkPhysicalDeviceVulkan12Features features_12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
-    features_12.bufferDeviceAddress = true;
-    features_12.shaderFloat16 = true;
-    features_12.descriptorBindingPartiallyBound = true;
-    features_12.descriptorBindingVariableDescriptorCount = true;
-    features_12.descriptorIndexing = true;
-    features_12.descriptorBindingSampledImageUpdateAfterBind = true;
-    features_12.descriptorBindingStorageImageUpdateAfterBind = true;
-    features_12.descriptorBindingStorageBufferUpdateAfterBind = true;
-    features_12.runtimeDescriptorArray = true;
-    features_12.scalarBlockLayout = true;
-    features_12.shaderSampledImageArrayNonUniformIndexing = true;
-    features_12.shaderStorageImageArrayNonUniformIndexing = true;
-    features_12.drawIndirectCount = true;
-    features_12.hostQueryReset = true;
-    features_12.shaderInt8 = true;
-    features_12.shaderBufferInt64Atomics = true;
-    features_12.samplerFilterMinmax = true;
-
-    VkPhysicalDeviceVulkan11Features features_11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
-
-    VkPhysicalDeviceFeatures features_10{};
-    features_10.shaderInt16 = true;
-    features_10.pipelineStatisticsQuery = true;
-    features_10.shaderInt64 = true;
-    features_10.depthClamp = true;
-
-    vkb::PhysicalDeviceSelector selector{ vkb_inst };
-    auto phys_ret = selector.set_surface(surface)
-                        .set_minimum_version(1, 4)
-                        .set_required_features_14(features_14)
-                        .set_required_features_13(features_13)
-                        .set_required_features_12(features_12)
-                        .set_required_features_11(features_11)
-                        .set_required_features(features_10)
-                        .select();
-    if (!phys_ret)
-    {
-        fmt::println("Failed to select physical device.");
-        std::abort();
-    }
-    physical_device = phys_ret->physical_device;
-
-    // VkBootstrap specific - checking for extension support, this may be incorrect.
-    // Without bootstrap, the right way to do this is query extension name -> query feature -> set feature -> device creation using extensions & features set
-    bool desc_heap_supported = phys_ret->enable_extension_if_present(VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME);
-    bool unified_layouts_supported = phys_ret->enable_extension_if_present(VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME);
-    if (unified_layouts_supported)
-    {
-        VkPhysicalDeviceUnifiedImageLayoutsFeaturesKHR unified_layouts_features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_UNIFIED_IMAGE_LAYOUTS_FEATURES_KHR };
-        unified_layouts_features.unifiedImageLayouts = true;
-        unified_layouts_supported = phys_ret->enable_extension_features_if_present(unified_layouts_features);
-    }
-
-    bool mesh_shader_supported = phys_ret->enable_extension_if_present(VK_EXT_MESH_SHADER_EXTENSION_NAME);
-    if (mesh_shader_supported)
-    {
-        VkPhysicalDeviceMeshShaderFeaturesEXT mesh_shader_features{};
-        mesh_shader_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
-        mesh_shader_features.meshShader = true;
-        mesh_shader_features.meshShaderQueries = true;
-        mesh_shader_supported &= phys_ret->enable_extension_features_if_present(mesh_shader_features);
-    }
-
-    assert(mesh_shader_supported);
-
-    vkb::DeviceBuilder device_builder{ phys_ret.value() };
-    auto dev_ret = device_builder.build();
-    if (!dev_ret)
-    {
-        fmt::println("Failed to select logical device.");
-        std::abort();
-    }
-    vkb::Device vkb_device = dev_ret.value();
+    auto vkb_physical_device = create_physical_device(vkb_inst, surface);
+    physical_device = vkb_physical_device.value();
+    auto vkb_device = create_device(vkb_physical_device);
     device = vkb_device.device;
-
-    volkLoadDevice(vkb_device);
-
-    auto graphics_queue_ret = vkb_device.get_queue(vkb::QueueType::graphics);
-    if (!graphics_queue_ret)
-    {
-        fmt::println("Failed to select graphics queue.");
-        std::abort();
-    }
-    graphics_queue = graphics_queue_ret.value();
-    graphics_queue_family = vkb_device.get_queue_index(vkb::QueueType::graphics).value();
+    volkLoadDevice(device);
+    get_graphics_queue_and_family(vkb_device, graphics_queue, graphics_queue_family);
 
     swapchain = create_swapchain(physical_device, device, surface, window_width, window_height);
 
@@ -292,12 +98,6 @@ void Engine::init_vulkan()
     VK_CHECK(vmaImportVulkanFunctionsFromVolk(&allocator_info, &vulkan_functions));
     allocator_info.pVulkanFunctions = &vulkan_functions;
     VK_CHECK(vmaCreateAllocator(&allocator_info, &allocator));
-
-#ifdef NDEBUG
-    fmt::println("Release mode, {}", SDL_GetCurrentVideoDriver());
-#else
-    fmt::println("Debug mode, {}", SDL_GetCurrentVideoDriver());
-#endif
 }
 
 void Engine::cleanup()
@@ -1051,13 +851,12 @@ void Engine::run()
         // Acquire next image
         uint32_t swapchain_image_idx{};
         VkResult acquire_result = vkAcquireNextImageKHR(device, swapchain.swapchain, WAIT_TIME, frame.image_acquired_semaphore, nullptr, &swapchain_image_idx);
+        VK_CHECK_SWAPCHAIN(acquire_result);
         if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR)
         {
-            fmt::println("Acquire out of date / suboptimal");
             swapchain_dirty = true;
             continue;
         }
-        VK_CHECK_SWAPCHAIN(acquire_result);
         VK_CHECK(vkResetFences(device, 1, &frame.fence));
 
         ImGui_ImplVulkan_NewFrame();
