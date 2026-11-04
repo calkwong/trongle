@@ -49,8 +49,6 @@
 #include <string>
 #include <memory>
 
-#define LOCAL_LIGHTS 0
-
 #if STRESS_TEST == 1 || LOCAL_LIGHTS == 1
 #include <random>
 #endif
@@ -1031,7 +1029,7 @@ void Engine::run()
                     uint32_t count;
                     float lod_distance_factor;
                     uint32_t late;
-                    float depth_pyramid_lod;
+                    float num_mips;
                     uint32_t depth_pyramid_id;
                     uint32_t skip_occlusion;
                 };
@@ -1060,7 +1058,7 @@ void Engine::run()
                 data.count = renderables.size();
                 data.lod_distance_factor = 2.0f / (data.p11 * swapchain.extent.height);
                 data.late = 0;
-                data.depth_pyramid_lod = static_cast<float>(glm::floor(glm::log2(static_cast<float>(glm::max(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height)))) + 1);
+                data.num_mips = static_cast<float>(glm::floor(glm::log2(static_cast<float>(glm::max(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height)))) + 1);
                 data.depth_pyramid_id = depth_pyramid_descriptor_handle;
                 data.skip_occlusion = skip_occlusion ? 1 : 0;
 
@@ -1122,7 +1120,7 @@ void Engine::run()
                     float near;
                     float far;
                     uint32_t late;
-                    float depth_pyramid_lod;
+                    float num_mips;
                     uint32_t depth_pyramid_id;
                     uint32_t skip_occlusion;
                 };
@@ -1151,7 +1149,7 @@ void Engine::run()
                 data.near = camera.near;
                 data.far = camera.far;
                 data.late = 0;
-                data.depth_pyramid_lod = static_cast<float>(glm::floor(glm::log2(static_cast<float>(glm::max(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height)))) + 1);
+                data.num_mips = static_cast<float>(glm::floor(glm::log2(static_cast<float>(glm::max(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height)))) + 1);
                 data.depth_pyramid_id = depth_pyramid_descriptor_handle;
                 data.skip_occlusion = skip_occlusion ? 1 : 0;
 
@@ -1314,7 +1312,7 @@ void Engine::run()
                     uint32_t count;
                     float lod_distance_factor;
                     uint32_t late;
-                    float depth_pyramid_lod;
+                    float num_mips;
                     uint32_t depth_pyramid_id;
                     uint32_t skip_occlusion;
                 };
@@ -1343,7 +1341,7 @@ void Engine::run()
                 data.count = renderables.size();
                 data.lod_distance_factor = 2.0f / (data.p11 * swapchain.extent.height);
                 data.late = 1;
-                data.depth_pyramid_lod = static_cast<float>(glm::floor(glm::log2(static_cast<float>(glm::max(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height)))) + 1);
+                data.num_mips = static_cast<float>(glm::floor(glm::log2(static_cast<float>(glm::max(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height)))) + 1);
                 data.depth_pyramid_id = depth_pyramid_descriptor_handle;
                 data.skip_occlusion = skip_occlusion ? 1 : 0;
 
@@ -1405,7 +1403,7 @@ void Engine::run()
                     float near;
                     float far;
                     uint32_t late;
-                    float depth_pyramid_lod;
+                    float num_mips;
                     uint32_t depth_pyramid_id;
                     uint32_t skip_occlusion;
                 };
@@ -1434,7 +1432,7 @@ void Engine::run()
                 data.near = camera.near;
                 data.far = camera.far;
                 data.late = 1;
-                data.depth_pyramid_lod = static_cast<float>(glm::floor(glm::log2(static_cast<float>(glm::max(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height)))) + 1);
+                data.num_mips = static_cast<float>(glm::floor(glm::log2(static_cast<float>(glm::max(depth_pyramid_image.extent.width, depth_pyramid_image.extent.height)))) + 1);
                 data.depth_pyramid_id = depth_pyramid_descriptor_handle;
                 data.skip_occlusion = skip_occlusion ? 1 : 0;
 

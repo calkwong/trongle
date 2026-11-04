@@ -22,7 +22,7 @@ struct PushConstants
     uint count;
     float lod_distance_factor;
     uint late;
-    float depth_pyramid_lod;
+    float num_mips;
     uint depth_pyramid_id;
     uint skip_occlusion;
 }
@@ -85,7 +85,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
         float2 valid_extent = pc.depth_buffer_extent * 0.5;
         float2 hzb_uv_scale = valid_extent / pc.depth_pyramid_extent;
 
-        float mip = get_occlusion_mip(aabb, pc.depth_pyramid_extent, pc.depth_pyramid_lod);
+        float mip = get_occlusion_mip(aabb, valid_extent, pc.num_mips);
         SamplerState samp = get_sampler<SamplerState>(DEPTH_REDUCE);
 
         float2 adjusted_uv = (aabb.zw + aabb.xy) * 0.5 * hzb_uv_scale;

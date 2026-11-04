@@ -6,6 +6,8 @@ import pbr;
 import shadow_mapping;
 import sh_util;
 
+#include "../src/config.h"
+
 struct PushConstants
 {
     float4x4 view_proj;
@@ -57,7 +59,6 @@ enum Debug : uint
 };
 
 #define GI 0
-#define LOCAL_LIGHTS 0
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
