@@ -33,7 +33,6 @@ struct PushConstants
     float near;
     float scale;
     float bias;
-    uint taa;
 }
 
 [[vk::push_constant]]
@@ -322,10 +321,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
 #endif
 
     // TODO: gradient noise from http://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare
-    if (pc.taa == 1)
-        out_color.xyz = out_color.xyz;
-    else
-        out_color.xyz = tonemap(out_color.xyz);
+    out_color.xyz = tonemap(out_color.xyz);
 
     switch (pc.debug_id)
     {

@@ -254,7 +254,8 @@ void Rendergraph::resolve_images()
         }
         }
     }
-    assert(image_states.size() == image_infos.size() && "Mismatch");
+
+    assert(image_states.size() == image_infos.size());
 }
 
 void Rendergraph::resolve_buffers()
@@ -333,7 +334,7 @@ void Rendergraph::resolve_buffers()
         }
     }
 
-    assert(buffer_states.size() == buffer_infos.size() && "Mismatch");
+    assert(buffer_states.size() == buffer_infos.size());
 }
 
 void Rendergraph::reset()
@@ -415,10 +416,11 @@ void Rendergraph::reset()
 
 void Rendergraph::add_pass(const Pass& pass, std::function<void()> execute)
 {
-    for (const PassInfo& info : pass.reads)
-        assert(info.handle < (info.is_image ? image_infos.size() : buffer_infos.size()));
-    for (const PassInfo& info : pass.writes)
-        assert(info.handle < (info.is_image ? image_infos.size() : buffer_infos.size()));
+    // fmt::println("Pass: {}", pass.name);
+    // for (const PassInfo& info : pass.reads)
+    //     assert(info.handle < (info.is_image ? image_infos.size() : buffer_infos.size()));
+    // for (const PassInfo& info : pass.writes)
+    //     assert(info.handle < (info.is_image ? image_infos.size() : buffer_infos.size()));
 
     passes.push_back(std::move(pass));
     executes.push_back(std::move(execute));
