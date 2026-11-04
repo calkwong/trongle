@@ -114,6 +114,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
         uint count;
         uint masked_count;
 
+        // TODO: separate compaction pass to account for maxMeshWorkGroupCount limits. We are hitting this limit in our stress test scene, causing disocclusion bugs.
         if (masked)
         {
             InterlockedAdd(pc.dispatch_buffer[2].x, 1, masked_count);
