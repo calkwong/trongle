@@ -1,7 +1,5 @@
 #pragma once
 
-// TODO: minimize including this header everywhere to reduce build time
-
 #define FRAMES_IN_FLIGHT 2
 
 #define MAX_LOD 8
@@ -36,3 +34,6 @@
 #define MAX_LIGHTS_PER_FROXEL 100
 
 #define MESHLET_DRAW_MASKED_OFFSET (MAX_MESHLETS_DRAW / 2)
+
+#define MAX_TIMESTAMP_QUERIES 100
+#define MAX_MESH_PIPELINE_QUERIES 2

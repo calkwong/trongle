@@ -46,8 +46,6 @@
 #include <dlfcn.h>
 #include <string>
 
-#define MAX_TIMESTAMP_QUERIES 20
-#define MAX_MESH_PIPELINE_QUERIES 2
 #define LOCAL_LIGHTS 0
 
 #if STRESS_TEST == 1 || LOCAL_LIGHTS == 1
@@ -175,7 +173,9 @@ void Engine::init_vulkan()
     SDL_SetHint(SDL_HINT_APP_ID, "trongle-engine");
     SDL_Init(SDL_INIT_VIDEO);
     auto window_flags = static_cast<SDL_WindowFlags>(SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
-    window = SDL_CreateWindow("trongle", 1280u, 720u, window_flags);
+    auto window_width = 1920u;
+    auto window_height = 1080u;
+    window = SDL_CreateWindow("trongle", window_width, window_height, window_flags);
     bool surface_result = SDL_Vulkan_CreateSurface(window, vkb_inst, nullptr, &surface);
     if (!surface_result)
     {
@@ -278,8 +278,6 @@ void Engine::init_vulkan()
     graphics_queue = graphics_queue_ret.value();
     graphics_queue_family = vkb_device.get_queue_index(vkb::QueueType::graphics).value();
 
-    auto window_width = 1280u;
-    auto window_height = 720u;
     swapchain = create_swapchain(physical_device, device, surface, window_width, window_height);
 
     VmaAllocatorCreateInfo allocator_info{};
@@ -873,9 +871,6 @@ void Engine::run()
                          }
                      });
 
-    std::array<uint64_t, MAX_TIMESTAMP_QUERIES> timestamp_results{};
-    std::array<uint64_t, MAX_MESH_PIPELINE_QUERIES> mesh_pipeline_results{};
-
 #if STRESS_TEST == 1
     bool b_shadows = false;
 #else
@@ -1073,6 +1068,7 @@ void Engine::run()
 
         // Wait on fence
         auto frame = get_current_frame();
+        auto frame_index = frame_number % FRAMES_IN_FLIGHT;
         VK_CHECK(vkWaitForFences(device, 1, &frame.fence, true, WAIT_TIME));
 
         // Acquire next image
@@ -1087,62 +1083,17 @@ void Engine::run()
         VK_CHECK_SWAPCHAIN(acquire_result);
         VK_CHECK(vkResetFences(device, 1, &frame.fence));
 
-        // Get query pool results
-        auto timestamp_results_size = timestamp_results.size();
-        auto mesh_pipeline_results_size = mesh_pipeline_results.size();
-
-        if (frame_number >= FRAMES_IN_FLIGHT)
-        {
-            VK_CHECK(vkGetQueryPoolResults(
-                device,
-                frame.query_pool_timestamp,
-                0,
-                timestamp_results_size,
-                timestamp_results_size * sizeof(uint64_t),
-                timestamp_results.data(),
-                sizeof(uint64_t),
-                VK_QUERY_RESULT_64_BIT
-            ));
-
-            VK_CHECK(vkGetQueryPoolResults(
-                device,
-                frame.query_pool_mesh_pipeline,
-                0,
-                mesh_pipeline_results_size,
-                mesh_pipeline_results_size * sizeof(uint64_t),
-                mesh_pipeline_results.data(),
-                sizeof(uint64_t),
-                VK_QUERY_RESULT_64_BIT
-            ));
-        }
-
-        double new_gpu_time = static_cast<double>(timestamp_results[1] - timestamp_results[0]) * timestamp_period * 1e-6;
-        stats.gpu_time = new_gpu_time + 0.95 * (stats.gpu_time - new_gpu_time);
-        auto triangles_early = mesh_pipeline_results[0];
-        auto triangles_late = mesh_pipeline_results[1];
-
-        vkResetQueryPool(device, frame.query_pool_timestamp, 0, MAX_TIMESTAMP_QUERIES);
-        vkResetQueryPool(device, frame.query_pool_mesh_pipeline, 0, MAX_MESH_PIPELINE_QUERIES);
-
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
 
-        ImGui::Begin("Stats");
-        ImGui::Text("GPU time:           %.3f ms", stats.gpu_time);
-        ImGui::Text("Cull mesh early:    %.3f ms", static_cast<double>(timestamp_results[3] - timestamp_results[2]) * timestamp_period * 1e-6);
-        ImGui::Text("Cull meshlet early: %.3f ms", static_cast<double>(timestamp_results[5] - timestamp_results[4]) * timestamp_period * 1e-6);
-        ImGui::Text("Vbuffer early:      %.3f ms", static_cast<double>(timestamp_results[7] - timestamp_results[6]) * timestamp_period * 1e-6);
-        ImGui::Text("Hiz:                %.3f ms", static_cast<double>(timestamp_results[9] - timestamp_results[8]) * timestamp_period * 1e-6);
-        ImGui::Text("Cull mesh late:     %.3f ms", static_cast<double>(timestamp_results[11] - timestamp_results[10]) * timestamp_period * 1e-6);
-        ImGui::Text("Cull meshlet late:  %.3f ms", static_cast<double>(timestamp_results[13] - timestamp_results[12]) * timestamp_period * 1e-6);
-        ImGui::Text("Vbuffer late:       %.3f ms", static_cast<double>(timestamp_results[15] - timestamp_results[14]) * timestamp_period * 1e-6);
-        ImGui::Text("Hiz temporal:       %.3f ms", static_cast<double>(timestamp_results[17] - timestamp_results[16]) * timestamp_period * 1e-6);
-        ImGui::Text("Zero buffers early: %.3f ms", static_cast<double>(timestamp_results[19] - timestamp_results[18]) * timestamp_period * 1e-6);
+        if (frame_number >= FRAMES_IN_FLIGHT)
+        {
+            graph.gpu_profiler.get_timestamp_results(device, frame.query_pool_timestamp, frame_index, timestamp_period);
+            graph.gpu_profiler.draw(frame_index);
+        }
 
-        ImGui::Text("Triangles early:   %u", static_cast<unsigned int>(triangles_early));
-        ImGui::Text("Triangles late:    %u", static_cast<unsigned int>(triangles_late));
-        // ImGui::Text("Triangles:   %.1fM", static_cast<double>(triangles) * 1e-6);
+        ImGui::Begin("Settings");
         ImGui::Checkbox("Freeze camera", &freeze_matrices);
         ImGui::Checkbox("Shadows", &b_shadows);
         ImGui::SliderFloat("Shadow draw distance", &shadow_draw_distance, SHADOW_DRAW_DISTANCE, 400.0);
@@ -1166,6 +1117,10 @@ void Engine::run()
 
         ImGui::End();
         ImGui::Render();
+
+        graph.gpu_profiler.reset(frame_index);
+        vkResetQueryPool(device, frame.query_pool_timestamp, 0, MAX_TIMESTAMP_QUERIES);
+        vkResetQueryPool(device, frame.query_pool_mesh_pipeline, 0, MAX_MESH_PIPELINE_QUERIES);
 
         auto swapchain_image = graph.import_swapchain(swapchain.images[swapchain_image_idx], swapchain.image_views[swapchain_image_idx]);
 
@@ -1217,7 +1172,6 @@ void Engine::run()
         cmd_begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
         VK_CHECK(vkBeginCommandBuffer(cmd, &cmd_begin_info));
-        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 0);
 
         auto* global_data = static_cast<GlobalData*>(global_buffer.info.pMappedData);
         GlobalData data{};
@@ -1226,7 +1180,7 @@ void Engine::run()
         data.inverse_view_proj = glm::inverse(data.view_proj);
         data.previous_view = frame_context.prev_view;
         data.previous_view_proj = frame_context.prev_view_proj;
-        global_data[frame_number % FRAMES_IN_FLIGHT] = data;
+        global_data[frame_index] = data;
 
         std::array<VkDescriptorSet, 3> sets{ buffer_set, image_set, sampler_set };
 
@@ -1238,11 +1192,9 @@ void Engine::run()
                 .write_buffer(prefix_sum_buffer, AccessType::TransferWrite),
             [&]()
             {
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 18);
                 // TODO: likely more efficient on compute - we only need to zero 4 values (1 in each PrefixSums sector)
                 vkCmdFillBuffer(cmd, get_buffer(graph, prefix_sum_buffer), 0, VK_WHOLE_SIZE, 0);
                 vkCmdFillBuffer(cmd, get_buffer(graph, light_count_buffer), 0, VK_WHOLE_SIZE, 0);
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 19);
             }
         );
 
@@ -1288,8 +1240,6 @@ void Engine::run()
                 .write_buffer(late_pass_candidates, AccessType::ComputeShaderWrite),
             [&]()
             {
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 2);
-
                 struct PushData
                 {
                     glm::mat4 view;
@@ -1344,7 +1294,6 @@ void Engine::run()
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_mesh_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                 vkCmdDispatch(cmd, get_group_count(renderables.size(), 256), 1, 1);
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 3);
             }
         );
 
@@ -1382,7 +1331,6 @@ void Engine::run()
                 .write_buffer(late_pass_candidates, AccessType::ComputeShaderWrite),
             [&]()
             {
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 4);
                 struct PushData
                 {
                     glm::mat4 view;
@@ -1437,7 +1385,6 @@ void Engine::run()
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_meshlet_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                 vkCmdDispatchIndirect(cmd, get_buffer(graph, dispatch_buffer), 0);
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 5);
             }
         );
 
@@ -1450,8 +1397,6 @@ void Engine::run()
                 .write_image(depth_image, AccessType::DepthStencilAttachmentWrite),
             [&]()
             {
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 6);
-
                 VkClearValue clear_value{};
                 clear_value.color.uint32[0] = 0xFFFFFFFFu;
                 clear_value.color.uint32[1] = 0xFFFFFFFFu;
@@ -1528,7 +1473,6 @@ void Engine::run()
 
                 vkCmdEndQuery(cmd, frame.query_pool_mesh_pipeline, 0);
                 vkCmdEndRendering(cmd);
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 7);
             }
         );
 
@@ -1541,7 +1485,6 @@ void Engine::run()
                     .write_buffer(spd_counter, AccessType::ComputeShaderWrite),
                 [&]()
                 {
-                    vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 8);
                     struct PushData
                     {
                         VkDeviceAddress spd_counter_buffer;
@@ -1568,14 +1511,8 @@ void Engine::run()
                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hiz_pipeline);
                     vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                     vkCmdDispatch(cmd, group_count_x, group_count_y, 1);
-                    vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 9);
                 }
             );
-        }
-        else
-        {
-            vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 8);
-            vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 9);
         }
 
         skip_occlusion = false;
@@ -1588,7 +1525,6 @@ void Engine::run()
                 .write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite),
             [&]()
             {
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 10);
                 struct PushData
                 {
                     glm::mat4 view;
@@ -1643,7 +1579,6 @@ void Engine::run()
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_mesh_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                 vkCmdDispatch(cmd, get_group_count(renderables.size(), 256), 1, 1);
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 11);
             }
         );
 
@@ -1681,8 +1616,6 @@ void Engine::run()
                 .write_buffer(meshlet_draw_buffer, AccessType::ComputeShaderWrite),
             [&]()
             {
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 12);
-
                 struct PushData
                 {
                     glm::mat4 view;
@@ -1737,7 +1670,6 @@ void Engine::run()
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_meshlet_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                 vkCmdDispatchIndirect(cmd, get_buffer(graph, dispatch_buffer), 0);
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 13);
             }
         );
 
@@ -1752,8 +1684,6 @@ void Engine::run()
                 .write_image(depth_image, AccessType::DepthStencilAttachmentWrite),
             [&]()
             {
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 14);
-
                 VkRenderingAttachmentInfo rendering_attachment_info = VkRenderingAttachmentInfo{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
                 rendering_attachment_info.imageView = get_image_view(graph, vbuffer);
                 rendering_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
@@ -1825,7 +1755,6 @@ void Engine::run()
 
                 vkCmdEndQuery(cmd, frame.query_pool_mesh_pipeline, 1);
                 vkCmdEndRendering(cmd);
-                vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 15);
             }
         );
 
@@ -1856,7 +1785,7 @@ void Engine::run()
                         float lambda;
                     };
                     PushData data{};
-                    data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
+                    data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_index));
                     auto proj = glm::perspective(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / static_cast<float>(swapchain.extent.height), shadow_draw_distance, camera.near);
                     data.inverse_view_proj = glm::inverse(proj * frame_context.view);
                     data.sunlight_dir = sunlight_dir;
@@ -1890,7 +1819,7 @@ void Engine::run()
                     };
 
                     PushData data{};
-                    data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
+                    data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_index));
                     data.object_buffer = object_buffer.address;
                     data.mesh_buffer = mesh_buffer.address;
                     data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
@@ -1955,7 +1884,7 @@ void Engine::run()
                         };
 
                         PushData data{};
-                        data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
+                        data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_index));
                         data.object_buffer = object_buffer.address;
                         data.meshlet_buffer = meshlet_buffer.address;
                         data.prefix_sum_buffer = get_buffer_address(graph, prefix_sum_buffer);
@@ -2024,7 +1953,7 @@ void Engine::run()
                         };
 
                         PushData data{};
-                        data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
+                        data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_index));
                         data.object_buffer = object_buffer.address;
                         data.vertex_buffer = vertex_buffer.address;
                         data.meshlet_buffer = meshlet_buffer.address;
@@ -2100,7 +2029,7 @@ void Engine::run()
                 data.meshlet_buffer = meshlet_buffer.address;
                 data.meshlet_indices_buffer = meshlet_indices_buffer.address;
                 data.material_buffer = material_buffer.address;
-                data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_number % FRAMES_IN_FLIGHT));
+                data.global_buffer = get_buffer_address(graph, globals, sizeof(GlobalData) * (frame_index));
 #if LOCAL_LIGHTS == 1
                 data.light_buffer = light_buffer.address;
 #endif
@@ -2140,7 +2069,6 @@ void Engine::run()
                     .write_buffer(spd_counter, AccessType::ComputeShaderWrite),
                 [&]()
                 {
-                    vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 16);
                     struct PushData
                     {
                         VkDeviceAddress spd_counter_buffer;
@@ -2167,14 +2095,8 @@ void Engine::run()
                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, hiz_pipeline);
                     vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                     vkCmdDispatch(cmd, group_count_x, group_count_y, 1);
-                    vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 17);
                 }
             );
-        }
-        else
-        {
-            vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 16);
-            vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 17);
         }
 
         graph.add_pass(
@@ -2214,9 +2136,8 @@ void Engine::run()
 
         // Rendergraph compilation
         graph.compile(cmd);
-        graph.execute(cmd);
+        graph.execute(cmd, frame_index, frame.query_pool_timestamp);
 
-        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, frame.query_pool_timestamp, 1);
         VK_CHECK(vkEndCommandBuffer(cmd));
 
         // Submit command buffer

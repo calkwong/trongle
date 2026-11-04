@@ -547,7 +547,7 @@ void Rendergraph::prepare_barriers()
 #endif
 }
 
-void Rendergraph::execute(VkCommandBuffer cmd)
+void Rendergraph::execute(VkCommandBuffer cmd, uint32_t frame_index, VkQueryPool query_pool)
 {
     assert(barriers.size() == executes.size());
     assert(swapchain_index != -1u && !image_barriers.empty());
@@ -570,17 +570,24 @@ void Rendergraph::execute(VkCommandBuffer cmd)
         }
 
         vkCmdPipelineBarrier2(cmd, &info);
+
+        gpu_profiler.write_timestamp(cmd, query_pool, frame_index);
         callback();
+        gpu_profiler.write_timestamp(cmd, query_pool, frame_index);
     };
+
+    // Recording GPU render time
+    gpu_profiler.write_timestamp(cmd, query_pool, frame_index);
 
     for (auto i = 0; i < executes.size(); i++)
     {
+        gpu_profiler.add_task(passes[i].name, frame_index);
+
         auto& barrier = barriers[i];
         auto& callback = executes[i];
         pipeline_barrier_and_execute(barrier, callback, i);
     }
 
-// swapchain GENERAL -> PRESENT
 #ifndef GIGABARRIER
     auto& last_barrier = barriers.back();
     stage_barrier(cmd, physical_images[swapchain_index].image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, last_barrier.dstStageMask, 0, last_barrier.dstAccessMask, 0);
@@ -596,6 +603,8 @@ void Rendergraph::execute(VkCommandBuffer cmd)
         0
     );
 #endif
+
+    gpu_profiler.write_timestamp(cmd, query_pool, frame_index);
 }
 
 void Rendergraph::update_cached_resource_states()

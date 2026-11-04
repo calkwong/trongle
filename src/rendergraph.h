@@ -2,6 +2,7 @@
 
 #include "resources.h"
 #include "sync.h"
+#include "profiler.h"
 
 #include <volk.h>
 
@@ -208,6 +209,8 @@ struct Rendergraph
     std::vector<FrameLocalAccessState<TrackedImage>> image_states;
     std::vector<FrameLocalAccessState<TrackedBuffer>> buffer_states;
 
+    Profiler gpu_profiler;
+
     uint32_t create_task_image(ImageResourceDesc info);
 
     // TODO: implement mapping buffer to descriptor
@@ -234,7 +237,7 @@ struct Rendergraph
     // Assumes RW resources are W only; this may cause correctness issue when implementing pass reordering and/or pass merging
     void prepare_barriers();
 
-    void execute(VkCommandBuffer cmd);
+    void execute(VkCommandBuffer cmd, uint32_t frame_index, VkQueryPool query_pool);
     void reset();
     void cleanup();
 };
