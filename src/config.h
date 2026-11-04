@@ -13,7 +13,7 @@
 #define MAX_MESHLETS_DRAW 4194304
 
 #define LOCAL_LIGHTS 0
-#define STRESS_TEST 0
+#define STRESS_TEST 1
 #if STRESS_TEST == 1
 #define MAX_INSTANCES 1000000
 #else

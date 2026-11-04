@@ -35,6 +35,7 @@
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/vector_uint3.hpp>
 #include <glm/vector_relational.hpp>
+#include <glm/ext/matrix_transform.hpp>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
@@ -53,8 +54,8 @@
 #include <random>
 #endif
 
-const char* ASSET_NAME = "Sponza/Sponza.gltf";
-// const char* ASSET_NAME = "chinesedragon.gltf";
+// const char* ASSET_NAME = "Sponza/Sponza.gltf";
+const char* ASSET_NAME = "chinesedragon.gltf";
 // const char* ASSET_NAME = "sphere.gltf";
 // const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
 int DEBUG_ID = 0;
@@ -960,7 +961,8 @@ void Engine::run()
 
         graph->add_pass(
             Pass("Zero buffers early")
-                .write_buffer(prefix_sum_buffer, AccessType::TransferWrite),
+                .write_buffer(prefix_sum_buffer, AccessType::TransferWrite)
+                .write_buffer(light_count_buffer, AccessType::TransferWrite),
             [&]()
             {
                 // TODO: likely more efficient on compute - we only need to zero 4 values (1 in each PrefixSums sector)
@@ -1291,7 +1293,8 @@ void Engine::run()
                 .read_image(depth_pyramid, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                 .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
                 .read_buffer(late_pass_candidates, AccessType::ComputeShaderReadOther)
-                .write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite),
+                .write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite)
+                .write_buffer(late_pass_candidates, AccessType::ComputeShaderWrite),
             [&]()
             {
                 struct PushData
@@ -1382,7 +1385,8 @@ void Engine::run()
                 .read_buffer(late_pass_candidates, AccessType::ComputeShaderReadOther)
                 .read_image(depth_pyramid, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                 .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite)
-                .write_buffer(meshlet_draw_buffer, AccessType::ComputeShaderWrite),
+                .write_buffer(meshlet_draw_buffer, AccessType::ComputeShaderWrite)
+                .write_buffer(late_pass_candidates, AccessType::ComputeShaderWrite),
             [&]()
             {
                 struct PushData
