@@ -21,11 +21,12 @@ struct PushConstants
     FroxelOffset* froxel_offset_list;
     uint* froxel_item_list;
     SH* sh_buffer;
+    MeshletInstance* meshlet_instance_buffer;
+    float2 screen_extent;
     float3 light_dir;
     uint shadowmap_id;
     float3 camera_pos;
     uint visbuffer_id;
-    float2 screen_extent;
     float2 pixels_per_cluster;
     uint debug_id;
     uint output_id;
@@ -69,14 +70,15 @@ void main(uint3 global_id: SV_DispatchThreadID)
         return;
 
     RWTexture2D out = get_storage_image<RWTexture2D>(pc.output_id);
-    Texture2D<uint2> vbuffer = get_sampled_image<Texture2D<uint2>>(pc.visbuffer_id);
+    Texture2D<uint> vbuffer = get_sampled_image<Texture2D<uint>>(pc.visbuffer_id);
     uint packed = vbuffer.Load(int3(tex_coord, 0)).r;
-    uint meshlet_id = vbuffer.Load(int3(tex_coord, 0)).g;
 
     float2 in_uv = (float2(tex_coord) + float2(0.5)) / pc.screen_extent;
     float4 out_color;
     SamplerState cube_samp = get_sampler<SamplerState>(CUBE_SAMPLER);
-    if (packed == 0xFFFFFFFFu && meshlet_id == 0xFFFFFFFFu)
+
+    // This is set to 0xFFFFFFFFu during early vbuffer render target clear
+    if (packed == 0xFFFFFFFFu)
     {
         float2 ndc = in_uv * 2.0 - 1.0;
         ndc.y *= -1.0;
@@ -105,8 +107,12 @@ void main(uint3 global_id: SV_DispatchThreadID)
         return;
     }
 
-    uint instance_id = packed >> 7;
+    uint meshlet_instance_id = packed >> 7;
     uint triangle_id = packed & 127u;
+
+    MeshletInstance meshlet_instance = pc.meshlet_instance_buffer[meshlet_instance_id];
+    uint meshlet_id = meshlet_instance.meshlet_id;
+    uint instance_id = meshlet_instance.instance_id;
 
     Meshlet meshlet = pc.meshlet_buffer[meshlet_id];
     bool pack_vertex = meshlet.pack_vertex == 1;

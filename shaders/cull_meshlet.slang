@@ -112,25 +112,21 @@ void main(uint3 global_id: SV_DispatchThreadID)
     if (visible)
     {
         uint count;
-        uint masked_count;
 
         MeshletInstance meshlet_instance;
         meshlet_instance.meshlet_id = global_meshlet_id;
         meshlet_instance.instance_id = instance_id;
 
+        uint early_dispatch_index = masked ? 2 : 1;
+        uint dispatch_index = early_dispatch_index + (late ? 2 : 0);
+        uint offset = masked ? MESHLET_DRAW_MASKED_OFFSET : 0;
+        offset += late ? pc.dispatch_buffer[early_dispatch_index].x : 0;
+
         // TODO: Separate compaction pass to account for maxMeshWorkGroupCount limits.
         // We are raising the limit beyond what the device currently reports, which renders fine but is likely UB.
         // If we respect the limit but the dispatch exceeds this limit, we either crash on frame 0 on overflow or run into disocclusion/flickering issues.
-        if (masked)
-        {
-            InterlockedAdd(pc.dispatch_buffer[2].x, 1, masked_count);
-            pc.meshlet_instance_buffer[MESHLET_DRAW_MASKED_OFFSET + masked_count] = meshlet_instance;
-        }
-        else
-        {
-            InterlockedAdd(pc.dispatch_buffer[1].x, 1, count);
-            pc.meshlet_instance_buffer[count] = meshlet_instance;
-        }
+        InterlockedAdd(pc.dispatch_buffer[dispatch_index].x, 1, count);
+        pc.meshlet_instance_buffer[offset + count] = meshlet_instance;
 
         if (!late)
         {

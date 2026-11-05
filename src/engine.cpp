@@ -60,8 +60,8 @@ bool b_shadows = false;
 bool b_shadows = true;
 #endif
 
-// const char* ASSET_NAME = "Sponza/Sponza.gltf";
-const char* ASSET_NAME = "chinesedragon.gltf";
+const char* ASSET_NAME = "Sponza/Sponza.gltf";
+// const char* ASSET_NAME = "chinesedragon.gltf";
 // const char* ASSET_NAME = "sphere.gltf";
 // const char* ASSET_NAME = "BistroInterior_Wine/BistroInterior_Wine.gltf";
 int DEBUG_ID = 0;
@@ -499,7 +499,7 @@ void Engine::run()
                 { VK_SHADER_STAGE_MESH_BIT_EXT, VK_SHADER_STAGE_FRAGMENT_BIT },
                 nullptr,
                 &pipeline_layout,
-                { VK_FORMAT_R32G32_UINT },
+                { VK_FORMAT_R32_UINT },
                 { 1 }
             )
         );
@@ -512,7 +512,7 @@ void Engine::run()
                 { VK_SHADER_STAGE_MESH_BIT_EXT, VK_SHADER_STAGE_FRAGMENT_BIT },
                 nullptr,
                 &pipeline_layout,
-                { VK_FORMAT_R32G32_UINT },
+                { VK_FORMAT_R32_UINT },
                 { 0 },
                 GraphicsPipelineConfig{ .cull_mode = VK_CULL_MODE_NONE }
             )
@@ -917,7 +917,7 @@ void Engine::run()
         auto vbuffer = graph->create_task_image(
             ImageResourceDesc{
                 VkExtent3D{ swapchain.extent.width, swapchain.extent.height, 1 },
-                VK_FORMAT_R32G32_UINT,
+                VK_FORMAT_R32_UINT,
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
                 VK_IMAGE_ASPECT_COLOR_BIT }
         );
@@ -928,9 +928,10 @@ void Engine::run()
             shadowmaps[i] = graph->import_image(shadowmap_images[i], shadowmap_descriptor_handles[i]);
         }
 
-        auto dispatch_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(Dispatch) * 3, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
+        auto dispatch_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(Dispatch) * 5, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
         auto prefix_sum_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(PrefixSums), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
         auto meshlet_instance_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(MeshletInstance) * MAX_MESHLETS_DRAW, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
+        auto shadow_meshlet_instance_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(MeshletInstance) * MAX_MESHLETS_DRAW, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
         auto froxel_offset_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(FroxelOffset) * TOTAL_FROXELS, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
         auto froxel_item_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(uint32_t) * MAX_LIGHTS_PER_FROXEL * TOTAL_FROXELS, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
         auto light_count_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(uint32_t), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
@@ -962,6 +963,223 @@ void Engine::run()
 
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, sets.size(), sets.data(), 0, nullptr);
+
+        if (b_shadows)
+        {
+            graph->add_pass(
+                Pass("Zero buffers for shadow pass")
+                    .write_buffer(prefix_sum_buffer, AccessType::TransferWrite),
+                [&]()
+                {
+                    // We can get away with only zeroing the first counter as other 'sectors' of PrefixSums are unused up to this point
+                    vkCmdFillBuffer(cmd, graph->buffer(prefix_sum_buffer), 0, sizeof(uint64_t), 0);
+                }
+            );
+
+            graph->add_pass(
+                Pass("Generate shadow matrices")
+                    .write_buffer(globals, AccessType::ComputeShaderWrite),
+                [&]()
+                {
+                    struct PushData
+                    {
+                        VkDeviceAddress global_buffer;
+                        float4x4 inverse_view_proj;
+                        float3 sunlight_dir; // normalized
+                        float shadow_near;
+                        float shadow_far;
+                        float lambda;
+                    };
+                    PushData data{};
+                    data.global_buffer = graph->buffer_address(globals, sizeof(GlobalData) * (frame_index));
+                    auto proj = glm::perspective(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / static_cast<float>(swapchain.extent.height), shadow_draw_distance, camera.near);
+                    data.inverse_view_proj = glm::inverse(proj * frame_context.view);
+                    data.sunlight_dir = sunlight_dir;
+                    data.shadow_near = camera.near;
+                    data.shadow_far = shadow_draw_distance;
+                    data.lambda = 0.95;
+
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, shadow_matrices_pipeline);
+                    vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                    vkCmdDispatch(cmd, 1, 1, 1);
+                }
+            );
+
+            graph->add_pass(
+                Pass("Cull shadow instances")
+                    .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
+                    .read_buffer(globals, AccessType::ComputeShaderReadOther)
+                    .write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite),
+                [&]()
+                {
+                    struct PushData
+                    {
+                        VkDeviceAddress global_buffer;
+                        VkDeviceAddress object_buffer;
+                        VkDeviceAddress mesh_buffer;
+                        VkDeviceAddress prefix_sum_buffer;
+                        float3 camera_pos;
+                        uint32_t count;
+                        uint32_t shadowmap_height;
+                        float lod_distance_factor;
+                    };
+
+                    PushData data{};
+                    data.global_buffer = graph->buffer_address(globals, sizeof(GlobalData) * (frame_index));
+                    data.object_buffer = object_buffer.address;
+                    data.mesh_buffer = mesh_buffer.address;
+                    data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
+                    data.camera_pos = camera.position;
+                    data.count = static_cast<uint32_t>(renderables.size());
+                    data.shadowmap_height = SHADOWMAP_EXTENT;
+                    auto p11 = frame_context.proj[1][1];
+                    data.lod_distance_factor = 2.0f / (p11 * swapchain.extent.height);
+
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_shadow_pipeline);
+                    vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                    vkCmdDispatch(cmd, get_group_count(renderables.size(), 256), 1, 1);
+                }
+            );
+
+            for (uint32_t cascade_index = 0; cascade_index < SUN_CASCADE_COUNT; cascade_index++)
+            {
+                graph->add_pass(
+                    Pass("Compact dispatch for cascade " + std::to_string(cascade_index + 1))
+                        .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
+                        .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite),
+                    [&, cascade_index]()
+                    {
+                        struct PushData
+                        {
+                            VkDeviceAddress prefix_sum_buffer;
+                            VkDeviceAddress dispatch_buffer;
+                            uint32_t prefix_sum_idx;
+                            uint32_t late;
+                        };
+
+                        PushData data{};
+                        data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
+                        data.dispatch_buffer = graph->buffer_address(dispatch_buffer);
+                        data.prefix_sum_idx = cascade_index;
+                        data.late = 0;
+
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compact_dispatch_pipeline);
+                        vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                        vkCmdDispatch(cmd, 1, 1, 1);
+                    }
+                );
+
+                graph->add_pass(
+                    Pass("Cull shadow meshlets")
+                        .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
+                        .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
+                        .read_buffer(globals, AccessType::ComputeShaderReadOther)
+                        .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite)
+                        .write_buffer(meshlet_instance_buffer, AccessType::ComputeShaderWrite),
+                    [&, cascade_index]()
+                    {
+                        struct PushData
+                        {
+                            VkDeviceAddress global_buffer;
+                            VkDeviceAddress object_buffer;
+                            VkDeviceAddress meshlet_buffer;
+                            VkDeviceAddress prefix_sum_buffer;
+                            VkDeviceAddress dispatch_buffer;
+                            VkDeviceAddress meshlet_instance_buffer;
+                            uint32_t count;
+                            uint32_t shadowmap_height;
+                            uint32_t cascade_index;
+                        };
+
+                        PushData data{};
+                        data.global_buffer = graph->buffer_address(globals, sizeof(GlobalData) * (frame_index));
+                        data.object_buffer = object_buffer.address;
+                        data.meshlet_buffer = meshlet_buffer.address;
+                        data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
+                        data.dispatch_buffer = graph->buffer_address(dispatch_buffer);
+                        data.meshlet_instance_buffer = graph->buffer_address(meshlet_instance_buffer);
+                        data.count = static_cast<uint32_t>(renderables.size());
+                        data.shadowmap_height = SHADOWMAP_EXTENT;
+                        data.cascade_index = cascade_index;
+
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_shadow_meshlet_pipeline);
+                        vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                        vkCmdDispatchIndirect(cmd, graph->buffer(dispatch_buffer), 0);
+                    }
+                );
+
+                graph->add_pass(
+                    Pass("Shadowmap " + std::to_string(cascade_index + 1))
+                        .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
+                        .read_buffer(meshlet_instance_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
+                        .read_buffer(globals, AccessType::ComputeShaderReadOther)
+                        .write_image(shadowmaps[cascade_index], AccessType::DepthStencilAttachmentReadWrite),
+                    [&, cascade_index]()
+                    {
+                        VkRenderingAttachmentInfo depth_attachment_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+                        depth_attachment_info.imageView = graph->image_view(shadowmaps[cascade_index]);
+                        depth_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+                        depth_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+                        depth_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+                        VkRenderingInfo rendering_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_INFO };
+                        rendering_info.renderArea = VkRect2D{ VkOffset2D{ 0, 0 }, VkExtent2D{ SHADOWMAP_EXTENT, SHADOWMAP_EXTENT } };
+                        rendering_info.layerCount = 1;
+                        rendering_info.pDepthAttachment = &depth_attachment_info;
+
+                        vkCmdBeginRendering(cmd, &rendering_info);
+
+                        VkViewport viewport{};
+                        viewport.x = 0;
+                        viewport.y = static_cast<float>(SHADOWMAP_EXTENT);
+                        viewport.width = static_cast<float>(SHADOWMAP_EXTENT);
+                        viewport.height = -static_cast<float>(SHADOWMAP_EXTENT);
+                        viewport.minDepth = 0.0f;
+                        viewport.maxDepth = 1.0f;
+                        vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+                        VkRect2D scissor{};
+                        scissor.offset.x = 0;
+                        scissor.offset.y = 0;
+                        scissor.extent.width = SHADOWMAP_EXTENT;
+                        scissor.extent.height = SHADOWMAP_EXTENT;
+                        vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+                        struct PushData
+                        {
+                            VkDeviceAddress global_buffer;
+                            VkDeviceAddress object_buffer;
+                            VkDeviceAddress vertex_buffer;
+                            VkDeviceAddress meshlet_buffer;
+                            VkDeviceAddress meshlet_indices_buffer;
+                            VkDeviceAddress meshlet_instance_buffer;
+                            VkDeviceAddress material_buffer;
+                            uint32_t cascade_index;
+                        };
+
+                        PushData data{};
+                        data.global_buffer = graph->buffer_address(globals, sizeof(GlobalData) * (frame_index));
+                        data.object_buffer = object_buffer.address;
+                        data.vertex_buffer = vertex_buffer.address;
+                        data.meshlet_buffer = meshlet_buffer.address;
+                        data.meshlet_indices_buffer = meshlet_indices_buffer.address;
+                        data.meshlet_instance_buffer = graph->buffer_address(meshlet_instance_buffer);
+                        data.material_buffer = material_buffer.address;
+                        data.cascade_index = cascade_index;
+
+                        vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
+
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, depth_pipeline);
+                        vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch), 1, 0);
+
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, depth_masked_pipeline);
+                        vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch) * DISPATCH_EARLY_MASKED, 1, 0);
+
+                        vkCmdEndRendering(cmd);
+                    }
+                );
+            }
+        }
 
         graph->add_pass(
             Pass("Zero buffers early")
@@ -1085,12 +1303,14 @@ void Engine::run()
                     VkDeviceAddress prefix_sum_buffer;
                     VkDeviceAddress dispatch_buffer;
                     uint32_t prefix_sum_idx;
+                    uint32_t late;
                 };
 
                 PushData data{};
                 data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
                 data.dispatch_buffer = graph->buffer_address(dispatch_buffer);
                 data.prefix_sum_idx = 0;
+                data.late = 0;
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compact_dispatch_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
@@ -1175,7 +1395,7 @@ void Engine::run()
             {
                 VkClearValue clear_value{};
                 clear_value.color.uint32[0] = 0xFFFFFFFFu;
-                clear_value.color.uint32[1] = 0xFFFFFFFFu;
+                clear_value.color.uint32[1] = 0;
                 clear_value.color.uint32[2] = 0;
                 clear_value.color.uint32[3] = 0;
 
@@ -1242,7 +1462,7 @@ void Engine::run()
                 vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch), 1, 0);
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_masked_pipeline);
-                vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch) * 2, 1, 0);
+                vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch) * DISPATCH_EARLY_MASKED, 1, 0);
 
                 vkCmdEndRendering(cmd);
             }
@@ -1366,12 +1586,14 @@ void Engine::run()
                     VkDeviceAddress prefix_sum_buffer;
                     VkDeviceAddress dispatch_buffer;
                     uint32_t prefix_sum_idx;
+                    uint32_t late;
                 };
 
                 PushData data{};
                 data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
                 data.dispatch_buffer = graph->buffer_address(dispatch_buffer);
                 data.prefix_sum_idx = 0;
+                data.late = 1;
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compact_dispatch_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
@@ -1518,229 +1740,14 @@ void Engine::run()
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_pipeline);
-                vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch), 1, 0);
+                vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch) * DISPATCH_LATE_OPAQUE, 1, 0);
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_masked_pipeline);
-                vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch) * 2, 1, 0);
+                vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch) * DISPATCH_LATE_MASKED, 1, 0);
 
                 vkCmdEndRendering(cmd);
             }
         );
-
-        if (b_shadows)
-        {
-            graph->add_pass(
-                Pass("Zero buffers for shadow pass")
-                    .write_buffer(prefix_sum_buffer, AccessType::TransferWrite),
-                [&]()
-                {
-                    // We can get away with only zeroing the first counter as other 'sectors' of PrefixSums are unused up to this point
-                    vkCmdFillBuffer(cmd, graph->buffer(prefix_sum_buffer), 0, sizeof(uint64_t), 0);
-                }
-            );
-
-            graph->add_pass(
-                Pass("Generate shadow matrices")
-                    .write_buffer(globals, AccessType::ComputeShaderWrite),
-                [&]()
-                {
-                    struct PushData
-                    {
-                        VkDeviceAddress global_buffer;
-                        float4x4 inverse_view_proj;
-                        float3 sunlight_dir; // normalized
-                        float shadow_near;
-                        float shadow_far;
-                        float lambda;
-                    };
-                    PushData data{};
-                    data.global_buffer = graph->buffer_address(globals, sizeof(GlobalData) * (frame_index));
-                    auto proj = glm::perspective(glm::radians(camera.fov), static_cast<float>(swapchain.extent.width) / static_cast<float>(swapchain.extent.height), shadow_draw_distance, camera.near);
-                    data.inverse_view_proj = glm::inverse(proj * frame_context.view);
-                    data.sunlight_dir = sunlight_dir;
-                    data.shadow_near = camera.near;
-                    data.shadow_far = shadow_draw_distance;
-                    data.lambda = 0.95;
-
-                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, shadow_matrices_pipeline);
-                    vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
-                    vkCmdDispatch(cmd, 1, 1, 1);
-                }
-            );
-
-            graph->add_pass(
-                Pass("Cull shadow instances")
-                    .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
-                    .read_buffer(globals, AccessType::ComputeShaderReadOther)
-                    .write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite),
-                [&]()
-                {
-                    struct PushData
-                    {
-                        VkDeviceAddress global_buffer;
-                        VkDeviceAddress object_buffer;
-                        VkDeviceAddress mesh_buffer;
-                        VkDeviceAddress prefix_sum_buffer;
-                        float3 camera_pos;
-                        uint32_t count;
-                        uint32_t shadowmap_height;
-                        float lod_distance_factor;
-                    };
-
-                    PushData data{};
-                    data.global_buffer = graph->buffer_address(globals, sizeof(GlobalData) * (frame_index));
-                    data.object_buffer = object_buffer.address;
-                    data.mesh_buffer = mesh_buffer.address;
-                    data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
-                    data.camera_pos = camera.position;
-                    data.count = static_cast<uint32_t>(renderables.size());
-                    data.shadowmap_height = SHADOWMAP_EXTENT;
-                    auto p11 = frame_context.proj[1][1];
-                    data.lod_distance_factor = 2.0f / (p11 * swapchain.extent.height);
-
-                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_shadow_pipeline);
-                    vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
-                    vkCmdDispatch(cmd, get_group_count(renderables.size(), 256), 1, 1);
-                }
-            );
-
-            for (uint32_t cascade_index = 0; cascade_index < SUN_CASCADE_COUNT; cascade_index++)
-            {
-                graph->add_pass(
-                    Pass("Compact dispatch for cascade " + std::to_string(cascade_index + 1))
-                        .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
-                        .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite),
-                    [&, cascade_index]()
-                    {
-                        struct PushData
-                        {
-                            VkDeviceAddress prefix_sum_buffer;
-                            VkDeviceAddress dispatch_buffer;
-                            uint32_t prefix_sum_idx;
-                        };
-
-                        PushData data{};
-                        data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
-                        data.dispatch_buffer = graph->buffer_address(dispatch_buffer);
-                        data.prefix_sum_idx = cascade_index;
-
-                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compact_dispatch_pipeline);
-                        vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
-                        vkCmdDispatch(cmd, 1, 1, 1);
-                    }
-                );
-
-                graph->add_pass(
-                    Pass("Cull shadow meshlets")
-                        .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
-                        .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
-                        .read_buffer(globals, AccessType::ComputeShaderReadOther)
-                        .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite)
-                        .write_buffer(meshlet_instance_buffer, AccessType::ComputeShaderWrite),
-                    [&, cascade_index]()
-                    {
-                        struct PushData
-                        {
-                            VkDeviceAddress global_buffer;
-                            VkDeviceAddress object_buffer;
-                            VkDeviceAddress meshlet_buffer;
-                            VkDeviceAddress prefix_sum_buffer;
-                            VkDeviceAddress dispatch_buffer;
-                            VkDeviceAddress meshlet_instance_buffer;
-                            uint32_t count;
-                            uint32_t shadowmap_height;
-                            uint32_t cascade_index;
-                        };
-
-                        PushData data{};
-                        data.global_buffer = graph->buffer_address(globals, sizeof(GlobalData) * (frame_index));
-                        data.object_buffer = object_buffer.address;
-                        data.meshlet_buffer = meshlet_buffer.address;
-                        data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
-                        data.dispatch_buffer = graph->buffer_address(dispatch_buffer);
-                        data.meshlet_instance_buffer = graph->buffer_address(meshlet_instance_buffer);
-                        data.count = static_cast<uint32_t>(renderables.size());
-                        data.shadowmap_height = SHADOWMAP_EXTENT;
-                        data.cascade_index = cascade_index;
-
-                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cull_shadow_meshlet_pipeline);
-                        vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
-                        vkCmdDispatchIndirect(cmd, graph->buffer(dispatch_buffer), 0);
-                    }
-                );
-
-                graph->add_pass(
-                    Pass("Shadowmap " + std::to_string(cascade_index + 1))
-                        .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
-                        .read_buffer(meshlet_instance_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
-                        .read_buffer(globals, AccessType::ComputeShaderReadOther)
-                        .write_image(shadowmaps[cascade_index], AccessType::DepthStencilAttachmentReadWrite),
-                    [&, cascade_index]()
-                    {
-                        VkRenderingAttachmentInfo depth_attachment_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
-                        depth_attachment_info.imageView = graph->image_view(shadowmaps[cascade_index]);
-                        depth_attachment_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-                        depth_attachment_info.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-                        depth_attachment_info.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-
-                        VkRenderingInfo rendering_info{ .sType = VK_STRUCTURE_TYPE_RENDERING_INFO };
-                        rendering_info.renderArea = VkRect2D{ VkOffset2D{ 0, 0 }, VkExtent2D{ SHADOWMAP_EXTENT, SHADOWMAP_EXTENT } };
-                        rendering_info.layerCount = 1;
-                        rendering_info.pDepthAttachment = &depth_attachment_info;
-
-                        vkCmdBeginRendering(cmd, &rendering_info);
-
-                        VkViewport viewport{};
-                        viewport.x = 0;
-                        viewport.y = static_cast<float>(SHADOWMAP_EXTENT);
-                        viewport.width = static_cast<float>(SHADOWMAP_EXTENT);
-                        viewport.height = -static_cast<float>(SHADOWMAP_EXTENT);
-                        viewport.minDepth = 0.0f;
-                        viewport.maxDepth = 1.0f;
-                        vkCmdSetViewport(cmd, 0, 1, &viewport);
-
-                        VkRect2D scissor{};
-                        scissor.offset.x = 0;
-                        scissor.offset.y = 0;
-                        scissor.extent.width = SHADOWMAP_EXTENT;
-                        scissor.extent.height = SHADOWMAP_EXTENT;
-                        vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-                        struct PushData
-                        {
-                            VkDeviceAddress global_buffer;
-                            VkDeviceAddress object_buffer;
-                            VkDeviceAddress vertex_buffer;
-                            VkDeviceAddress meshlet_buffer;
-                            VkDeviceAddress meshlet_indices_buffer;
-                            VkDeviceAddress meshlet_instance_buffer;
-                            VkDeviceAddress material_buffer;
-                            uint32_t cascade_index;
-                        };
-
-                        PushData data{};
-                        data.global_buffer = graph->buffer_address(globals, sizeof(GlobalData) * (frame_index));
-                        data.object_buffer = object_buffer.address;
-                        data.vertex_buffer = vertex_buffer.address;
-                        data.meshlet_buffer = meshlet_buffer.address;
-                        data.meshlet_indices_buffer = meshlet_indices_buffer.address;
-                        data.meshlet_instance_buffer = graph->buffer_address(meshlet_instance_buffer);
-                        data.material_buffer = material_buffer.address;
-                        data.cascade_index = cascade_index;
-
-                        vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
-
-                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, depth_pipeline);
-                        vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch), 1, 0);
-
-                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, depth_masked_pipeline);
-                        vkCmdDrawMeshTasksIndirectEXT(cmd, graph->buffer(dispatch_buffer), sizeof(Dispatch) * 2, 1, 0);
-
-                        vkCmdEndRendering(cmd);
-                    }
-                );
-            }
-        }
 
         auto lighting_pass = Pass("Lighting")
                                  .read_image(vbuffer, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
@@ -1748,6 +1755,7 @@ void Engine::run()
                                  .read_image(depth_image, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                                  .read_buffer(froxel_offset_buffer, AccessType::ComputeShaderReadOther)
                                  .read_buffer(froxel_item_buffer, AccessType::ComputeShaderReadOther)
+                                 .read_buffer(meshlet_instance_buffer, AccessType::ComputeShaderReadOther)
                                  .write_image(draw_image, AccessType::ComputeShaderWrite);
         for (const auto shadowmap : shadowmaps)
         {
@@ -1770,11 +1778,12 @@ void Engine::run()
                     VkDeviceAddress froxel_offset_list;
                     VkDeviceAddress froxel_item_list;
                     VkDeviceAddress sh_buffer;
+                    VkDeviceAddress meshlet_instance_buffer;
+                    glm::vec2 screen_extent;
                     glm::vec3 light_dir;
                     uint32_t shadowmap_id; // Offset accordingly
                     glm::vec3 camera_pos;
                     uint32_t visbuffer_id;
-                    glm::vec2 screen_extent;
                     glm::vec2 pixels_per_cluster;
                     uint32_t debug_id;
                     uint32_t output_id;
@@ -1784,7 +1793,6 @@ void Engine::run()
                     float near;
                     float scale;
                     float bias;
-                    uint32_t debug_probe;
                 };
 
                 PushData data{};
@@ -1801,6 +1809,7 @@ void Engine::run()
                 data.froxel_offset_list = graph->buffer_address(froxel_offset_buffer);
                 data.froxel_item_list = graph->buffer_address(froxel_item_buffer);
                 data.sh_buffer = sh_buffer.address;
+                data.meshlet_instance_buffer = graph->buffer_address(meshlet_instance_buffer);
                 data.light_dir = sunlight_dir;
                 data.shadowmap_id = b_shadows ? graph->image_id(shadowmaps[0]) : -1u;
                 data.camera_pos = camera.position;

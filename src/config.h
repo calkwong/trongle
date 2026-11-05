@@ -12,9 +12,11 @@
 // This should be set to maxMeshWorkGroupCount, whilst also respecting maxMeshWorkGroupTotalCount
 // We are exceeding the limit here and likely operating under UB
 #define MAX_MESHLETS_DRAW (4194304 * 4)
+#define MESHLET_DRAW_MASKED_OFFSET (MAX_MESHLETS_DRAW / 2)
 
 #define LOCAL_LIGHTS 0
-#define STRESS_TEST 1
+#define STRESS_TEST 0
+
 #if STRESS_TEST == 1
 #define MAX_INSTANCES 1000000
 #else
@@ -35,4 +37,7 @@
 #define MAX_POINT_LIGHTS 1000
 #define MAX_LIGHTS_PER_FROXEL 100
 
-#define MESHLET_DRAW_MASKED_OFFSET (MAX_MESHLETS_DRAW / 2)
+#define DISPATCH_EARLY_OPAQUE 1
+#define DISPATCH_EARLY_MASKED 2
+#define DISPATCH_LATE_OPAQUE 3
+#define DISPATCH_LATE_MASKED 4

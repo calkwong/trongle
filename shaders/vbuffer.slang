@@ -10,12 +10,11 @@ struct Interp
     float4 position : SV_Position;
     float2 uv;
     nointerpolation uint material_id;
-    nointerpolation uint meshlet_id;
 };
 
 struct PerPrimitive
 {
-    uint data; // (instance_id << 7) | triangle_id;
+    uint data; // (meshlet_instance_id << 7) | triangle_id;
 };
 
 struct PushConstants
@@ -49,10 +48,14 @@ void mesh_main(
 )
 {
     MeshletInstance meshlet_instance;
+    uint meshlet_instance_id;
+
     if (OPAQUE == 1)
-        meshlet_instance = pc.meshlet_instance_buffer[wg_id.x];
+        meshlet_instance_id = wg_id.x;
     else
-        meshlet_instance = pc.meshlet_instance_buffer[MESHLET_DRAW_MASKED_OFFSET + wg_id.x];
+        meshlet_instance_id = MESHLET_DRAW_MASKED_OFFSET + wg_id.x;
+
+    meshlet_instance = pc.meshlet_instance_buffer[meshlet_instance_id];
 
     uint meshlet_id = meshlet_instance.meshlet_id;
     uint instance_id = meshlet_instance.instance_id;
@@ -92,13 +95,12 @@ void mesh_main(
         verts[i].position = mul(pc.view_proj, world_pos);
         verts[i].uv = float2(v.uv_x, v.uv_y);
         verts[i].material_id = o.material_id;
-        verts[i].meshlet_id = meshlet_id;
     }
 
     for (uint i = t_index; i < triangle_count; i += WG_SIZE_X)
     {
         let triangle_id = i;
-        prims[i].data = (instance_id << 7) | triangle_id;
+        prims[i].data = (meshlet_instance_id << 7) | triangle_id;
 
         // This may not work outside of Slang and SPIRV
         uint8_t* meshlet_triangles = (uint8_t*)pc.meshlet_indices_buffer;
@@ -116,7 +118,7 @@ void mesh_main(
 void ps_main(
     Interp in,
     PerPrimitive prim,
-    out uint2 out_id: SV_Target0,
+    out uint out_id: SV_Target0,
 )
 {
     if (OPAQUE == 0)
@@ -129,5 +131,5 @@ void ps_main(
 			discard;
 	}
 
-    out_id = uint2(prim.data, in.meshlet_id);
+    out_id = prim.data;
 }

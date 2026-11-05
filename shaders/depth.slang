@@ -43,13 +43,17 @@ void mesh_main(
 )
 {
     MeshletInstance meshlet_instance;
-    if (OPAQUE == 1)
-        meshlet_instance = pc.meshlet_instance_buffer[wg_id.x];
-    else
-        meshlet_instance = pc.meshlet_instance_buffer[MESHLET_DRAW_MASKED_OFFSET + wg_id.x];
+    uint meshlet_instance_id;
 
-    uint instance_id = meshlet_instance.instance_id;
+    if (OPAQUE == 1)
+        meshlet_instance_id = wg_id.x;
+    else
+        meshlet_instance_id = MESHLET_DRAW_MASKED_OFFSET + wg_id.x;
+
+    meshlet_instance = pc.meshlet_instance_buffer[meshlet_instance_id];
+
     uint meshlet_id = meshlet_instance.meshlet_id;
+    uint instance_id = meshlet_instance.instance_id;
     Meshlet meshlet = pc.meshlet_buffer[meshlet_id];
 
     uint vertex_count = meshlet.vertex_count;

@@ -2,11 +2,14 @@ import bindings;
 import types;
 import prefix_sum;
 
+#include "../src/config.h"
+
 struct PushConstants
 {
     PrefixSums* prefix_sum_buffer;
     Dispatch* dispatch_buffer;
     uint prefix_sum_idx;
+    uint late;
 };
 
 [[vk::push_constant]]
@@ -25,11 +28,12 @@ void main()
     pc.dispatch_buffer[0].y = 1;
     pc.dispatch_buffer[0].z = 1;
 
-    pc.dispatch_buffer[1].x = 0;
-    pc.dispatch_buffer[1].y = 1;
-    pc.dispatch_buffer[1].z = 1;
+    uint first = pc.late == 0 ? DISPATCH_EARLY_OPAQUE : DISPATCH_LATE_OPAQUE;
 
-    pc.dispatch_buffer[2].x = 0;
-    pc.dispatch_buffer[2].y = 1;
-    pc.dispatch_buffer[2].z = 1;
+    for (uint i = first; i < first + 2; i++)
+    {
+        pc.dispatch_buffer[i].x = 0;
+        pc.dispatch_buffer[i].y = 1;
+        pc.dispatch_buffer[i].z = 1;
+    }
 }
