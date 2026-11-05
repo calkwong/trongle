@@ -452,6 +452,7 @@ void Engine::run()
     VkPipeline binning_pipeline{};
     VkPipeline brdf_lut_pipeline{};
     VkPipeline sh_pipeline{};
+    VkPipeline reset_buffers_pipeline{};
 
     std::vector<VkPipeline> pipelines{};
 
@@ -475,6 +476,7 @@ void Engine::run()
         auto binning_program = load_shader_program("binning.slang", device);
         auto brdf_lut_program = load_shader_program("brdf_lut.slang", device);
         auto sh_program = load_shader_program("sh.slang", device);
+        auto reset_buffers_program = load_shader_program("reset_buffers.slang", device);
 
         pipelines.clear();
 
@@ -560,6 +562,7 @@ void Engine::run()
         replace_pipeline(binning_pipeline, create_compute_pipeline(device, &binning_program, nullptr, &pipeline_layout));
         replace_pipeline(brdf_lut_pipeline, create_compute_pipeline(device, &brdf_lut_program, nullptr, &pipeline_layout));
         replace_pipeline(sh_pipeline, create_compute_pipeline(device, &sh_program, nullptr, &pipeline_layout));
+        replace_pipeline(reset_buffers_pipeline, create_compute_pipeline(device, &reset_buffers_program, nullptr, &pipeline_layout));
     };
 
     build_pipelines();
@@ -967,12 +970,25 @@ void Engine::run()
         if (b_shadows)
         {
             graph->add_pass(
-                Pass("Zero buffers for shadow pass")
+                Pass("Reset buffers for shadow pass")
                     .write_buffer(prefix_sum_buffer, AccessType::TransferWrite),
                 [&]()
                 {
-                    // We can get away with only zeroing the first counter as other 'sectors' of PrefixSums are unused up to this point
-                    vkCmdFillBuffer(cmd, graph->buffer(prefix_sum_buffer), 0, sizeof(uint64_t), 0);
+                    struct PushData
+                    {
+                        VkDeviceAddress prefix_sum_buffer;
+                        VkDeviceAddress light_count_buffer;
+                        uint32_t zero_lights;
+                    };
+
+                    PushData data{};
+                    data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
+                    data.light_count_buffer = graph->buffer_address(light_count_buffer);
+                    data.zero_lights = 0;
+
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, reset_buffers_pipeline);
+                    vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                    vkCmdDispatch(cmd, 1, 1, 1);
                 }
             );
 
@@ -1182,14 +1198,26 @@ void Engine::run()
         }
 
         graph->add_pass(
-            Pass("Zero buffers early")
+            Pass("Reset buffers early")
                 .write_buffer(prefix_sum_buffer, AccessType::TransferWrite)
                 .write_buffer(light_count_buffer, AccessType::TransferWrite),
             [&]()
             {
-                // TODO: likely more efficient on compute - we only need to zero 4 values (1 in each PrefixSums sector)
-                vkCmdFillBuffer(cmd, graph->buffer(prefix_sum_buffer), 0, VK_WHOLE_SIZE, 0);
-                vkCmdFillBuffer(cmd, graph->buffer(light_count_buffer), 0, VK_WHOLE_SIZE, 0);
+                struct PushData
+                {
+                    VkDeviceAddress prefix_sum_buffer;
+                    VkDeviceAddress light_count_buffer;
+                    uint32_t zero_lights;
+                };
+
+                PushData data{};
+                data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
+                data.light_count_buffer = graph->buffer_address(light_count_buffer);
+                data.zero_lights = 1;
+
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, reset_buffers_pipeline);
+                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                vkCmdDispatch(cmd, 1, 1, 1);
             }
         );
 
