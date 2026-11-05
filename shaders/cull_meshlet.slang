@@ -119,7 +119,8 @@ void main(uint3 global_id: SV_DispatchThreadID)
         meshlet_instance.instance_id = instance_id;
 
         // TODO: Separate compaction pass to account for maxMeshWorkGroupCount limits.
-        // We are only hitting this limit in our stress test scene, causing disocclusion bugs.
+        // We are raising the limit beyond what the device currently reports, which renders fine but is likely UB.
+        // If we respect the limit but the dispatch exceeds this limit, we either crash on frame 0 on overflow or run into disocclusion/flickering issues.
         if (masked)
         {
             InterlockedAdd(pc.dispatch_buffer[2].x, 1, masked_count);

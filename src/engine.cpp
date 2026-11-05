@@ -197,7 +197,10 @@ void Engine::run()
     assert(properties2.properties.limits.timestampComputeAndGraphics);
     auto max_push_constant_size = properties2.properties.limits.maxPushConstantsSize;
     auto timestamp_period = properties2.properties.limits.timestampPeriod;
-    assert(mesh_shader_properties.maxMeshWorkGroupCount[0] == MAX_MESHLETS_DRAW); // Only checking workgroup x
+    // fmt::println("maxMeshWorkGroupSize {} {} {}", mesh_shader_properties.maxMeshWorkGroupSize[0], mesh_shader_properties.maxMeshWorkGroupSize[1], mesh_shader_properties.maxMeshWorkGroupSize[2]);
+    // fmt::println("maxMeshWorkGroupInvocations {}",  mesh_shader_properties.maxMeshWorkGroupInvocations);
+    // fmt::println("maxMeshWorkGroupCount {} {} {}", mesh_shader_properties.maxMeshWorkGroupCount[0], mesh_shader_properties.maxMeshWorkGroupCount[1], mesh_shader_properties.maxMeshWorkGroupCount[2]);
+    // fmt::println("maxMeshWorkGroupTotalCount {}", mesh_shader_properties.maxMeshWorkGroupTotalCount);
 
     // Init camera
     Camera camera{};
@@ -233,7 +236,7 @@ void Engine::run()
 
     std::mt19937 mt(42);
     auto draw_radius = 400.0f;
-    auto draw_count = 100'000;
+    auto draw_count = 500'000;
 
     std::vector<glm::mat4> transforms(draw_count);
     for (size_t i = 0; i < draw_count; i++)

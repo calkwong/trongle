@@ -9,8 +9,9 @@
 #define MAX_DESCRIPTORS_IMAGE_COUNT 2000
 #define MAX_DESCRIPTORS_SAMPLER_COUNT 10
 
-// Check limit: VkPhysicalDeviceMeshShaderPropertiesEXT -> maxMeshWorkGroupCount
-#define MAX_MESHLETS_DRAW 4194304
+// This should be set to maxMeshWorkGroupCount, whilst also respecting maxMeshWorkGroupTotalCount
+// We are exceeding the limit here and likely operating under UB
+#define MAX_MESHLETS_DRAW (4194304 * 4)
 
 #define LOCAL_LIGHTS 0
 #define STRESS_TEST 1
