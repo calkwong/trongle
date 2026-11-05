@@ -172,3 +172,9 @@ PUBLIC_ACCESS struct PointLight
     float radius;
     float4 color;
 };
+
+PUBLIC_ACCESS struct MeshletInstance
+{
+    uint32_t meshlet_id;
+    uint32_t instance_id;
+};

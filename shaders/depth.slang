@@ -18,9 +18,8 @@ struct PushConstants
     ObjectData* object_buffer;
     Vertex* vertex_buffer;
     Meshlet* meshlet_buffer;
-    PrefixSums* prefix_sum_buffer;
     uint* meshlet_indices_buffer;
-    uint* meshlet_draw_buffer;
+    MeshletInstance* meshlet_instance_buffer;
     MaterialData* material_buffer;
     uint cascade_index;
 };
@@ -43,22 +42,15 @@ void mesh_main(
     out indices uint3 tris[MAX_MESH_TRIS],
 )
 {
-    uint index;
+    MeshletInstance meshlet_instance;
     if (OPAQUE == 1)
-        index = pc.meshlet_draw_buffer[wg_id.x];
+        meshlet_instance = pc.meshlet_instance_buffer[wg_id.x];
     else
-        index = pc.meshlet_draw_buffer[MESHLET_DRAW_MASKED_OFFSET + wg_id.x];
+        meshlet_instance = pc.meshlet_instance_buffer[MESHLET_DRAW_MASKED_OFFSET + wg_id.x];
 
-    uint prefix_sum_idx = prefix_sum_binary_search(pc.prefix_sum_buffer, pc.cascade_index, index);
-    PrefixSumData prefix_sum_data = pc.prefix_sum_buffer.prefix_sums[pc.cascade_index].data[prefix_sum_idx];
-    uint meshlet_offset = prefix_sum_data.meshlet_offset;
-    uint meshlet_count = prefix_sum_data.meshlet_count;
-    uint instance_id = prefix_sum_data.instance_id;
-    uint sum = prefix_sum_data.sum;
-
-    uint local_meshlet_id = index - (sum - meshlet_count);
-    uint global_meshlet_id = local_meshlet_id + meshlet_offset;
-    Meshlet meshlet = pc.meshlet_buffer[global_meshlet_id];
+    uint instance_id = meshlet_instance.instance_id;
+    uint meshlet_id = meshlet_instance.meshlet_id;
+    Meshlet meshlet = pc.meshlet_buffer[meshlet_id];
 
     uint vertex_count = meshlet.vertex_count;
     uint triangle_count = meshlet.triangle_count;

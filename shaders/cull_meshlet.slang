@@ -13,7 +13,7 @@ struct PushConstants
     Meshlet* meshlet_buffer;
     ObjectData* object_buffer;
     PrefixSums* prefix_sum_buffer;
-    uint* meshlet_draw_buffer;
+    MeshletInstance* meshlet_instance_buffer;
     Dispatch* dispatch_buffer;
     uint* late_pass_candidates_buffer;
     float4 planes;
@@ -114,16 +114,21 @@ void main(uint3 global_id: SV_DispatchThreadID)
         uint count;
         uint masked_count;
 
-        // TODO: separate compaction pass to account for maxMeshWorkGroupCount limits. We are hitting this limit in our stress test scene, causing disocclusion bugs.
+        MeshletInstance meshlet_instance;
+        meshlet_instance.meshlet_id = global_meshlet_id;
+        meshlet_instance.instance_id = instance_id;
+
+        // TODO: Separate compaction pass to account for maxMeshWorkGroupCount limits.
+        // We are only hitting this limit in our stress test scene, causing disocclusion bugs.
         if (masked)
         {
             InterlockedAdd(pc.dispatch_buffer[2].x, 1, masked_count);
-            pc.meshlet_draw_buffer[MESHLET_DRAW_MASKED_OFFSET + masked_count] = index;
+            pc.meshlet_instance_buffer[MESHLET_DRAW_MASKED_OFFSET + masked_count] = meshlet_instance;
         }
         else
         {
             InterlockedAdd(pc.dispatch_buffer[1].x, 1, count);
-            pc.meshlet_draw_buffer[count] = index;
+            pc.meshlet_instance_buffer[count] = meshlet_instance;
         }
 
         if (!late)

@@ -12,7 +12,7 @@ struct PushConstants
     Meshlet* meshlet_buffer;
     PrefixSums* prefix_sum_buffer;
     Dispatch* dispatch_buffer;
-    uint* meshlet_draw_buffer;
+    MeshletInstance* meshlet_instance_buffer;
     uint count;
     uint shadowmap_height;
     uint cascade_index;
@@ -76,14 +76,19 @@ void main(
     bool masked = o.masked == 1;
     uint count;
     uint masked_count;
+
+    MeshletInstance meshlet_instance;
+    meshlet_instance.meshlet_id = global_meshlet_id;
+    meshlet_instance.instance_id = instance_id;
+
     if (masked)
     {
         InterlockedAdd(pc.dispatch_buffer[2].x, 1, masked_count);
-        pc.meshlet_draw_buffer[MESHLET_DRAW_MASKED_OFFSET + masked_count] = index;
+        pc.meshlet_instance_buffer[MESHLET_DRAW_MASKED_OFFSET + masked_count] = meshlet_instance;
     }
     else
     {
         InterlockedAdd(pc.dispatch_buffer[1].x, 1, count);
-        pc.meshlet_draw_buffer[count] = index;
+        pc.meshlet_instance_buffer[count] = meshlet_instance;
     }
 }

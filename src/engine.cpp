@@ -54,6 +54,12 @@
 #include <random>
 #endif
 
+#if STRESS_TEST == 1
+bool b_shadows = false;
+#else
+bool b_shadows = true;
+#endif
+
 // const char* ASSET_NAME = "Sponza/Sponza.gltf";
 const char* ASSET_NAME = "chinesedragon.gltf";
 // const char* ASSET_NAME = "sphere.gltf";
@@ -227,7 +233,7 @@ void Engine::run()
 
     std::mt19937 mt(42);
     auto draw_radius = 400.0f;
-    auto draw_count = 500'000;
+    auto draw_count = 100'000;
 
     std::vector<glm::mat4> transforms(draw_count);
     for (size_t i = 0; i < draw_count; i++)
@@ -647,11 +653,6 @@ void Engine::run()
                          }
                      });
 
-#if STRESS_TEST == 1
-    bool b_shadows = false;
-#else
-    bool b_shadows = true;
-#endif
     float shadow_draw_distance = SHADOW_DRAW_DISTANCE;
     bool skip_occlusion = true;
     float azimuth = 0.0f;
@@ -926,7 +927,7 @@ void Engine::run()
 
         auto dispatch_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(Dispatch) * 3, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
         auto prefix_sum_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(PrefixSums), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
-        auto meshlet_draw_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(uint32_t) * MAX_MESHLETS_DRAW, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
+        auto meshlet_instance_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(MeshletInstance) * MAX_MESHLETS_DRAW, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
         auto froxel_offset_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(FroxelOffset) * TOTAL_FROXELS, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
         auto froxel_item_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(uint32_t) * MAX_LIGHTS_PER_FROXEL * TOTAL_FROXELS, .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT });
         auto light_count_buffer = graph->create_task_buffer(BufferResourceDesc{ .alloc_size = sizeof(uint32_t), .usage = VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT });
@@ -1011,7 +1012,7 @@ void Engine::run()
                 .read_image(depth_pyramid, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                 .write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite)
                 .write_buffer(late_pass_candidates, AccessType::ComputeShaderWrite),
-            [&]()
+            [&, skip_occlusion]()
             {
                 struct PushData
                 {
@@ -1100,9 +1101,9 @@ void Engine::run()
                 .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
                 .read_image(depth_pyramid, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                 .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite)
-                .write_buffer(meshlet_draw_buffer, AccessType::ComputeShaderWrite)
+                .write_buffer(meshlet_instance_buffer, AccessType::ComputeShaderWrite)
                 .write_buffer(late_pass_candidates, AccessType::ComputeShaderWrite),
-            [&]()
+            [&, skip_occlusion]()
             {
                 struct PushData
                 {
@@ -1111,7 +1112,7 @@ void Engine::run()
                     VkDeviceAddress meshlet_buffer;
                     VkDeviceAddress object_buffer;
                     VkDeviceAddress prefix_sum_buffer;
-                    VkDeviceAddress meshlet_draw_buffer;
+                    VkDeviceAddress meshlet_instance_buffer;
                     VkDeviceAddress dispatch_buffer;
                     VkDeviceAddress late_pass_candidates_buffer;
                     glm::vec4 planes;
@@ -1140,7 +1141,7 @@ void Engine::run()
                 data.meshlet_buffer = meshlet_buffer.address;
                 data.object_buffer = object_buffer.address;
                 data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
-                data.meshlet_draw_buffer = graph->buffer_address(meshlet_draw_buffer);
+                data.meshlet_instance_buffer = graph->buffer_address(meshlet_instance_buffer);
                 data.dispatch_buffer = graph->buffer_address(dispatch_buffer);
                 data.late_pass_candidates_buffer = late_pass_candidates_buffer.address + meshlet_offset * sizeof(uint32_t);
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
@@ -1164,8 +1165,7 @@ void Engine::run()
         graph->add_pass(
             Pass("Vbuffer early")
                 .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
-                .read_buffer(prefix_sum_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
-                .read_buffer(meshlet_draw_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
+                .read_buffer(meshlet_instance_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
                 .write_image(vbuffer, AccessType::ColorAttachmentWrite)
                 .write_image(depth_image, AccessType::DepthStencilAttachmentWrite),
             [&]()
@@ -1222,8 +1222,7 @@ void Engine::run()
                     VkDeviceAddress material_buffer;
                     VkDeviceAddress meshlet_buffer;
                     VkDeviceAddress meshlet_indices_buffer;
-                    VkDeviceAddress prefix_sum_buffer;
-                    VkDeviceAddress meshlet_draw_buffer;
+                    VkDeviceAddress meshlet_instance_buffer;
                 };
 
                 PushData data{};
@@ -1233,8 +1232,7 @@ void Engine::run()
                 data.material_buffer = material_buffer.address;
                 data.meshlet_buffer = meshlet_buffer.address;
                 data.meshlet_indices_buffer = meshlet_indices_buffer.address;
-                data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
-                data.meshlet_draw_buffer = graph->buffer_address(meshlet_draw_buffer);
+                data.meshlet_instance_buffer = graph->buffer_address(meshlet_instance_buffer);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_pipeline);
@@ -1295,7 +1293,7 @@ void Engine::run()
                 .read_buffer(late_pass_candidates, AccessType::ComputeShaderReadOther)
                 .write_buffer(prefix_sum_buffer, AccessType::ComputeShaderWrite)
                 .write_buffer(late_pass_candidates, AccessType::ComputeShaderWrite),
-            [&]()
+            [&, skip_occlusion]()
             {
                 struct PushData
                 {
@@ -1385,9 +1383,9 @@ void Engine::run()
                 .read_buffer(late_pass_candidates, AccessType::ComputeShaderReadOther)
                 .read_image(depth_pyramid, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                 .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite)
-                .write_buffer(meshlet_draw_buffer, AccessType::ComputeShaderWrite)
+                .write_buffer(meshlet_instance_buffer, AccessType::ComputeShaderWrite)
                 .write_buffer(late_pass_candidates, AccessType::ComputeShaderWrite),
-            [&]()
+            [&, skip_occlusion]()
             {
                 struct PushData
                 {
@@ -1396,7 +1394,7 @@ void Engine::run()
                     VkDeviceAddress meshlet_buffer;
                     VkDeviceAddress object_buffer;
                     VkDeviceAddress prefix_sum_buffer;
-                    VkDeviceAddress meshlet_draw_buffer;
+                    VkDeviceAddress meshlet_instance_buffer;
                     VkDeviceAddress dispatch_buffer;
                     VkDeviceAddress late_pass_candidates_buffer;
                     glm::vec4 planes;
@@ -1425,7 +1423,7 @@ void Engine::run()
                 data.meshlet_buffer = meshlet_buffer.address;
                 data.object_buffer = object_buffer.address;
                 data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
-                data.meshlet_draw_buffer = graph->buffer_address(meshlet_draw_buffer);
+                data.meshlet_instance_buffer = graph->buffer_address(meshlet_instance_buffer);
                 data.dispatch_buffer = graph->buffer_address(dispatch_buffer);
                 data.late_pass_candidates_buffer = late_pass_candidates_buffer.address + meshlet_offset * sizeof(uint32_t);
                 data.planes = glm::vec4(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
@@ -1449,8 +1447,7 @@ void Engine::run()
         graph->add_pass(
             Pass("Vbuffer late")
                 .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
-                .read_buffer(prefix_sum_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
-                .read_buffer(meshlet_draw_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
+                .read_buffer(meshlet_instance_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
                 .read_image(vbuffer, AccessType::ColorAttachmentRead)
                 .read_image(depth_image, AccessType::DepthStencilAttachmentRead)
                 .write_image(vbuffer, AccessType::ColorAttachmentWrite)
@@ -1504,8 +1501,7 @@ void Engine::run()
                     VkDeviceAddress material_buffer;
                     VkDeviceAddress meshlet_buffer;
                     VkDeviceAddress meshlet_indices_buffer;
-                    VkDeviceAddress prefix_sum_buffer;
-                    VkDeviceAddress meshlet_draw_buffer;
+                    VkDeviceAddress meshlet_instance_buffer;
                 };
 
                 PushData data{};
@@ -1515,8 +1511,7 @@ void Engine::run()
                 data.material_buffer = material_buffer.address;
                 data.meshlet_buffer = meshlet_buffer.address;
                 data.meshlet_indices_buffer = meshlet_indices_buffer.address;
-                data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
-                data.meshlet_draw_buffer = graph->buffer_address(meshlet_draw_buffer);
+                data.meshlet_instance_buffer = graph->buffer_address(meshlet_instance_buffer);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(data), &data);
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vbuffer_pipeline);
@@ -1638,7 +1633,7 @@ void Engine::run()
                         .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
                         .read_buffer(globals, AccessType::ComputeShaderReadOther)
                         .write_buffer(dispatch_buffer, AccessType::ComputeShaderWrite)
-                        .write_buffer(meshlet_draw_buffer, AccessType::ComputeShaderWrite),
+                        .write_buffer(meshlet_instance_buffer, AccessType::ComputeShaderWrite),
                     [&, cascade_index]()
                     {
                         struct PushData
@@ -1648,7 +1643,7 @@ void Engine::run()
                             VkDeviceAddress meshlet_buffer;
                             VkDeviceAddress prefix_sum_buffer;
                             VkDeviceAddress dispatch_buffer;
-                            VkDeviceAddress meshlet_draw_buffer;
+                            VkDeviceAddress meshlet_instance_buffer;
                             uint32_t count;
                             uint32_t shadowmap_height;
                             uint32_t cascade_index;
@@ -1660,7 +1655,7 @@ void Engine::run()
                         data.meshlet_buffer = meshlet_buffer.address;
                         data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
                         data.dispatch_buffer = graph->buffer_address(dispatch_buffer);
-                        data.meshlet_draw_buffer = graph->buffer_address(meshlet_draw_buffer);
+                        data.meshlet_instance_buffer = graph->buffer_address(meshlet_instance_buffer);
                         data.count = static_cast<uint32_t>(renderables.size());
                         data.shadowmap_height = SHADOWMAP_EXTENT;
                         data.cascade_index = cascade_index;
@@ -1674,10 +1669,8 @@ void Engine::run()
                 graph->add_pass(
                     Pass("Shadowmap " + std::to_string(cascade_index + 1))
                         .read_buffer(dispatch_buffer, AccessType::IndirectBuffer)
-                        .read_buffer(prefix_sum_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
-                        .read_buffer(meshlet_draw_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
+                        .read_buffer(meshlet_instance_buffer, AccessType::MeshShaderReadSampledImageOrUniformTexelBuffer)
                         .read_buffer(globals, AccessType::ComputeShaderReadOther)
-                        .read_buffer(prefix_sum_buffer, AccessType::ComputeShaderReadOther)
                         .write_image(shadowmaps[cascade_index], AccessType::DepthStencilAttachmentReadWrite),
                     [&, cascade_index]()
                     {
@@ -1716,9 +1709,8 @@ void Engine::run()
                             VkDeviceAddress object_buffer;
                             VkDeviceAddress vertex_buffer;
                             VkDeviceAddress meshlet_buffer;
-                            VkDeviceAddress prefix_sum_buffer;
                             VkDeviceAddress meshlet_indices_buffer;
-                            VkDeviceAddress meshlet_draw_buffer;
+                            VkDeviceAddress meshlet_instance_buffer;
                             VkDeviceAddress material_buffer;
                             uint32_t cascade_index;
                         };
@@ -1728,9 +1720,8 @@ void Engine::run()
                         data.object_buffer = object_buffer.address;
                         data.vertex_buffer = vertex_buffer.address;
                         data.meshlet_buffer = meshlet_buffer.address;
-                        data.prefix_sum_buffer = graph->buffer_address(prefix_sum_buffer);
                         data.meshlet_indices_buffer = meshlet_indices_buffer.address;
-                        data.meshlet_draw_buffer = graph->buffer_address(meshlet_draw_buffer);
+                        data.meshlet_instance_buffer = graph->buffer_address(meshlet_instance_buffer);
                         data.material_buffer = material_buffer.address;
                         data.cascade_index = cascade_index;
 
