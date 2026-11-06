@@ -17,6 +17,11 @@ struct PerPrimitive
     uint data; // (meshlet_instance_id << 7) | triangle_id;
 };
 
+struct PerPrimitiveCull
+{
+    bool cull_primitive : SV_CullPrimitive;
+};
+
 struct PushConstants
 {
     float4x4 view_proj;
@@ -36,6 +41,8 @@ const int OPAQUE = 1;
 
 #define WG_SIZE_X 64
 
+groupshared float3 vertex_clip[MAX_MESH_VERTS];
+
 [shader("mesh")]
 [numthreads(WG_SIZE_X, 1, 1)]
 [outputtopology("triangle")]
@@ -45,6 +52,7 @@ void mesh_main(
     out vertices Interp verts[MAX_MESH_VERTS],
     out indices uint3 tris[MAX_MESH_TRIS],
     out primitives PerPrimitive prims[MAX_MESH_TRIS],
+    out primitives PerPrimitiveCull cull_prims[MAX_MESH_TRIS],
 )
 {
     MeshletInstance meshlet_instance;
@@ -92,10 +100,20 @@ void mesh_main(
         float4 tangent;
         unpack_tbn(v.normal, uint(v.tangent), normal, tangent);
 
-        verts[i].position = mul(pc.view_proj, world_pos);
+        float4 clip_pos = mul(pc.view_proj, world_pos);
+
+        if (OPAQUE == 1)
+        {
+            // storing clip space W in Z
+            vertex_clip[i] = float3(clip_pos.xy / clip_pos.w * 0.5 + 0.5, clip_pos.w);
+        }
+
+        verts[i].position = clip_pos;
         verts[i].uv = float2(v.uv_x, v.uv_y);
         verts[i].material_id = o.material_id;
     }
+
+    GroupMemoryBarrierWithGroupSync();
 
     for (uint i = t_index; i < triangle_count; i += WG_SIZE_X)
     {
@@ -111,6 +129,23 @@ void mesh_main(
         uint idx2 = meshlet_triangles[triangles_offset + 2];
 
         tris[i] = uint3(idx0, idx1, idx2);
+
+        if (OPAQUE == 1)
+        {
+            float2 va = vertex_clip[idx0].xy;
+            float2 vb = vertex_clip[idx1].xy;
+            float2 vc = vertex_clip[idx2].xy;
+
+            float2 eb = vb - va;
+            float2 ec = vc - va;
+
+            // triangle backface + zero area culling
+            bool culled = eb.x * ec.y <= eb.y * ec.x;
+            // triangle culling only works if all triangles are in front of camera
+            culled = culled && (vertex_clip[idx0].z > 0 && vertex_clip[idx1].z > 0 && vertex_clip[idx2].z > 0);
+
+            cull_prims[i].cull_primitive = culled;
+        }
     }
 }
 
@@ -122,14 +157,14 @@ void ps_main(
 )
 {
     if (OPAQUE == 0)
-	{
-		MaterialData m = pc.material_buffer[in.material_id];
-		SamplerState samp = get_sampler<SamplerState>(LINEAR_SAMPLER);
-		float4 albedo = get_sampled_image<Texture2D>(m.diffuse_id).Sample(samp, in.uv);
+    {
+        MaterialData m = pc.material_buffer[in.material_id];
+        SamplerState samp = get_sampler<SamplerState>(LINEAR_SAMPLER);
+        float4 albedo = get_sampled_image<Texture2D>(m.diffuse_id).Sample(samp, in.uv);
 
-		if (albedo.a < 0.5)
-			discard;
-	}
+        if (albedo.a < 0.5)
+            discard;
+    }
 
     out_id = prim.data;
 }

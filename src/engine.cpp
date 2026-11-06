@@ -600,7 +600,7 @@ void Engine::run()
         depth_images.push_back(image.image);
     }
 
-    // TODO: Convert this to an one off rendergraph
+    // TODO: If converting to rendergraph, need to see if Profiler implementation will cause errors as we don't care for profiling here
     immediate_submit(device, graphics_queue, imm_fence, imm_pool, imm_buf, [&](VkCommandBuffer cmd)
                      {
                          std::array<VkDescriptorSet, 3> sets{ buffer_set, image_set, sampler_set };
