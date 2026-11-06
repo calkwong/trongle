@@ -78,7 +78,6 @@ void main(uint3 global_id: SV_DispatchThreadID)
         return;
 
     float4 aabb;
-    // TODO: do we need this conditional check?
     if (pc.skip_occlusion == 0 && project_sphere(float3(occlusion_center.x, occlusion_center.y, -occlusion_center.z), radius, pc.near, pc.p00, pc.p11, aabb))
     {
         // This can be optimized as a push constant, leaving as is for clarity

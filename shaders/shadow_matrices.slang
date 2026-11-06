@@ -86,8 +86,7 @@ void main(
 
     float current_split = split_ratio;
 
-    // TODO: I don't know if this mapping is safe or implementation defined
-    uint lane = thread_id;
+    uint lane = WaveGetLaneIndex();
     float prev = WaveShuffle(current_split, lane == 0 ? 0 : lane - 1);
     float last_split = lane == 0 ? 0.0 : prev;
 

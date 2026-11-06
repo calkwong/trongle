@@ -829,8 +829,6 @@ void Engine::run()
                              });
         }
 
-        // TODO: freezing matrices currently broken
-        // Update camera
         camera.update(delta_time);
         if (!freeze_matrices)
         {
