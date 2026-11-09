@@ -28,6 +28,7 @@ struct ImageResourceDesc
     VkFormat format;
     VkImageUsageFlags usage;
     VkImageAspectFlags aspect;
+    VkImageType type = VK_IMAGE_TYPE_2D;
 
     bool operator==(const ImageResourceDesc& desc) const;
 };

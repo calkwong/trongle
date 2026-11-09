@@ -196,7 +196,21 @@ void Rendergraph::resolve_images()
 {
     auto create_new_image_resource = [&](const ImageResourceDesc& desc, ResourceList<TrackedImage>& res_list)
     {
-        auto image = create_image(device, allocator, desc.extent, desc.format, desc.usage, desc.aspect);
+        Image image{};
+        switch (desc.type)
+        {
+            case VkImageType::VK_IMAGE_TYPE_2D:
+                image = create_image(device, allocator, desc.extent, desc.format, desc.usage, desc.aspect);
+                break;
+            case VkImageType::VK_IMAGE_TYPE_3D:
+                image = create_3d_image(device, allocator, desc.extent, desc.format, desc.usage, desc.aspect);
+                break;
+            default:
+                assert(0 && "VkImageType not handled");
+                break;
+        }
+
+        // auto image = create_image(device, allocator, desc.extent, desc.format, desc.usage, desc.aspect);
         auto index = static_cast<uint32_t>(res_list.resources.size());
         auto& tracked_res = res_list.resources.emplace_back(
             TrackedImage{
