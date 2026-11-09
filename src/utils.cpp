@@ -62,3 +62,19 @@ uint32_t next_pow2(uint32_t extent)
 {
     return nearest_pow2(extent) << 1;
 }
+
+float Halton(uint32_t i, uint32_t b)
+{
+    float f = 1.0f;
+    float r = 0.0f;
+
+    while (i > 0)
+    {
+        f /= static_cast<float>(b);
+        r = r + f * static_cast<float>(i % b);
+        auto ratio = static_cast<float>(i) / static_cast<float>(b);
+        i = static_cast<uint32_t>(glm::floor(ratio));
+    }
+
+    return r;
+}

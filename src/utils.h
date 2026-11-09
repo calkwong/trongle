@@ -10,3 +10,4 @@ void decompose_transform(const glm::mat4& m, glm::vec3& t, glm::vec3& s, glm::ve
 uint32_t get_group_count(uint32_t size, uint32_t threads);
 uint32_t nearest_pow2(uint32_t extent);
 uint32_t next_pow2(uint32_t extent);
+float Halton(uint32_t i, uint32_t b);
