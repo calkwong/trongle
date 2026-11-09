@@ -16,6 +16,10 @@
 
 #define LOCAL_LIGHTS 0
 #define STRESS_TEST 0
+#define VOLUMETRIC_FOG 1
+#define FOG_WIDTH 128
+#define FOG_HEIGHT 128
+#define FOG_DEPTH 128
 
 #if STRESS_TEST == 1
 #define MAX_INSTANCES 1000000

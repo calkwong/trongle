@@ -5,6 +5,7 @@ import barycentrics;
 import pbr;
 import shadow_mapping;
 import sh_util;
+import volumetrics;
 
 #include "../src/config.h"
 
@@ -30,12 +31,14 @@ struct PushConstants
     float2 pixels_per_cluster;
     uint debug_id;
     uint output_id;
-    uint envmap_id;
     uint depth_id;
-    uint brdf_lut_id;
     float near;
     float scale;
     float bias;
+    float fog_far;
+    float fog_scale;
+    float fog_bias;
+    uint fog_id;
 }
 
 [[vk::push_constant]]
@@ -59,8 +62,6 @@ enum Debug : uint
     Irradiance
 };
 
-#define GI 0
-
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void main(uint3 global_id: SV_DispatchThreadID)
@@ -73,7 +74,8 @@ void main(uint3 global_id: SV_DispatchThreadID)
     Texture2D<uint> vbuffer = get_sampled_image<Texture2D<uint>>(pc.visbuffer_id);
     uint packed = vbuffer.Load(int3(tex_coord, 0)).r;
 
-    float2 in_uv = (float2(tex_coord) + float2(0.5)) / pc.screen_extent;
+    float2 frag_coord = tex_coord + float2(0.5);
+    float2 in_uv = frag_coord / pc.screen_extent;
     float4 out_color;
     SamplerState cube_samp = get_sampler<SamplerState>(CUBE_SAMPLER);
 
@@ -83,8 +85,8 @@ void main(uint3 global_id: SV_DispatchThreadID)
         float2 ndc = in_uv * 2.0 - 1.0;
         ndc.y *= -1.0;
         float3 dir = mul(pc.global_buffer.inverse_view_proj, float4(ndc, 0.0, 1.0)).xyz;
-        out_color = float4(get_nonuniform_sampled_image<TextureCube>(pc.envmap_id).SampleLevel(cube_samp, dir, 0.0).rgb, 1.0);
-        out_color.xyz = tonemap(out_color.xyz);
+        // TODO: skybox
+        out_color = float4(0,0,0,1);
 
         if (pc.debug_id == Debug::Shadow)
         {
@@ -243,7 +245,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
         out_color.xyz *= shadow_factor;
     }
 
-#if GI == 1
+#if 0
     TextureCube envmap = get_nonuniform_sampled_image<TextureCube>(pc.envmap_id);
     int envmap_width;
     int envmap_height;
@@ -271,9 +273,9 @@ void main(uint3 global_id: SV_DispatchThreadID)
     }
     out_color.xyz += ambient;
 
-#if LOCAL_LIGHTS == 1
-    let frag_coord = tex_coord + float2(0.5);
     float depth = get_sampled_image<Texture2D>(pc.depth_id).Load(int3(tex_coord, 0)).r;
+
+#if LOCAL_LIGHTS == 1
     float view_z = linearize_depth(pc.near, depth);
     uint slice = uint(linear_depth_to_uv(view_z, pc.scale, pc.bias));
     uint cluster_index = get_cluster_index(float2(frag_coord.x, pc.screen_extent.y - frag_coord.y), pc.pixels_per_cluster.xy, slice);
@@ -296,6 +298,10 @@ void main(uint3 global_id: SV_DispatchThreadID)
         float attenuation = get_square_falloff_attenuation(distance, light_radius);
         out_color.xyz += eval_brdf(brdf_data, albedo.xyz, roughness, metallic) * light_color * attenuation * brdf_data.NoL;
     }
+#endif
+
+#if VOLUMETRIC_FOG == 1
+    out_color.xyz = apply_volumetric_fog(in_uv, pc.near, pc.fog_far, pc.fog_scale, pc.fog_bias, depth, out_color.xyz, pc.fog_id);
 #endif
 
     // TODO: gradient noise from http://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare

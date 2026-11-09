@@ -60,6 +60,17 @@ bool b_shadows = false;
 bool b_shadows = true;
 #endif
 
+// Fog settings
+float scattering_factor = 0.1;
+float noise_pos_mult = 0.0;
+float noise_speed_mult = 0.0;
+float density_modifier = 0.2;
+float height_fog_density = 0.0;
+float height_fog_falloff = 0.5;
+float box_fog_density = 3.0;
+float noise_scale = 0.5;
+float temporal_reprojection_jitter_scale = 1.6;
+
 const char* ASSET_NAME = "Sponza/Sponza.gltf";
 // const char* ASSET_NAME = "chinesedragon.gltf";
 // const char* ASSET_NAME = "sphere.gltf";
@@ -453,6 +464,10 @@ void Engine::run()
     VkPipeline brdf_lut_pipeline{};
     VkPipeline sh_pipeline{};
     VkPipeline reset_buffers_pipeline{};
+    VkPipeline data_injection_pipeline{};
+    VkPipeline light_scattering_pipeline{};
+    VkPipeline light_integration_pipeline{};
+    VkPipeline volumetric_noise_pipeline{};
 
     std::vector<VkPipeline> pipelines{};
 
@@ -477,6 +492,10 @@ void Engine::run()
         auto brdf_lut_program = load_shader_program("brdf_lut.slang", device);
         auto sh_program = load_shader_program("sh.slang", device);
         auto reset_buffers_program = load_shader_program("reset_buffers.slang", device);
+        auto data_injection_program = load_shader_program("data_injection.slang", device);
+        auto light_scattering_program = load_shader_program("light_scattering.slang", device);
+        auto light_integration_program = load_shader_program("light_integration.slang", device);
+        auto volumetric_noise_program = load_shader_program("volumetric_noise.slang", device);
 
         pipelines.clear();
 
@@ -563,6 +582,10 @@ void Engine::run()
         replace_pipeline(brdf_lut_pipeline, create_compute_pipeline(device, &brdf_lut_program, nullptr, &pipeline_layout));
         replace_pipeline(sh_pipeline, create_compute_pipeline(device, &sh_program, nullptr, &pipeline_layout));
         replace_pipeline(reset_buffers_pipeline, create_compute_pipeline(device, &reset_buffers_program, nullptr, &pipeline_layout));
+        replace_pipeline(data_injection_pipeline, create_compute_pipeline(device, &data_injection_program, nullptr, &pipeline_layout));
+        replace_pipeline(light_scattering_pipeline, create_compute_pipeline(device, &light_scattering_program, nullptr, &pipeline_layout));
+        replace_pipeline(light_integration_pipeline, create_compute_pipeline(device, &light_integration_program, nullptr, &pipeline_layout));
+        replace_pipeline(volumetric_noise_pipeline, create_compute_pipeline(device, &volumetric_noise_program, nullptr, &pipeline_layout));
     };
 
     build_pipelines();
@@ -594,6 +617,14 @@ void Engine::run()
     std::vector<VkImage> images_to_transition{};
     images_to_transition.push_back(brdf_lut_image.image);
     images_to_transition.push_back(depth_pyramid_image.image);
+
+#if VOLUMETRIC_FOG == 1
+    assert(b_shadows);
+    Image volumetric_noise_image = create_3d_image(device, allocator, VkExtent3D{ 64, 64, 64 }, VK_FORMAT_R16_SFLOAT, VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR | VK_IMAGE_USAGE_2_STORAGE_BIT_KHR);
+    auto volumetric_noise_id = image_manager.register_image(device, volumetric_noise_image.view, VK_IMAGE_LAYOUT_GENERAL);
+    images_to_transition.push_back(volumetric_noise_image.image);
+#endif
+
     std::vector<VkImage> depth_images{};
     for (const auto& image : shadowmap_images)
     {
@@ -656,6 +687,24 @@ void Engine::run()
                              vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
                              vkCmdDispatch(cmd, 1, 1, FROXELS_Z);
                          }
+
+#if VOLUMETRIC_FOG == 1
+                         {
+                             struct PushData
+                             {
+                                 uint32_t noise_id;
+                             };
+
+                             PushData data{};
+                             data.noise_id = volumetric_noise_id;
+
+                             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, volumetric_noise_pipeline);
+                             vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                             auto group_count_x = get_group_count(64, 8);
+                             auto group_count_y = get_group_count(64, 8);
+                             vkCmdDispatch(cmd, group_count_x, group_count_y, 64);
+                         }
+#endif
                      });
 
     float shadow_draw_distance = SHADOW_DRAW_DISTANCE;
@@ -875,6 +924,15 @@ void Engine::run()
         ImGui::Checkbox("Freeze camera", &freeze_matrices);
         ImGui::Checkbox("Shadows", &b_shadows);
         ImGui::SliderFloat("Shadow draw distance", &shadow_draw_distance, SHADOW_DRAW_DISTANCE, 400.0);
+        ImGui::SliderFloat("scattering_factor", &scattering_factor, 0.0, 1.0);
+        ImGui::SliderFloat("noise_pos_mult", &noise_pos_mult, 0.0, 1.0);
+        ImGui::SliderFloat("noise_speed_mult", &noise_speed_mult, 0.0, 1.0);
+        ImGui::SliderFloat("density_modifier", &density_modifier, 0.0, 1.0);
+        ImGui::SliderFloat("height_fog_density", &height_fog_density, 0.0, 10.0);
+        ImGui::SliderFloat("height_fog_falloff", &height_fog_falloff, 0.0, 10.0);
+        ImGui::SliderFloat("box_fog_density", &box_fog_density, 0.0, 10.0);
+        ImGui::SliderFloat("noise_scale", &noise_scale, 0.0, 1.0);
+        ImGui::SliderFloat("temporal_reprojection_jitter_scale", &temporal_reprojection_jitter_scale, 0.0, 10.0);
         ImGui::SliderFloat("Azimuth", &azimuth, 0.0, 360.0);
         ImGui::SliderFloat("Elevation", &elevation, 0.0, 90.0);
         ImGui::SliderInt("Debug channels", &DEBUG_ID, 0, MAX_DEBUG_ID);
@@ -919,6 +977,30 @@ void Engine::run()
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
                 VK_IMAGE_ASPECT_COLOR_BIT }
         );
+        auto fog_froxel_data = graph->create_task_image(
+            ImageResourceDesc{
+                VkExtent3D{ FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH },
+                VK_FORMAT_R16G16B16A16_SFLOAT,
+                VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT,
+                VK_IMAGE_TYPE_3D }
+        );
+        auto light_scattering = graph->create_task_image(
+            ImageResourceDesc{
+                VkExtent3D{ FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH },
+                VK_FORMAT_R16G16B16A16_SFLOAT,
+                VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT,
+                VK_IMAGE_TYPE_3D }
+        );
+        auto integrated_light_scattering = graph->create_task_image(
+            ImageResourceDesc{
+                VkExtent3D{ FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH },
+                VK_FORMAT_R16G16B16A16_SFLOAT,
+                VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT,
+                VK_IMAGE_TYPE_3D }
+        );
 
         std::array<uint32_t, SUN_CASCADE_COUNT> shadowmaps{};
         for (uint32_t i = 0; i < SUN_CASCADE_COUNT; i++)
@@ -956,6 +1038,10 @@ void Engine::run()
         data.previous_view = frame_context.prev_view;
         data.previous_view_proj = frame_context.prev_view_proj;
         global_data[frame_index] = data;
+
+        auto jitter_index = frame_number % 8;
+        float halton_x = 2.0f * Halton(jitter_index + 1, 2) - 1.0f;
+        float halton_y = 2.0f * Halton(jitter_index + 1, 3) - 1.0f;
 
         std::array<VkDescriptorSet, 3> sets{ buffer_set, image_set, sampler_set };
 
@@ -1772,6 +1858,147 @@ void Engine::run()
             }
         );
 
+#if VOLUMETRIC_FOG == 1
+        graph->add_pass(
+            Pass("DataInjection")
+                .write_image(fog_froxel_data, AccessType::ComputeShaderWrite),
+            [&]()
+            {
+                struct PushData
+                {
+                    float4x4 inverse_view_proj;
+                    glm::uvec3 froxel_dims;
+                    uint32_t current_frame;
+                    glm::vec2 halton;
+                    float froxel_near;
+                    float froxel_far;
+                    uint32_t noise_tex_id;
+                    uint32_t froxel_data_tex_id;
+                    float noise_pos_mult;
+                    float noise_speed_mult;
+                    float density_modifier;
+                    float height_fog_density;
+                    float height_fog_falloff;
+                    float box_fog_density;
+                    float noise_scale;
+                    float temporal_reprojection_jitter_scale;
+                    float scattering_factor;
+                };
+
+                PushData data{};
+                data.inverse_view_proj = glm::inverse(frame_context.proj * camera.get_view_matrix());
+                data.froxel_dims = glm::uvec3(FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH);
+                data.current_frame = frame_number;
+                data.halton = glm::vec2(halton_x, halton_y);
+                data.froxel_near = camera.near;
+                data.froxel_far = FROXELS_FAR_PLANE;
+                data.noise_tex_id = volumetric_noise_id;
+                data.froxel_data_tex_id = graph->image_id(fog_froxel_data);
+                data.noise_pos_mult = noise_pos_mult;
+                data.noise_speed_mult = noise_speed_mult;
+                data.density_modifier = density_modifier;
+                data.height_fog_density = height_fog_density;
+                data.height_fog_falloff = height_fog_falloff;
+                data.box_fog_density = box_fog_density;
+                data.noise_scale = noise_scale;
+                data.temporal_reprojection_jitter_scale = temporal_reprojection_jitter_scale;
+                data.scattering_factor = scattering_factor;
+
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, data_injection_pipeline);
+                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                auto group_count_x = get_group_count(FOG_WIDTH, 8);
+                auto group_count_y = get_group_count(FOG_HEIGHT, 8);
+                vkCmdDispatch(cmd, group_count_x, group_count_y, FOG_DEPTH);
+            }
+        );
+
+        auto light_scattering_pass = Pass("LightScattering")
+            .read_buffer(globals, AccessType::ComputeShaderReadOther)
+            .read_image(fog_froxel_data, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+            .write_image(light_scattering, AccessType::ComputeShaderWrite);
+        for (const auto shadowmap : shadowmaps)
+        {
+            light_scattering_pass.read_image(shadowmap, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
+        }
+        graph->add_pass(
+            light_scattering_pass,
+            [&]()
+            {
+                struct PushData
+                {
+                    float4x4 inverse_view_proj;
+                    glm::uvec3 froxel_dims;
+                    uint32_t light_scattering_id;
+                    glm::vec3 camera_pos;
+                    uint32_t froxel_data_tex_id;
+                    glm::vec2 halton;
+                    float froxel_near;
+                    float froxel_far;
+                    float3 sunlight_dir;
+                    uint32_t current_frame;
+                    VkDeviceAddress global_buffer;
+                    uint32_t shadowmap_id;
+                    float temporal_reprojection_jitter_scale;
+                    float noise_scale;
+                };
+
+                PushData data{};
+                data.inverse_view_proj = glm::inverse(frame_context.proj * camera.get_view_matrix());
+                data.froxel_dims = glm::uvec3(FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH);
+                data.light_scattering_id = graph->image_id(light_scattering);
+                data.camera_pos = camera.position;
+                data.froxel_data_tex_id = graph->image_id(fog_froxel_data);
+                data.halton = glm::vec2(halton_x, halton_y);
+                data.froxel_near = camera.near;
+                data.froxel_far = FROXELS_FAR_PLANE;
+                data.sunlight_dir = sunlight_dir;
+                data.current_frame = frame_number;
+                data.global_buffer = graph->buffer_address(globals, sizeof(GlobalData) * (frame_index));
+                data.shadowmap_id = graph->image_id(shadowmaps[0]);
+                data.temporal_reprojection_jitter_scale = temporal_reprojection_jitter_scale;
+                data.noise_scale = noise_scale;
+
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, light_scattering_pipeline);
+                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                auto group_count_x = get_group_count(FOG_WIDTH, 8);
+                auto group_count_y = get_group_count(FOG_HEIGHT, 8);
+                vkCmdDispatch(cmd, group_count_x, group_count_y, FOG_DEPTH);
+            }
+        );
+
+        graph->add_pass(
+            Pass("LightIntegration")
+                .read_image(light_scattering, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                .write_image(integrated_light_scattering, AccessType::ComputeShaderWrite),
+            [&]()
+            {
+                struct PushData
+                {
+                    glm::uvec3 froxel_dims;
+                    uint32_t light_scattering_id;
+                    glm::vec3 camera_pos;
+                    uint32_t integrated_light_scattering_id;
+                    float froxel_near;
+                    float froxel_far;
+                };
+
+                PushData data{};
+                data.froxel_dims = glm::uvec3(FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH);
+                data.light_scattering_id = graph->image_id(light_scattering);
+                data.camera_pos = camera.position;
+                data.integrated_light_scattering_id = graph->image_id(integrated_light_scattering);
+                data.froxel_near = camera.near;
+                data.froxel_far = FROXELS_FAR_PLANE;
+
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, light_integration_pipeline);
+                vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                auto group_count_x = get_group_count(FOG_WIDTH, 8);
+                auto group_count_y = get_group_count(FOG_HEIGHT, 8);
+                vkCmdDispatch(cmd, group_count_x, group_count_y, 1);
+            }
+        );
+#endif
+
         auto lighting_pass = Pass("Lighting")
                                  .read_image(vbuffer, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                                  .read_buffer(globals, AccessType::ComputeShaderReadOther)
@@ -1779,6 +2006,7 @@ void Engine::run()
                                  .read_buffer(froxel_offset_buffer, AccessType::ComputeShaderReadOther)
                                  .read_buffer(froxel_item_buffer, AccessType::ComputeShaderReadOther)
                                  .read_buffer(meshlet_instance_buffer, AccessType::ComputeShaderReadOther)
+                                 .read_image(integrated_light_scattering, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                                  .write_image(draw_image, AccessType::ComputeShaderWrite);
         for (const auto shadowmap : shadowmaps)
         {
@@ -1810,12 +2038,14 @@ void Engine::run()
                     glm::vec2 pixels_per_cluster;
                     uint32_t debug_id;
                     uint32_t output_id;
-                    uint32_t envmap_id;
                     uint32_t depth_id;
-                    uint32_t brdf_lut_id;
                     float near;
                     float scale;
                     float bias;
+                    float fog_far;
+                    float fog_scale;
+                    float fog_bias;
+                    uint32_t fog_id;
                 };
 
                 PushData data{};
@@ -1843,13 +2073,15 @@ void Engine::run()
                 data.pixels_per_cluster = glm::vec2(cluster_x, cluster_y);
                 data.debug_id = DEBUG_ID;
                 data.output_id = graph->image_id(draw_image);
-                // data.envmap_id = -1;
                 data.depth_id = graph->image_id(depth_image);
-                data.brdf_lut_id = brdf_lut_id;
                 data.near = camera.near;
                 const float ratio = FROXELS_FAR_PLANE / camera.near;
                 data.scale = static_cast<float>(FROXELS_Z) / glm::log(ratio);
                 data.bias = static_cast<float>(FROXELS_Z) * glm::log(camera.near) / glm::log(ratio);
+                data.fog_far = FROXELS_FAR_PLANE;
+                data.fog_scale = static_cast<float>(FOG_DEPTH) / glm::log(ratio);
+                data.fog_bias = static_cast<float>(FOG_DEPTH) * glm::log(camera.near) / glm::log(ratio);
+                data.fog_id = graph->image_id(integrated_light_scattering);
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, lighting_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
@@ -1995,6 +2227,11 @@ void Engine::run()
 
     destroy_image(device, allocator, depth_pyramid_image);
     destroy_image(device, allocator, brdf_lut_image);
+
+#if VOLUMETRIC_FOG == 1
+    destroy_image(device, allocator, volumetric_noise_image);
+#endif
+
     for (const auto& img : shadowmap_images)
     {
         destroy_image(device, allocator, img);

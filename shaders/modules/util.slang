@@ -125,3 +125,9 @@ public float3 reconstruct_world_pos(float depth, float4x4 inverse_view_proj, flo
 
 	return world_pos.xyz / world_pos.w;
 }
+
+public float interleaved_gradient_noise(float2 pixel, int frame)
+{
+    pixel += (float(frame) * 5.588238f);
+    return fract(52.9829189f * fract(0.06711056f * float(pixel.x) + 0.00583715f * float(pixel.y)));
+}
