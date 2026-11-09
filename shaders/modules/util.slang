@@ -90,11 +90,9 @@ public float linearize_depth(float near, float depth)
 
 // https://advances.realtimerendering.com/s2016/Siggraph2016_idTech6.pdf, Slide 5
 // view_z must be positive!
-// Do not use this for volumetrics!
-public uint get_cluster_z_slice(float view_z, float scale, float bias)
+public float linear_depth_to_uv(float view_z, float scale, float bias)
 {
-    uint slice = uint(floor(log(view_z) * scale - bias));
-    return clamp(slice, 0, FROXELS_Z - 1);
+    return max(log(view_z) * scale - bias, 0.0);
 }
 
 public uint get_cluster_index(float2 frag_coord, float2 pixels_per_cluster, uint slice)
