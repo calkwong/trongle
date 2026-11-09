@@ -29,6 +29,9 @@
 
 #define MAX_DEBUG_ID 13
 
+// TODO: make this configurable
+#define FROXELS_FAR_PLANE 40.0
+
 #define FROXELS_X 16
 #define FROXELS_Y 8
 #define FROXELS_Z 24

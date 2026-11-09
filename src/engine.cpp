@@ -648,9 +648,8 @@ void Engine::run()
                              auto froxel_y = glm::ceil(static_cast<float>(swapchain.extent.height) / FROXELS_Y);
                              data.froxel_dim = glm::vec2(froxel_x, froxel_y);
                              // TODO: We can inflate near plane otherwise we get lots of intersections close to near plane
-                             // Setting a limit on far plane is also an option - need to modify line_intersection_to_z_plane on shader side
                              data.near_z = camera.near;
-                             data.far_z = camera.far;
+                             data.far_z = FROXELS_FAR_PLANE;
                              data.depth_slices = FROXELS_Z;
 
                              vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, froxels_pipeline);
@@ -730,9 +729,8 @@ void Engine::run()
                                              auto froxel_y = glm::ceil(static_cast<float>(swapchain.extent.height) / FROXELS_Y);
                                              data.froxel_dim = glm::vec2(froxel_x, froxel_y);
                                              // TODO: We can inflate near plane otherwise we get lots of intersections close to near plane
-                                             // Setting a limit on far plane is also an option - need to modify line_intersection_to_z_plane on shader side
                                              data.near_z = camera.near;
-                                             data.far_z = camera.far;
+                                             data.far_z = FROXELS_FAR_PLANE;
                                              data.depth_slices = FROXELS_Z;
 
                                              vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, froxels_pipeline);
@@ -817,9 +815,8 @@ void Engine::run()
                                      auto froxel_y = glm::ceil(static_cast<float>(swapchain.extent.height) / FROXELS_Y);
                                      data.froxel_dim = glm::vec2(froxel_x, froxel_y);
                                      // TODO: We can inflate near plane otherwise we get lots of intersections close to near plane
-                                     // Setting a limit on far plane is also an option - need to modify line_intersection_to_z_plane on shader side
                                      data.near_z = camera.near;
-                                     data.far_z = camera.far;
+                                     data.far_z = FROXELS_FAR_PLANE;
                                      data.depth_slices = FROXELS_Z;
 
                                      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, froxels_pipeline);
@@ -1850,7 +1847,7 @@ void Engine::run()
                 data.depth_id = graph->image_id(depth_image);
                 data.brdf_lut_id = brdf_lut_id;
                 data.near = camera.near;
-                const float ratio = camera.far / camera.near;
+                const float ratio = FROXELS_FAR_PLANE / camera.near;
                 data.scale = static_cast<float>(FROXELS_Z) / glm::log(ratio);
                 data.bias = static_cast<float>(FROXELS_Z) * glm::log(camera.near) / glm::log(ratio);
 

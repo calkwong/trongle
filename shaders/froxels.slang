@@ -31,7 +31,6 @@ float3 screen_to_view(float2 screen_pos, float2 screen_size, float4x4 inverse_pr
 }
 
 // Calculates view space position of one of the cluster's corners
-// This is modified for reverse z infinite far plane
 float3 line_intersection_to_z_plane(float3 point, float z)
 {
     float t = z / point.z;
