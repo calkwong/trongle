@@ -1974,6 +1974,7 @@ void Engine::run()
             {
                 struct PushData
                 {
+                    glm::mat4 inverse_view_proj;
                     glm::uvec3 froxel_dims;
                     uint32_t light_scattering_id;
                     glm::vec3 camera_pos;
@@ -1983,6 +1984,7 @@ void Engine::run()
                 };
 
                 PushData data{};
+                data.inverse_view_proj = glm::inverse(frame_context.proj * camera.get_view_matrix());
                 data.froxel_dims = glm::uvec3(FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH);
                 data.light_scattering_id = graph->image_id(light_scattering);
                 data.camera_pos = camera.position;

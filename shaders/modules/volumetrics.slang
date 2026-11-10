@@ -17,13 +17,12 @@ public float generate_noise(uint2 pixel, uint frame, float noise_scale)
 }
 
 // https://advances.realtimerendering.com/s2016/Siggraph2016_idTech6.pdf
-public float slice_to_exponential_depth_jittered(float near, float far, float jitter, uint slice, uint num_slices)
+public float slice_to_exponential_depth(float near, float far, float slice, float num_slices)
 {
-    // Adding 0.5 as we want froxel center
-    // TODO: we might need to clamp to prevent OOB?
-    return near * pow(far / near, (float(slice) + 0.5f + jitter) / float(num_slices));
+    return near * pow(far / near, slice / num_slices);
 }
 
+// This will provide jittered world position (first adjusted for froxel center) for a given froxel index
 public float3 world_from_froxel(
     uint3 froxel_coord,
     uint3 froxel_dimensions,
@@ -40,15 +39,11 @@ public float3 world_from_froxel(
     halton_xy = float2(0);
     float2 uv = uv_from_froxels(froxel_coord.xy + float2(0.5) + halton_xy * temporal_reprojection_jitter_scale, froxel_dimensions.x, froxel_dimensions.y);
 
-    // Exponential depth
-    float jittering = generate_noise(froxel_coord.xy, current_frame, noise_scale);
+    float jitter = generate_noise(froxel_coord.xy, current_frame, noise_scale);
     // TODO: use jittering
-    jittering = 0.0;
-    float linear_depth = slice_to_exponential_depth_jittered(froxel_near, froxel_far, jittering, froxel_coord.z, froxel_dimensions.z);
-
-    // From linearize_depth(...)
-    // view_z = near / depth -> depth = near / view_z
-    float depth = froxel_near / linear_depth;
+    jitter = 0.0;
+    float linear_depth = slice_to_exponential_depth(froxel_near, froxel_far, float(froxel_coord.z) + 0.5 + jitter, float(froxel_dimensions.z));
+    float depth = linear_depth_to_raw_depth(froxel_near, linear_depth);
 
     return reconstruct_world_pos(depth, inverse_view_proj, uv);
 }
@@ -56,7 +51,7 @@ public float3 world_from_froxel(
 public float3 apply_volumetric_fog(float2 screen_uv, float near, float far, float scale, float bias, float depth, float3 color, uint fog_texture_id)
 {
     float linear_depth = linearize_depth(near, depth);
-    float depth_uv = linear_depth_to_uv(linear_depth, scale, bias) / float(FOG_DEPTH);
+    float depth_uv = linear_depth_to_exponential_slice(linear_depth, scale, bias) / float(FOG_DEPTH);
 
     float3 froxel_uvw = float3(screen_uv.xy, depth_uv);
     SamplerState samp = get_sampler<SamplerState>(LINEAR_CLAMP_SAMPLER);

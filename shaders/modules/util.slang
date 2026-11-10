@@ -88,9 +88,14 @@ public float linearize_depth(float near, float depth)
 	return near / depth;
 }
 
+public float linear_depth_to_raw_depth(float near, float linear_depth)
+{
+    return near / linear_depth;
+}
+
 // https://advances.realtimerendering.com/s2016/Siggraph2016_idTech6.pdf, Slide 5
-// view_z must be positive!
-public float linear_depth_to_uv(float view_z, float scale, float bias)
+// Maps linear depth to uv depth slice where depth slice is distributed with exponential function; view_z must be positive.
+public float linear_depth_to_exponential_slice(float view_z, float scale, float bias)
 {
     return max(log(view_z) * scale - bias, 0.0);
 }
