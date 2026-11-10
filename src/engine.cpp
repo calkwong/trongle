@@ -719,6 +719,7 @@ void Engine::run()
     bool skip_occlusion = true;
     float azimuth = 0.0f;
     float elevation = 90.0f;
+    // TODO: imgui handles turning off/on temporal filtering; turning off/on volumetric fog still needs special handling
     bool fog_temporal_first_frame = true;
 
     auto last_frame = SDL_GetTicks();
@@ -945,7 +946,8 @@ void Engine::run()
         ImGui::SliderFloat("noise_scale", &noise_scale, 0.0, 1.0);
         ImGui::SliderFloat("temporal_reprojection_jitter_scale", &temporal_reprojection_jitter_scale, 0.0, 1.0);
         ImGui::Checkbox("Fog spatial filter", &b_fog_spatial_filter);
-        ImGui::Checkbox("Fog temporal filter", &b_fog_temporal_filter);
+        // This does not appear to trigger on setup, so it's safe
+        fog_temporal_first_frame = ImGui::Checkbox("Fog temporal filter", &b_fog_temporal_filter);
         ImGui::SliderFloat("Azimuth", &azimuth, 0.0, 360.0);
         ImGui::SliderFloat("Elevation", &elevation, 0.0, 90.0);
         ImGui::SliderInt("Debug channels", &DEBUG_ID, 0, MAX_DEBUG_ID);
@@ -2101,7 +2103,6 @@ void Engine::run()
                 }
             );
 
-            // TODO: handle toggling volumetric fog
             fog_temporal_first_frame = false;
         }
 
