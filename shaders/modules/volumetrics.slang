@@ -22,7 +22,7 @@ public float slice_to_exponential_depth(float near, float far, float slice, floa
     return near * pow(far / near, slice / num_slices);
 }
 
-// This will provide jittered world position (first adjusted for froxel center) for a given froxel index
+// Reconstructs world position from froxel center + jitter/noise
 public float3 world_from_froxel(
     uint3 froxel_coord,
     uint3 froxel_dimensions,
@@ -38,35 +38,32 @@ public float3 world_from_froxel(
     float jitter = generate_noise(froxel_coord.xy, current_frame, noise_scale);
     // jitter = 0.0;
     // halton = float2(0);
-    float2 uv = uv_from_froxels(froxel_coord.xy + float2(0.5) + halton * temporal_reprojection_jitter_scale, froxel_dimensions.x, froxel_dimensions.y);
 
-    // TODO: add 0.5 or not?
+    float2 uv = uv_from_froxels(froxel_coord.xy + float2(0.5) + halton * temporal_reprojection_jitter_scale, froxel_dimensions.x, froxel_dimensions.y);
     float linear_depth = slice_to_exponential_depth(froxel_near, froxel_far, float(froxel_coord.z) + 0.5 + jitter, float(froxel_dimensions.z));
     float depth = linear_depth_to_raw_depth(froxel_near, linear_depth);
 
     return reconstruct_world_pos(depth, inverse_view_proj, uv);
 }
 
+// Reconstructs world position from froxel center
 public float3 world_from_froxel_no_jitter(uint3 froxel_coord, uint3 froxel_dimensions, float froxel_near, float froxel_far, float4x4 inverse_view_proj)
 {
     float2 uv = uv_from_froxels(froxel_coord.xy + float2(0.5), froxel_dimensions.x, froxel_dimensions.y);
-    // TODO: add 0.5 or not?
     float linear_depth = slice_to_exponential_depth(froxel_near, froxel_far, float(froxel_coord.z) + 0.5, float(froxel_dimensions.z));
     float depth = linear_depth_to_raw_depth(froxel_near, linear_depth);
 
     return reconstruct_world_pos(depth, inverse_view_proj, uv);
 }
 
-public float3 apply_volumetric_fog(float2 screen_uv, float near, float far, float scale, float bias, float depth, float3 color, uint fog_texture_id)
+public float3 apply_volumetric_fog(float2 screen_uv, float near, float far, float scale, float bias, float depth, float3 color, uint fog_texture_id, SamplerState samp)
 {
     float linear_depth = linearize_depth(near, depth);
     float depth_uv = linear_depth_to_exponential_slice(linear_depth, scale, bias) / float(FOG_DEPTH);
 
     float3 froxel_uvw = float3(screen_uv.xy, depth_uv);
-    SamplerState samp = get_sampler<SamplerState>(LINEAR_CLAMP_SAMPLER);
     float4 scattering_transmittance = get_sampled_image<Texture3D>(fog_texture_id).SampleLevel(samp, froxel_uvw, 0);
 
-    // TODO: opacity anti aliasing?
     color.rgb = color.rgb * scattering_transmittance.a + scattering_transmittance.rgb;
     return color;
 }

@@ -77,7 +77,9 @@ void main(uint3 global_id: SV_DispatchThreadID)
     float2 frag_coord = tex_coord + float2(0.5);
     float2 in_uv = frag_coord / pc.screen_extent;
     float4 out_color;
-    SamplerState cube_samp = get_sampler<SamplerState>(CUBE_SAMPLER);
+
+    SamplerState samp = get_sampler<SamplerState>(LINEAR_SAMPLER);
+    SamplerState linear_clamp_samp = get_sampler<SamplerState>(LINEAR_CLAMP_SAMPLER);
 
     // This is set to 0xFFFFFFFFu during early vbuffer render target clear
     if (packed == 0xFFFFFFFFu)
@@ -198,8 +200,6 @@ void main(uint3 global_id: SV_DispatchThreadID)
     float4 T = interpolate(bary, t0, t1, t2);
     T.w = is_back_face ? -T.w : T.w;
 
-    SamplerState samp = get_sampler<SamplerState>(LINEAR_SAMPLER);
-
     MaterialData m = pc.material_buffer[obj.material_id];
 
     float4 albedo = m.base_color_factor;
@@ -254,8 +254,8 @@ void main(uint3 global_id: SV_DispatchThreadID)
     float prefiltered_mip = float(envmap_mips) * perceptual_roughness;
     float3 R = reflect(-V, N);
 
-    float2 env = get_sampled_image<Texture2D>(pc.brdf_lut_id).SampleLevel(cube_samp, float2(brdf_data.NoV, perceptual_roughness), 0.0).rg;
-    float3 radiance = envmap.SampleLevel(cube_samp, R, prefiltered_mip).rgb;
+    float2 env = get_sampled_image<Texture2D>(pc.brdf_lut_id).SampleLevel(linear_clamp_samp, float2(brdf_data.NoV, perceptual_roughness), 0.0).rg;
+    float3 radiance = envmap.SampleLevel(linear_clamp_samp, R, prefiltered_mip).rgb;
     float3 irradiance = evaluate_sh(pc.sh_buffer->r_coefficients, pc.sh_buffer->g_coefficients, pc.sh_buffer->b_coefficients, N);
     float3 ambient = eval_indirect_multiscattering(brdf_data, irradiance, radiance, env, albedo.xyz, perceptual_roughness, metallic);
 #else
@@ -301,7 +301,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
 #endif
 
 #if VOLUMETRIC_FOG == 1
-    out_color.xyz = apply_volumetric_fog(in_uv, pc.near, pc.fog_far, pc.fog_scale, pc.fog_bias, depth, out_color.xyz, pc.fog_id);
+    out_color.xyz = apply_volumetric_fog(in_uv, pc.near, pc.fog_far, pc.fog_scale, pc.fog_bias, depth, out_color.xyz, pc.fog_id, linear_clamp_samp);
 #endif
 
     // TODO: gradient noise from http://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare

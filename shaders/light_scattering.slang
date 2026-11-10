@@ -64,6 +64,7 @@ void main(
         float3 L = pc.sunlight_dir;
         float VoL = dot(V, L);
 
+        // TODO: experiment with better PCF
         float shadow_factor = calculate_shadow(world_pos, pc.shadowmap_id, pc.global_buffer);
         float3 sunlight_color = float3(1);
         float sunlight_intensity = 1;

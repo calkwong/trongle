@@ -67,8 +67,6 @@ void main(
         integrated_scattering += scattering * integrated_transmittance;
         integrated_transmittance *= transmittance;
 
-        // TODO: opacity anti aliasing?
-
         get_storage_image<RWTexture3D>(pc.integrated_light_scattering_id).Store(froxel_coord, float4(integrated_scattering, integrated_transmittance));
     }
 }

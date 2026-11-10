@@ -40,16 +40,16 @@ void main(
         return;
 
     SamplerState samp = get_sampler<SamplerState>(LINEAR_CLAMP_SAMPLER);
-    Texture3D<float4> temporal_previous_id = get_sampled_image<Texture3D<float4>>(pc.temporal_previous_id);
-    Texture3D<float4> current_tex = get_sampled_image<Texture3D<float4>>(pc.raw_scattering_id);
-    RWTexture3D<float4> temporal_current_id = get_storage_image<RWTexture3D<float4>>(pc.temporal_current_id);
+    Texture3D temporal_previous_tex = get_sampled_image<Texture3D>(pc.temporal_previous_id);
+    Texture3D raw_scattering_tex = get_sampled_image<Texture3D>(pc.raw_scattering_id);
+    RWTexture3D<float4> temporal_current_tex = get_storage_image<RWTexture3D>(pc.temporal_current_id);
 
     float3 uvw = (float3(froxel_coord) + float3(0.5)) / float3(pc.froxel_dims);
 
-    float4 scattering_extinction = current_tex.SampleLevel(samp, uvw, 0.0);
+    float4 scattering_extinction = raw_scattering_tex.SampleLevel(samp, uvw, 0.0);
     if (pc.first_frame == 1)
     {
-        temporal_current_id.Store(froxel_coord, scattering_extinction);
+        temporal_current_tex.Store(froxel_coord, scattering_extinction);
         return;
     }
 
@@ -61,7 +61,7 @@ void main(
     float depth = ndc.z;
 
     float linear_depth = linearize_depth(pc.near, depth);
-    // TODO: floor or not?
+    // Do not clamp slice, we want a continuous slice here
     float slice = linear_depth_to_exponential_slice(linear_depth, pc.scale, pc.bias);
     float w = slice / float(FOG_DEPTH);
 
@@ -70,12 +70,12 @@ void main(
 
     if (all(history_uvw >= 0.0) && all(history_uvw <= 1.0))
     {
-        float4 history = temporal_previous_id.SampleLevel(samp, history_uvw, 0.0);
-        // TODO: Proper neighbourhood clamp? Leaving it disabled yields better result for now
+        float4 history = temporal_previous_tex.SampleLevel(samp, history_uvw, 0.0);
+        // TODO: Proper neighbourhood clamp? Leaving naive clamp disabled yields better result and removes some flickering on fog volume edges
         // history = max(history, scattering_extinction);
         scattering_extinction.rgb = lerp(history.rgb, scattering_extinction.rgb, pc.reprojection_factor);
         scattering_extinction.a = lerp(history.a, scattering_extinction.a, pc.reprojection_factor);
     }
 
-    temporal_current_id.Store(froxel_coord, scattering_extinction);
+    temporal_current_tex.Store(froxel_coord, scattering_extinction);
 }
