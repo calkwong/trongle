@@ -65,6 +65,7 @@ void main(
     float4 scattering_extinction = float4(0);
 
     // Optional noise to animate fog and break constant density
+    // TODO: fix noise speed mult & current_frame
     float3 sampling_coord = world_pos * pc.noise_pos_mult + float3(1, 0.1, 2) * pc.current_frame * pc.noise_speed_mult;
 
     SamplerState samp = get_sampler<SamplerState>(LINEAR_SAMPLER);
@@ -94,7 +95,7 @@ void main(
     float cube_fog = 1.0 - smoothstep(0.0, 0.25, sd_box(float3(world_pos - box_position), float3(0.75)));
     if (cube_fog != 0.0)
     {
-        scattering_extinction.rgb += float3(1., 0., 0.) * cube_fog;
+        scattering_extinction.rgb += box_fog_color.rgb * cube_fog;
         scattering_extinction.a += cube_fog;
     }
 #endif

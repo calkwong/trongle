@@ -69,8 +69,9 @@ float height_fog_density = 0.0;
 float height_fog_falloff = 0.5;
 float box_fog_density = 3.0;
 float noise_scale = 0.5;
-float temporal_reprojection_jitter_scale = 1.6;
+float temporal_reprojection_jitter_scale = 0.2;
 bool b_fog_spatial_filter = true;
+bool b_fog_temporal_filter = true;
 
 const char* ASSET_NAME = "Sponza/Sponza.gltf";
 // const char* ASSET_NAME = "chinesedragon.gltf";
@@ -470,6 +471,7 @@ void Engine::run()
     VkPipeline light_integration_pipeline{};
     VkPipeline volumetric_noise_pipeline{};
     VkPipeline fog_spatial_pipeline{};
+    VkPipeline fog_temporal_pipeline{};
 
     std::vector<VkPipeline> pipelines{};
 
@@ -499,6 +501,7 @@ void Engine::run()
         auto light_integration_program = load_shader_program("light_integration.slang", device);
         auto volumetric_noise_program = load_shader_program("volumetric_noise.slang", device);
         auto fog_spatial_program = load_shader_program("fog_spatial_filter.slang", device);
+        auto fog_temporal_program = load_shader_program("fog_temporal_filter.slang", device);
 
         pipelines.clear();
 
@@ -590,6 +593,7 @@ void Engine::run()
         replace_pipeline(light_integration_pipeline, create_compute_pipeline(device, &light_integration_program, nullptr, &pipeline_layout));
         replace_pipeline(volumetric_noise_pipeline, create_compute_pipeline(device, &volumetric_noise_program, nullptr, &pipeline_layout));
         replace_pipeline(fog_spatial_pipeline, create_compute_pipeline(device, &fog_spatial_program, nullptr, &pipeline_layout));
+        replace_pipeline(fog_temporal_pipeline, create_compute_pipeline(device, &fog_temporal_program, nullptr, &pipeline_layout));
     };
 
     build_pipelines();
@@ -714,7 +718,8 @@ void Engine::run()
     float shadow_draw_distance = SHADOW_DRAW_DISTANCE;
     bool skip_occlusion = true;
     float azimuth = 0.0f;
-    float elevation = 80.0f;
+    float elevation = 90.0f;
+    bool fog_temporal_first_frame = true;
 
     auto last_frame = SDL_GetTicks();
     bool quit{ false };
@@ -900,6 +905,8 @@ void Engine::run()
         // Wait on fence
         auto frame = get_current_frame();
         auto frame_index = frame_number % FRAMES_IN_FLIGHT;
+        auto ping_pong_index = frame_number % 2;
+        auto next_ping_pong_index = (frame_number + 1) % 2;
         VK_CHECK(vkWaitForFences(device, 1, &frame.fence, true, WAIT_TIME));
 
         // Acquire next image
@@ -936,8 +943,9 @@ void Engine::run()
         ImGui::SliderFloat("height_fog_falloff", &height_fog_falloff, 0.0, 10.0);
         ImGui::SliderFloat("box_fog_density", &box_fog_density, 0.0, 10.0);
         ImGui::SliderFloat("noise_scale", &noise_scale, 0.0, 1.0);
-        ImGui::SliderFloat("temporal_reprojection_jitter_scale", &temporal_reprojection_jitter_scale, 0.0, 10.0);
+        ImGui::SliderFloat("temporal_reprojection_jitter_scale", &temporal_reprojection_jitter_scale, 0.0, 1.0);
         ImGui::Checkbox("Fog spatial filter", &b_fog_spatial_filter);
+        ImGui::Checkbox("Fog temporal filter", &b_fog_temporal_filter);
         ImGui::SliderFloat("Azimuth", &azimuth, 0.0, 360.0);
         ImGui::SliderFloat("Elevation", &elevation, 0.0, 90.0);
         ImGui::SliderInt("Debug channels", &DEBUG_ID, 0, MAX_DEBUG_ID);
@@ -990,7 +998,7 @@ void Engine::run()
                 VK_IMAGE_ASPECT_COLOR_BIT,
                 VK_IMAGE_TYPE_3D }
         );
-        auto light_scattering = graph->create_task_image(
+        auto raw_light_scattering = graph->create_task_image(
             ImageResourceDesc{
                 VkExtent3D{ FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH },
                 VK_FORMAT_R16G16B16A16_SFLOAT,
@@ -998,14 +1006,18 @@ void Engine::run()
                 VK_IMAGE_ASPECT_COLOR_BIT,
                 VK_IMAGE_TYPE_3D }
         );
-        auto integrated_light_scattering = graph->create_task_image(
-            ImageResourceDesc{
-                VkExtent3D{ FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH },
-                VK_FORMAT_R16G16B16A16_SFLOAT,
-                VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
-                VK_IMAGE_ASPECT_COLOR_BIT,
-                VK_IMAGE_TYPE_3D }
-        );
+        std::array<uint32_t, 2> temporal_filtered_scattering{};
+        for (auto& id : temporal_filtered_scattering)
+        {
+            id = graph->create_task_image(
+                ImageResourceDesc{
+                    VkExtent3D{ FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH },
+                    VK_FORMAT_R16G16B16A16_SFLOAT,
+                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+                    VK_IMAGE_ASPECT_COLOR_BIT,
+                    VK_IMAGE_TYPE_3D }
+            );
+        }
 
         std::array<uint32_t, SUN_CASCADE_COUNT> shadowmaps{};
         for (uint32_t i = 0; i < SUN_CASCADE_COUNT; i++)
@@ -1920,7 +1932,7 @@ void Engine::run()
         auto light_scattering_pass = Pass("LightScattering")
                                          .read_buffer(globals, AccessType::ComputeShaderReadOther)
                                          .read_image(fog_froxel_data, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
-                                         .write_image(light_scattering, AccessType::ComputeShaderWrite);
+                                         .write_image(raw_light_scattering, AccessType::ComputeShaderWrite);
         for (const auto shadowmap : shadowmaps)
         {
             light_scattering_pass.read_image(shadowmap, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
@@ -1950,7 +1962,7 @@ void Engine::run()
                 PushData data{};
                 data.inverse_view_proj = glm::inverse(frame_context.proj * camera.get_view_matrix());
                 data.froxel_dims = glm::uvec3(FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH);
-                data.light_scattering_id = graph->image_id(light_scattering);
+                data.light_scattering_id = graph->image_id(raw_light_scattering);
                 data.camera_pos = camera.position;
                 data.froxel_data_tex_id = graph->image_id(fog_froxel_data);
                 data.halton = glm::vec2(halton_x, halton_y);
@@ -1975,7 +1987,7 @@ void Engine::run()
         {
             graph->add_pass(
                 Pass("FogSpatialFilterHorizontal")
-                    .read_image(light_scattering, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                    .read_image(raw_light_scattering, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                     .write_image(fog_froxel_data, AccessType::ComputeShaderWrite),
                 [&]()
                 {
@@ -1989,7 +2001,7 @@ void Engine::run()
 
                     PushData data{};
                     data.froxel_dims = glm::uvec3(FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH);
-                    data.input_id = graph->image_id(light_scattering);
+                    data.input_id = graph->image_id(raw_light_scattering);
                     data.output_id = graph->image_id(fog_froxel_data);
                     data.horizontal = 1;
 
@@ -2004,7 +2016,7 @@ void Engine::run()
             graph->add_pass(
                 Pass("FogSpatialFilterVertical")
                     .read_image(fog_froxel_data, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
-                    .write_image(light_scattering, AccessType::ComputeShaderWrite),
+                    .write_image(raw_light_scattering, AccessType::ComputeShaderWrite),
                 [&]()
                 {
                     struct PushData
@@ -2018,7 +2030,7 @@ void Engine::run()
                     PushData data{};
                     data.froxel_dims = glm::uvec3(FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH);
                     data.input_id = graph->image_id(fog_froxel_data);
-                    data.output_id = graph->image_id(light_scattering);
+                    data.output_id = graph->image_id(raw_light_scattering);
                     data.horizontal = 0;
 
                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, fog_spatial_pipeline);
@@ -2030,10 +2042,75 @@ void Engine::run()
             );
         }
 
+        if (b_fog_temporal_filter)
+        {
+            graph->add_pass(
+                Pass("FogTemporalFilter")
+                    .read_image(raw_light_scattering, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                    .read_image(temporal_filtered_scattering[next_ping_pong_index], AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                    .write_image(temporal_filtered_scattering[ping_pong_index], AccessType::ComputeShaderWrite),
+                [&, fog_temporal_first_frame]()
+                {
+                    struct PushData
+                    {
+                        glm::mat4 inverse_view_proj;
+                        glm::mat4 previous_view_proj;
+                        glm::uvec3 froxel_dims;
+                        uint32_t first_frame;
+                        glm::vec2 halton;
+                        float temporal_reprojection_jitter_scale;
+                        float noise_scale;
+                        float near;
+                        float far;
+                        uint32_t raw_scattering_id;
+                        uint32_t temporal_previous_id;
+                        uint32_t temporal_current_id;
+                        float scale;
+                        float bias;
+                        float reprojection_factor;
+                        uint32_t blue_noise_tex;
+                        uint32_t current_frame;
+                    };
+
+                    PushData data{};
+                    // TODO: take into account frozen matrices
+                    data.inverse_view_proj = glm::inverse(frame_context.view_proj);
+                    data.previous_view_proj = frame_context.prev_view_proj;
+                    data.froxel_dims = glm::uvec3(FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH);
+                    data.first_frame = fog_temporal_first_frame ? 1 : 0;
+                    data.halton = glm::vec2(halton_x, halton_y);
+                    data.temporal_reprojection_jitter_scale = temporal_reprojection_jitter_scale;
+                    data.noise_scale = noise_scale;
+                    data.near = camera.near;
+                    data.far = FROXELS_FAR_PLANE;
+                    data.raw_scattering_id = graph->image_id(raw_light_scattering);
+                    data.temporal_previous_id = graph->image_id(temporal_filtered_scattering[next_ping_pong_index]);
+                    data.temporal_current_id = graph->image_id(temporal_filtered_scattering[ping_pong_index]);
+                    const float ratio = FROXELS_FAR_PLANE / camera.near;
+                    data.scale = static_cast<float>(FOG_DEPTH) / glm::log(ratio);
+                    data.bias = static_cast<float>(FOG_DEPTH) * glm::log(camera.near) / glm::log(ratio);
+                    data.reprojection_factor = 0.1;
+                    data.blue_noise_tex = -1;
+                    data.current_frame = -1;
+
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, fog_temporal_pipeline);
+                    vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                    auto group_count_x = get_group_count(FOG_WIDTH, 8);
+                    auto group_count_y = get_group_count(FOG_HEIGHT, 8);
+                    vkCmdDispatch(cmd, group_count_x, group_count_y, FOG_DEPTH);
+                }
+            );
+
+            // TODO: handle toggling volumetric fog
+            fog_temporal_first_frame = false;
+        }
+
+        auto light_integration_input_id = b_fog_temporal_filter ? temporal_filtered_scattering[ping_pong_index] : raw_light_scattering;
+
         graph->add_pass(
             Pass("LightIntegration")
-                .read_image(light_scattering, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
-                .write_image(integrated_light_scattering, AccessType::ComputeShaderWrite),
+                .read_image(light_integration_input_id, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                .write_image(fog_froxel_data, AccessType::ComputeShaderWrite),
             [&]()
             {
                 struct PushData
@@ -2050,9 +2127,9 @@ void Engine::run()
                 PushData data{};
                 data.inverse_view_proj = glm::inverse(frame_context.proj * camera.get_view_matrix());
                 data.froxel_dims = glm::uvec3(FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH);
-                data.light_scattering_id = graph->image_id(light_scattering);
+                data.light_scattering_id = graph->image_id(light_integration_input_id);
                 data.camera_pos = camera.position;
-                data.integrated_light_scattering_id = graph->image_id(integrated_light_scattering);
+                data.integrated_light_scattering_id = graph->image_id(fog_froxel_data);
                 data.froxel_near = camera.near;
                 data.froxel_far = FROXELS_FAR_PLANE;
 
@@ -2072,7 +2149,7 @@ void Engine::run()
                                  .read_buffer(froxel_offset_buffer, AccessType::ComputeShaderReadOther)
                                  .read_buffer(froxel_item_buffer, AccessType::ComputeShaderReadOther)
                                  .read_buffer(meshlet_instance_buffer, AccessType::ComputeShaderReadOther)
-                                 .read_image(integrated_light_scattering, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                                 .read_image(fog_froxel_data, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
                                  .write_image(draw_image, AccessType::ComputeShaderWrite);
         for (const auto shadowmap : shadowmaps)
         {
@@ -2147,7 +2224,7 @@ void Engine::run()
                 data.fog_far = FROXELS_FAR_PLANE;
                 data.fog_scale = static_cast<float>(FOG_DEPTH) / glm::log(ratio);
                 data.fog_bias = static_cast<float>(FOG_DEPTH) * glm::log(camera.near) / glm::log(ratio);
-                data.fog_id = graph->image_id(integrated_light_scattering);
+                data.fog_id = graph->image_id(fog_froxel_data);
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, lighting_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);

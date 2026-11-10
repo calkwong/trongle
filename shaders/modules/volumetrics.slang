@@ -26,7 +26,7 @@ public float slice_to_exponential_depth(float near, float far, float slice, floa
 public float3 world_from_froxel(
     uint3 froxel_coord,
     uint3 froxel_dimensions,
-    float2 halton_xy,
+    float2 halton,
     float temporal_reprojection_jitter_scale,
     uint current_frame,
     float noise_scale,
@@ -35,14 +35,23 @@ public float3 world_from_froxel(
     float4x4 inverse_view_proj
 )
 {
-    // TODO: use halton
-    halton_xy = float2(0);
-    float2 uv = uv_from_froxels(froxel_coord.xy + float2(0.5) + halton_xy * temporal_reprojection_jitter_scale, froxel_dimensions.x, froxel_dimensions.y);
-
     float jitter = generate_noise(froxel_coord.xy, current_frame, noise_scale);
-    // TODO: use jittering
-    jitter = 0.0;
+    // jitter = 0.0;
+    // halton = float2(0);
+    float2 uv = uv_from_froxels(froxel_coord.xy + float2(0.5) + halton * temporal_reprojection_jitter_scale, froxel_dimensions.x, froxel_dimensions.y);
+
+    // TODO: add 0.5 or not?
     float linear_depth = slice_to_exponential_depth(froxel_near, froxel_far, float(froxel_coord.z) + 0.5 + jitter, float(froxel_dimensions.z));
+    float depth = linear_depth_to_raw_depth(froxel_near, linear_depth);
+
+    return reconstruct_world_pos(depth, inverse_view_proj, uv);
+}
+
+public float3 world_from_froxel_no_jitter(uint3 froxel_coord, uint3 froxel_dimensions, float froxel_near, float froxel_far, float4x4 inverse_view_proj)
+{
+    float2 uv = uv_from_froxels(froxel_coord.xy + float2(0.5), froxel_dimensions.x, froxel_dimensions.y);
+    // TODO: add 0.5 or not?
+    float linear_depth = slice_to_exponential_depth(froxel_near, froxel_far, float(froxel_coord.z) + 0.5, float(froxel_dimensions.z));
     float depth = linear_depth_to_raw_depth(froxel_near, linear_depth);
 
     return reconstruct_world_pos(depth, inverse_view_proj, uv);
