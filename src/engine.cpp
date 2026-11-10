@@ -70,6 +70,7 @@ float height_fog_falloff = 0.5;
 float box_fog_density = 3.0;
 float noise_scale = 0.5;
 float temporal_reprojection_jitter_scale = 1.6;
+bool b_fog_spatial_filter = true;
 
 const char* ASSET_NAME = "Sponza/Sponza.gltf";
 // const char* ASSET_NAME = "chinesedragon.gltf";
@@ -468,6 +469,7 @@ void Engine::run()
     VkPipeline light_scattering_pipeline{};
     VkPipeline light_integration_pipeline{};
     VkPipeline volumetric_noise_pipeline{};
+    VkPipeline fog_spatial_pipeline{};
 
     std::vector<VkPipeline> pipelines{};
 
@@ -496,6 +498,7 @@ void Engine::run()
         auto light_scattering_program = load_shader_program("light_scattering.slang", device);
         auto light_integration_program = load_shader_program("light_integration.slang", device);
         auto volumetric_noise_program = load_shader_program("volumetric_noise.slang", device);
+        auto fog_spatial_program = load_shader_program("fog_spatial_filter.slang", device);
 
         pipelines.clear();
 
@@ -586,6 +589,7 @@ void Engine::run()
         replace_pipeline(light_scattering_pipeline, create_compute_pipeline(device, &light_scattering_program, nullptr, &pipeline_layout));
         replace_pipeline(light_integration_pipeline, create_compute_pipeline(device, &light_integration_program, nullptr, &pipeline_layout));
         replace_pipeline(volumetric_noise_pipeline, create_compute_pipeline(device, &volumetric_noise_program, nullptr, &pipeline_layout));
+        replace_pipeline(fog_spatial_pipeline, create_compute_pipeline(device, &fog_spatial_program, nullptr, &pipeline_layout));
     };
 
     build_pipelines();
@@ -933,6 +937,7 @@ void Engine::run()
         ImGui::SliderFloat("box_fog_density", &box_fog_density, 0.0, 10.0);
         ImGui::SliderFloat("noise_scale", &noise_scale, 0.0, 1.0);
         ImGui::SliderFloat("temporal_reprojection_jitter_scale", &temporal_reprojection_jitter_scale, 0.0, 10.0);
+        ImGui::Checkbox("Fog spatial filter", &b_fog_spatial_filter);
         ImGui::SliderFloat("Azimuth", &azimuth, 0.0, 360.0);
         ImGui::SliderFloat("Elevation", &elevation, 0.0, 90.0);
         ImGui::SliderInt("Debug channels", &DEBUG_ID, 0, MAX_DEBUG_ID);
@@ -1913,9 +1918,9 @@ void Engine::run()
         );
 
         auto light_scattering_pass = Pass("LightScattering")
-            .read_buffer(globals, AccessType::ComputeShaderReadOther)
-            .read_image(fog_froxel_data, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
-            .write_image(light_scattering, AccessType::ComputeShaderWrite);
+                                         .read_buffer(globals, AccessType::ComputeShaderReadOther)
+                                         .read_image(fog_froxel_data, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                                         .write_image(light_scattering, AccessType::ComputeShaderWrite);
         for (const auto shadowmap : shadowmaps)
         {
             light_scattering_pass.read_image(shadowmap, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
@@ -1965,6 +1970,65 @@ void Engine::run()
                 vkCmdDispatch(cmd, group_count_x, group_count_y, FOG_DEPTH);
             }
         );
+
+        if (b_fog_spatial_filter)
+        {
+            graph->add_pass(
+                Pass("FogSpatialFilterHorizontal")
+                    .read_image(light_scattering, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                    .write_image(fog_froxel_data, AccessType::ComputeShaderWrite),
+                [&]()
+                {
+                    struct PushData
+                    {
+                        glm::uvec3 froxel_dims;
+                        uint32_t input_id;
+                        uint32_t output_id;
+                        uint32_t horizontal;
+                    };
+
+                    PushData data{};
+                    data.froxel_dims = glm::uvec3(FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH);
+                    data.input_id = graph->image_id(light_scattering);
+                    data.output_id = graph->image_id(fog_froxel_data);
+                    data.horizontal = 1;
+
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, fog_spatial_pipeline);
+                    vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                    auto group_count_x = get_group_count(FOG_WIDTH, 8);
+                    auto group_count_y = get_group_count(FOG_HEIGHT, 8);
+                    vkCmdDispatch(cmd, group_count_x, group_count_y, FOG_DEPTH);
+                }
+            );
+
+            graph->add_pass(
+                Pass("FogSpatialFilterVertical")
+                    .read_image(fog_froxel_data, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                    .write_image(light_scattering, AccessType::ComputeShaderWrite),
+                [&]()
+                {
+                    struct PushData
+                    {
+                        glm::uvec3 froxel_dims;
+                        uint32_t input_id;
+                        uint32_t output_id;
+                        uint32_t horizontal;
+                    };
+
+                    PushData data{};
+                    data.froxel_dims = glm::uvec3(FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH);
+                    data.input_id = graph->image_id(fog_froxel_data);
+                    data.output_id = graph->image_id(light_scattering);
+                    data.horizontal = 0;
+
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, fog_spatial_pipeline);
+                    vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
+                    auto group_count_x = get_group_count(FOG_WIDTH, 8);
+                    auto group_count_y = get_group_count(FOG_HEIGHT, 8);
+                    vkCmdDispatch(cmd, group_count_x, group_count_y, FOG_DEPTH);
+                }
+            );
+        }
 
         graph->add_pass(
             Pass("LightIntegration")
