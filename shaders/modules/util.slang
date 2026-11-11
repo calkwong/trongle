@@ -100,7 +100,7 @@ public float linear_depth_to_exponential_slice(float view_z, float scale, float 
     return max(log(view_z) * scale - bias, 0.0);
 }
 
-public uint get_cluster_index(float2 frag_coord, float2 pixels_per_cluster, uint slice)
+public uint get_light_cluster_index(float2 frag_coord, float2 pixels_per_cluster, uint slice)
 {
     uint2 clusters = uint2(floor(frag_coord / pixels_per_cluster));
     return clusters.x + FROXELS_X * clusters.y + slice * FROXELS_X * FROXELS_Y;

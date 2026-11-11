@@ -599,6 +599,7 @@ void Engine::run()
     build_pipelines();
 
 #if LOCAL_LIGHTS == 1
+#if 0
     std::mt19937 mt(42);
     std::uniform_real_distribution<float> pos(-1.0f, 1.0f);
     std::uniform_real_distribution<float> color(0.f, 1.0f);
@@ -617,6 +618,15 @@ void Engine::run()
     }
 
     Buffer light_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, light_data.data(), MAX_POINT_LIGHTS * sizeof(PointLight));
+#else
+    std::array<PointLight, 4> light_data{};
+    light_data[0] = PointLight{ glm::vec3(2.25, 0.8, -0.2), 1.0, glm::vec4(1, 0, 0, 1) };
+    light_data[1] = PointLight{ glm::vec3(5.25, 2.8, -0.2), 1.0, glm::vec4(0, 1, 0, 1) };
+    light_data[2] = PointLight{ glm::vec3(0.25, 4.8, -0.2), 1.0, glm::vec4(1, 0, 1, 1) };
+    light_data[3] = PointLight{ glm::vec3(1.25, 7.8, -0.2), 1.0, glm::vec4(0, 0, 1, 1) };
+
+    Buffer light_buffer = create_buffer_with_data(device, graphics_queue, imm_fence, imm_pool, imm_buf, allocator, light_data.data(), light_data.size() * sizeof(PointLight));
+#endif
 #endif
 
     Image brdf_lut_image = create_image(device, allocator, VkExtent3D{ 128, 128, 1 }, VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR | VK_IMAGE_USAGE_2_STORAGE_BIT_KHR);
@@ -1934,6 +1944,8 @@ void Engine::run()
         auto light_scattering_pass = Pass("LightScattering")
                                          .read_buffer(globals, AccessType::ComputeShaderReadOther)
                                          .read_image(fog_froxel_data, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer)
+                                         .read_buffer(froxel_offset_buffer, AccessType::ComputeShaderReadOther)
+                                         .read_buffer(froxel_item_buffer, AccessType::ComputeShaderReadOther)
                                          .write_image(raw_light_scattering, AccessType::ComputeShaderWrite);
         for (const auto shadowmap : shadowmaps)
         {
@@ -1946,6 +1958,10 @@ void Engine::run()
                 struct PushData
                 {
                     float4x4 inverse_view_proj;
+                    VkDeviceAddress global_buffer;
+                    VkDeviceAddress light_buffer;
+                    VkDeviceAddress froxel_offset_list;
+                    VkDeviceAddress froxel_item_list;
                     glm::uvec3 froxel_dims;
                     uint32_t light_scattering_id;
                     glm::vec3 camera_pos;
@@ -1955,14 +1971,19 @@ void Engine::run()
                     float froxel_far;
                     float3 sunlight_dir;
                     uint32_t current_frame;
-                    VkDeviceAddress global_buffer;
                     uint32_t shadowmap_id;
                     float temporal_reprojection_jitter_scale;
                     float noise_scale;
+                    float light_scale;
+                    float light_bias;
                 };
 
                 PushData data{};
                 data.inverse_view_proj = glm::inverse(frame_context.proj * camera.get_view_matrix());
+                data.global_buffer = graph->buffer_address(globals, sizeof(GlobalData) * (frame_index));
+                data.light_buffer = light_buffer.address;
+                data.froxel_offset_list = graph->buffer_address(froxel_offset_buffer);
+                data.froxel_item_list = graph->buffer_address(froxel_item_buffer);
                 data.froxel_dims = glm::uvec3(FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH);
                 data.light_scattering_id = graph->image_id(raw_light_scattering);
                 data.camera_pos = camera.position;
@@ -1972,10 +1993,12 @@ void Engine::run()
                 data.froxel_far = FROXELS_FAR_PLANE;
                 data.sunlight_dir = sunlight_dir;
                 data.current_frame = frame_number;
-                data.global_buffer = graph->buffer_address(globals, sizeof(GlobalData) * (frame_index));
                 data.shadowmap_id = graph->image_id(shadowmaps[0]);
                 data.temporal_reprojection_jitter_scale = temporal_reprojection_jitter_scale;
                 data.noise_scale = noise_scale;
+                const float ratio = FROXELS_FAR_PLANE / camera.near;
+                data.light_scale = static_cast<float>(FROXELS_Z) / glm::log(ratio);
+                data.light_bias = static_cast<float>(FROXELS_Z) * glm::log(camera.near) / glm::log(ratio);
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, light_scattering_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
