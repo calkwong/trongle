@@ -28,6 +28,7 @@ struct PushConstants
     float noise_scale;
     float light_scale;
     float light_bias;
+    uint blue_noise_id;
 };
 
 [[vk::push_constant]]
@@ -55,7 +56,8 @@ void main(
         pc.noise_scale,
         pc.froxel_near,
         pc.froxel_far,
-        pc.inverse_view_proj
+        pc.inverse_view_proj,
+        pc.blue_noise_id
     );
 
     float3 rcp_froxel_dims = float3(1.0) / float3(pc.froxel_dims);

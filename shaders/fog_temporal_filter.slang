@@ -21,7 +21,7 @@ struct PushConstants
     float scale;
     float bias;
     float reprojection_factor;
-    uint blue_noise_tex;
+    uint blue_noise_id;
     uint current_frame;
 };
 

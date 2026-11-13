@@ -239,7 +239,7 @@ void Engine::run()
 
     // Load blue noise texture
     Image blue_noise_image{};
-    uint32_t blue_noise{-1u};
+    uint32_t blue_noise{ -1u };
     {
         const char* blue_noise_path = { "../assets/vector2_uniform_binomial3x3_exp0101_product_0.png" };
         int width{};
@@ -363,7 +363,6 @@ void Engine::run()
     Buffer late_pass_candidates_buffer = create_buffer(device, allocator, (meshlet_offset + get_group_count(meshlet_bits, 32)) * sizeof(uint32_t), 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT_KHR);
     Buffer froxels_buffer = create_buffer(device, allocator, sizeof(FroxelAABB) * FROXELS_X * FROXELS_Y * FROXELS_Z, 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT);
     Buffer global_buffer = create_buffer(device, allocator, sizeof(GlobalData) * FRAMES_IN_FLIGHT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT);
-    Buffer sh_buffer = create_buffer(device, allocator, sizeof(float) * 27, 0, VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT);
 
     std::array<Image, SUN_CASCADE_COUNT> shadowmap_images{};
     std::array<uint32_t, SUN_CASCADE_COUNT> shadowmap_descriptor_handles{};
@@ -1950,6 +1949,7 @@ void Engine::run()
                     float noise_scale;
                     float temporal_reprojection_jitter_scale;
                     float scattering_factor;
+                    uint32_t blue_noise_id;
                 };
 
                 PushData data{};
@@ -1970,6 +1970,7 @@ void Engine::run()
                 data.noise_scale = noise_scale;
                 data.temporal_reprojection_jitter_scale = temporal_reprojection_jitter_scale;
                 data.scattering_factor = scattering_factor;
+                data.blue_noise_id = blue_noise;
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, data_injection_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
@@ -2014,12 +2015,15 @@ void Engine::run()
                     float noise_scale;
                     float light_scale;
                     float light_bias;
+                    uint32_t blue_noise_id;
                 };
 
                 PushData data{};
                 data.inverse_view_proj = glm::inverse(frame_context.proj * camera.get_view_matrix());
                 data.global_buffer = graph->buffer_address(globals, sizeof(GlobalData) * (frame_index));
+#if LOCAL_LIGHTS == 1
                 data.light_buffer = light_buffer.address;
+#endif
                 data.froxel_offset_list = graph->buffer_address(froxel_offset_buffer);
                 data.froxel_item_list = graph->buffer_address(froxel_item_buffer);
                 data.froxel_dims = glm::uvec3(FOG_WIDTH, FOG_HEIGHT, FOG_DEPTH);
@@ -2037,6 +2041,7 @@ void Engine::run()
                 const float ratio = FROXELS_FAR_PLANE / camera.near;
                 data.light_scale = static_cast<float>(FROXELS_Z) / glm::log(ratio);
                 data.light_bias = static_cast<float>(FROXELS_Z) * glm::log(camera.near) / glm::log(ratio);
+                data.blue_noise_id = blue_noise;
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, light_scattering_pipeline);
                 vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
@@ -2131,7 +2136,7 @@ void Engine::run()
                         float scale;
                         float bias;
                         float reprojection_factor;
-                        uint32_t blue_noise_image;
+                        uint32_t blue_noise_id;
                         uint32_t current_frame;
                     };
 
@@ -2153,8 +2158,8 @@ void Engine::run()
                     data.scale = static_cast<float>(FOG_DEPTH) / glm::log(ratio);
                     data.bias = static_cast<float>(FOG_DEPTH) * glm::log(camera.near) / glm::log(ratio);
                     data.reprojection_factor = 0.1;
-                    data.blue_noise_image = -1;
-                    data.current_frame = -1;
+                    data.blue_noise_id = blue_noise;
+                    data.current_frame = frame_number;
 
                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, fog_temporal_pipeline);
                     vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_ALL, 0, sizeof(PushData), &data);
@@ -2233,20 +2238,19 @@ void Engine::run()
                     VkDeviceAddress light_buffer;
                     VkDeviceAddress froxel_offset_list;
                     VkDeviceAddress froxel_item_list;
-                    VkDeviceAddress sh_buffer;
                     VkDeviceAddress meshlet_instance_buffer;
-                    glm::vec2 screen_extent;
                     glm::vec3 light_dir;
                     uint32_t shadowmap_id; // Offset accordingly
                     glm::vec3 camera_pos;
                     uint32_t visbuffer_id;
+                    glm::vec2 screen_extent;
                     glm::vec2 pixels_per_cluster;
                     uint32_t debug_id;
                     uint32_t output_id;
                     uint32_t depth_id;
                     float near;
-                    float scale;
-                    float bias;
+                    float light_scale;
+                    float light_bias;
                     float fog_far;
                     float fog_scale;
                     float fog_bias;
@@ -2266,7 +2270,6 @@ void Engine::run()
 #endif
                 data.froxel_offset_list = graph->buffer_address(froxel_offset_buffer);
                 data.froxel_item_list = graph->buffer_address(froxel_item_buffer);
-                data.sh_buffer = sh_buffer.address;
                 data.meshlet_instance_buffer = graph->buffer_address(meshlet_instance_buffer);
                 data.light_dir = sunlight_dir;
                 data.shadowmap_id = b_shadows ? graph->image_id(shadowmaps[0]) : -1u;
@@ -2281,8 +2284,8 @@ void Engine::run()
                 data.depth_id = graph->image_id(depth_image);
                 data.near = camera.near;
                 const float ratio = FROXELS_FAR_PLANE / camera.near;
-                data.scale = static_cast<float>(FROXELS_Z) / glm::log(ratio);
-                data.bias = static_cast<float>(FROXELS_Z) * glm::log(camera.near) / glm::log(ratio);
+                data.light_scale = static_cast<float>(FROXELS_Z) / glm::log(ratio);
+                data.light_bias = static_cast<float>(FROXELS_Z) * glm::log(camera.near) / glm::log(ratio);
                 data.fog_far = FROXELS_FAR_PLANE;
                 data.fog_scale = static_cast<float>(FOG_DEPTH) / glm::log(ratio);
                 data.fog_bias = static_cast<float>(FOG_DEPTH) * glm::log(camera.near) / glm::log(ratio);
@@ -2428,7 +2431,6 @@ void Engine::run()
     destroy_buffer(allocator, light_buffer);
 #endif
     destroy_buffer(allocator, global_buffer);
-    destroy_buffer(allocator, sh_buffer);
 
     destroy_image(device, allocator, depth_pyramid_image);
     destroy_image(device, allocator, brdf_lut_image);

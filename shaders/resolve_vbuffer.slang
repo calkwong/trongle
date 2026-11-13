@@ -21,20 +21,19 @@ struct PushConstants
     PointLight* light_buffer;
     FroxelOffset* froxel_offset_list;
     uint* froxel_item_list;
-    SH* sh_buffer;
     MeshletInstance* meshlet_instance_buffer;
-    float2 screen_extent;
     float3 light_dir;
     uint shadowmap_id;
     float3 camera_pos;
     uint visbuffer_id;
+    float2 screen_extent;
     float2 pixels_per_cluster;
     uint debug_id;
     uint output_id;
     uint depth_id;
     float near;
-    float scale;
-    float bias;
+    float light_scale;
+    float light_bias;
     float fog_far;
     float fog_scale;
     float fog_bias;
@@ -277,7 +276,7 @@ void main(uint3 global_id: SV_DispatchThreadID)
 
 #if LOCAL_LIGHTS == 1
     float view_z = linearize_depth(pc.near, depth);
-    uint slice = uint(linear_depth_to_exponential_slice(view_z, pc.scale, pc.bias));
+    uint slice = uint(linear_depth_to_exponential_slice(view_z, pc.light_scale, pc.light_bias));
     uint cluster_index = get_light_cluster_index(float2(frag_coord.x, pc.screen_extent.y - frag_coord.y), pc.pixels_per_cluster.xy, slice);
 
     FroxelOffset froxel_offset = pc.froxel_offset_list[cluster_index];

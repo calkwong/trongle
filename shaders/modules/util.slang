@@ -136,3 +136,8 @@ public float interleaved_gradient_noise(float2 pixel, int frame)
     pixel += (float(frame) * 5.588238f);
     return fract(52.9829189f * fract(0.06711056f * float(pixel.x) + 0.00583715f * float(pixel.y)));
 }
+
+public float triangular_noise(float noise1, float noise2)
+{
+    return noise1 + noise2 - 1.0;
+}

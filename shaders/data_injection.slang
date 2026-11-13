@@ -22,6 +22,7 @@ struct PushConstants
     float noise_scale;
     float temporal_reprojection_jitter_scale;
     float scattering_factor;
+    uint blue_noise_id;
 };
 
 [[vk::push_constant]]
@@ -60,7 +61,8 @@ void main(
         pc.noise_scale,
         pc.froxel_near,
         pc.froxel_far,
-        pc.inverse_view_proj
+        pc.inverse_view_proj,
+        pc.blue_noise_id
     );
     float4 scattering_extinction = float4(0);
 
