@@ -30,6 +30,8 @@ target_sources(engine PRIVATE
 target_include_directories(engine PRIVATE imgui)
 target_include_directories(engine PRIVATE imgui/backends)
 
+target_include_directories(engine PRIVATE stb)
+
 target_link_libraries(engine PRIVATE
   fmt::fmt
   volk

@@ -39,6 +39,7 @@
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
+#include <stb_image.h>
 
 #include <vector>
 #include <cstdlib>
@@ -234,6 +235,22 @@ void Engine::run()
     for (const auto& image : asset_loader.images)
     {
         image_manager.register_sampled_image(device, image.view, VK_IMAGE_LAYOUT_GENERAL);
+    }
+
+    // Load blue noise texture
+    {
+        const char* blue_noise_path = { "../assets/vector2_uniform_binomial3x3_exp0101_product_0.png" };
+        int width{};
+        int height{};
+        int channels{};
+        int desired_channels{ 4 };
+        stbi_uc* data = stbi_load(blue_noise_path, &width, &height, &channels, desired_channels);
+        if (data)
+        {
+            stbi_image_free(data);
+        }
+        else
+            assert(0 && "Unable to open file via stb");
     }
 
 #if STRESS_TEST == 0
