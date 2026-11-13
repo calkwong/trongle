@@ -11,7 +11,7 @@ struct PushConstants
 [[vk::push_constant]]
 PushConstants pc;
 
-#define SIGMA_FILTER 4.0
+#define SIGMA_FILTER 1.0
 #define RADIUS 2
 
 float gaussian(float radius, float sigma)
@@ -32,6 +32,7 @@ void main(
         return;
 
     Texture3D light_scattering_tex = get_sampled_image<Texture3D>(pc.input_id);
+    SamplerState samp = get_sampler<SamplerState>(LINEAR_CLAMP_SAMPLER);
 
     float accumulated_weight = 0.0;
     float4 accumulated_scattering_extinction = float4(0.0);
@@ -44,7 +45,8 @@ void main(
         if (all(coord >= 0) && all(coord < int3(pc.froxel_dims)))
         {
             float weight = gaussian(length(offset.xy), SIGMA_FILTER);
-            float4 sampled_value = light_scattering_tex.Load(int4(coord, 0));
+            float4 sampled_value = light_scattering_tex.SampleLevel(samp, coord / float3(pc.froxel_dims), 0.0);
+
             accumulated_scattering_extinction += sampled_value * weight;
             accumulated_weight += weight;
         }
