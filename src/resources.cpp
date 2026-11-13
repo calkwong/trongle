@@ -620,3 +620,111 @@ Image create_3d_image(VkDevice device, VmaAllocator allocator, VkExtent3D extent
 
     return image;
 }
+
+Image create_image_with_data(
+    VkDevice device,
+    VkQueue queue,
+    VkFence fence,
+    VkCommandPool command_pool,
+    VkCommandBuffer cmd,
+    VmaAllocator allocator,
+    const void* data,
+    uint32_t n_channels,
+    VkExtent3D extent,
+    VkFormat format,
+    VkImageUsageFlags usage_flags,
+    VkImageAspectFlags aspect,
+    VmaAllocationCreateFlags allocation_flags,
+    bool mipmapped
+)
+{
+    size_t data_size = extent.depth * extent.width * extent.height * n_channels;
+
+    switch (format)
+    {
+    case VK_FORMAT_R32G32B32A32_SFLOAT:
+        data_size *= sizeof(uint32_t);
+        break;
+    case VK_FORMAT_R16G16B16A16_SFLOAT:
+    case VK_FORMAT_R16G16_SFLOAT:
+    case VK_FORMAT_R16G16_UNORM:
+        data_size *= sizeof(uint16_t);
+        break;
+    case VK_FORMAT_R8G8B8A8_UNORM:
+    case VK_FORMAT_R8G8B8A8_SRGB:
+    case VK_FORMAT_R8G8_UNORM:
+        break;
+    default:
+        assert(0 && "Unsupported format");
+    }
+
+    Buffer buf = create_buffer(
+        device,
+        allocator,
+        data_size,
+        VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        true
+    );
+
+    memcpy(buf.info.pMappedData, data, data_size);
+
+    Image image = create_image(device, allocator, extent, format, usage_flags | VK_IMAGE_USAGE_TRANSFER_DST_BIT, aspect, allocation_flags, mipmapped);
+
+    immediate_submit(
+        device,
+        queue,
+        fence,
+        command_pool,
+        cmd,
+        [&](VkCommandBuffer cmd)
+        {
+            stage_barrier(
+                cmd,
+                image.image,
+                VK_IMAGE_LAYOUT_UNDEFINED,
+                VK_IMAGE_LAYOUT_GENERAL,
+                0,
+                VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                0,
+                VK_ACCESS_2_TRANSFER_WRITE_BIT
+            );
+
+            VkBufferImageCopy copy_region{};
+            copy_region.bufferOffset = 0;
+            copy_region.bufferRowLength = 0;
+            copy_region.bufferImageHeight = 0;
+
+            copy_region.imageSubresource.aspectMask = aspect;
+            copy_region.imageSubresource.mipLevel = 0;
+            copy_region.imageSubresource.baseArrayLayer = 0;
+            copy_region.imageSubresource.layerCount = 1;
+
+            copy_region.imageExtent = extent;
+
+            vkCmdCopyBufferToImage(cmd, buf.buffer, image.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy_region);
+
+            if (mipmapped)
+            {
+                generate_mipmaps(cmd, image.image, VkExtent3D{ image.extent.width, image.extent.height, image.extent.depth });
+            }
+            else
+            {
+                stage_barrier(
+                    cmd,
+                    image.image,
+                    VK_IMAGE_LAYOUT_GENERAL,
+                    VK_IMAGE_LAYOUT_GENERAL,
+                    VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                    VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                    VK_ACCESS_2_SHADER_READ_BIT
+                );
+            }
+        }
+    );
+
+    destroy_buffer(allocator, buf);
+
+    return image;
+}

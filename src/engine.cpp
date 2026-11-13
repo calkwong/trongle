@@ -238,6 +238,8 @@ void Engine::run()
     }
 
     // Load blue noise texture
+    Image blue_noise_image{};
+    uint32_t blue_noise{-1u};
     {
         const char* blue_noise_path = { "../assets/vector2_uniform_binomial3x3_exp0101_product_0.png" };
         int width{};
@@ -247,6 +249,25 @@ void Engine::run()
         stbi_uc* data = stbi_load(blue_noise_path, &width, &height, &channels, desired_channels);
         if (data)
         {
+            // TODO: unpack into R8G8_UNORM only - fastnoise stores 4 floats per pixel even for vec2 noise
+            blue_noise_image = create_image_with_data(
+                device,
+                graphics_queue,
+                imm_fence,
+                imm_pool,
+                imm_buf,
+                allocator,
+                data,
+                desired_channels,
+                VkExtent3D{ static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1 },
+                VK_FORMAT_R8G8B8A8_UNORM,
+                VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR,
+                VK_IMAGE_ASPECT_COLOR_BIT,
+                0,
+                false
+            );
+            blue_noise = image_manager.register_sampled_image(device, blue_noise_image.view, VK_IMAGE_LAYOUT_GENERAL);
+
             stbi_image_free(data);
         }
         else
@@ -2110,7 +2131,7 @@ void Engine::run()
                         float scale;
                         float bias;
                         float reprojection_factor;
-                        uint32_t blue_noise_tex;
+                        uint32_t blue_noise_image;
                         uint32_t current_frame;
                     };
 
@@ -2132,7 +2153,7 @@ void Engine::run()
                     data.scale = static_cast<float>(FOG_DEPTH) / glm::log(ratio);
                     data.bias = static_cast<float>(FOG_DEPTH) * glm::log(camera.near) / glm::log(ratio);
                     data.reprojection_factor = 0.1;
-                    data.blue_noise_tex = -1;
+                    data.blue_noise_image = -1;
                     data.current_frame = -1;
 
                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, fog_temporal_pipeline);
@@ -2411,6 +2432,7 @@ void Engine::run()
 
     destroy_image(device, allocator, depth_pyramid_image);
     destroy_image(device, allocator, brdf_lut_image);
+    destroy_image(device, allocator, blue_noise_image);
 
 #if VOLUMETRIC_FOG == 1
     destroy_image(device, allocator, volumetric_noise_image);

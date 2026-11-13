@@ -114,6 +114,24 @@ Image create_cubemap(
     bool mipmapped = false
 );
 
+// To be used by stbi_load & stbi_loadf only for now.
+Image create_image_with_data(
+    VkDevice device,
+    VkQueue queue,
+    VkFence fence,
+    VkCommandPool command_pool,
+    VkCommandBuffer cmd,
+    VmaAllocator allocator,
+    const void* data,
+    uint32_t n_channels,
+    VkExtent3D extent,
+    VkFormat format,
+    VkImageUsageFlags usage,
+    VkImageAspectFlags aspect,
+    VmaAllocationCreateFlags flags,
+    bool mipmapped
+);
+
 void destroy_buffer(VmaAllocator allocator, const Buffer& buffer);
 void destroy_image(VkDevice device, VmaAllocator allocator, const Image& image);
 VkDeviceAddress get_buffer_address(VkDevice device, VkBuffer buffer);
